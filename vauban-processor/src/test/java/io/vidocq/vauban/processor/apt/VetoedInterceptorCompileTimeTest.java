@@ -21,19 +21,28 @@ package io.vidocq.vauban.processor.apt;
 
 import io.vidocq.vauban.core.container.VaubanContainer;
 import io.vidocq.vauban.processor.VaubanProcessor;
+import io.vidocq.vauban.processor.apt.binding.Traced;
 import io.vidocq.vauban.processor.apt.scanned.ScannedBean;
 import io.vidocq.vauban.processor.apt.vetoed.ScannedQuietBean;
+import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
+import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
+import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
+import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
+import jakarta.enterprise.lang.model.declarations.ClassInfo;
+import jakarta.enterprise.lang.model.types.Type;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
@@ -46,8 +55,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -55,7 +67,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * processor writes for a bean with an interceptor binding hands each call to the interceptors the container resolves
  * at run time, so a vetoed interceptor, which the container does not know, is never in its chain. The processor lists
  * no vetoed class in {@code vauban-beans.list}, the classes the container of a compiled application indexes, and
- * writes no way to create one. A class of a vetoed package is vetoed too (BUG-20261117-01).
+ * writes no way to create one. A class of a vetoed package is vetoed too (BUG-20261117-01). An extension the processor
+ * runs gets from {@code @Registration} the interceptors and the observers the compilation compiles, as the container
+ * gives them at start and frozen (BUG-20261117-02, BUG-20261117-05), and from {@code @Enhancement} the subtypes of
+ * its types (BUG-20261117-07).
  */
 @DisplayName("A vetoed interceptor is woven into nothing the build generates (BUG-20261116-12, BUG-20261117-01)")
 class VetoedInterceptorCompileTimeTest {
@@ -142,9 +157,7 @@ class VetoedInterceptorCompileTimeTest {
     @DisplayName("the extensions of a compiled application, run at start or frozen, see nothing of a vetoed package")
     void theExtensionsOfACompiledApplicationSeeNothingOfAVetoedPackage() throws Exception {
         var result = compile(withAVetoedPackage());
-        var services = result.classes().resolve("META-INF/services/" + BuildCompatibleExtension.class.getName());
-        Files.createDirectories(services.getParent());
-        Files.writeString(services, RegistrationRecorder.class.getName() + "\n");
+        registerExtension(result, RegistrationRecorder.class);
 
         RegistrationRecorder.SEEN.clear();
         try (var loader = loader(result); var container = VaubanContainer.builder().classLoader(loader)
@@ -174,6 +187,7 @@ class VetoedInterceptorCompileTimeTest {
         List<String> seen = registeredWhileCompiling(withAVetoedPackage());
 
         assertTrue(seen.contains(LOGGED_SERVICE), seen::toString);
+        assertTrue(seen.contains(LOGGER), () -> "the interceptor outside the vetoed package: " + seen);
         List<String> vetoed = seen.stream().filter(name -> name.startsWith("vi.quiet.")).toList();
         assertEquals(List.of(), vetoed, "what @Registration sees of the vetoed package");
     }
@@ -246,16 +260,325 @@ class VetoedInterceptorCompileTimeTest {
 
     /**
      * {@code @Registration(types = Object.class)} with a {@code BeanInfo} is called for the interceptors too, as the
-     * container does at start. The processor matches an interceptor by loading its class, which a class this
-     * compilation compiles is not, so it calls it for none of them (BUG-20261117-02).
+     * container does at start. The processor matched an interceptor by loading its class, which a class this
+     * compilation compiles is not, so it called it for none of them (BUG-20261117-02).
      */
     @Test
-    @Disabled("BUG-20261117-02: an extension run by the processor sees no interceptor this compilation compiles")
     @DisplayName("an extension run by the processor sees the interceptors the compilation compiles")
     void anExtensionRunByTheProcessorSeesTheInterceptorsTheCompilationCompiles() throws Exception {
         List<String> seen = registeredWhileCompiling(withAVetoedPackage());
 
         assertEquals(REGISTERED, seen, "the beans and interceptors @Registration sees");
+    }
+
+    /**
+     * Records what {@code @Registration} gives a method with an {@code InterceptorInfo} parameter, one whose
+     * {@code types} names an interceptor binding type, which is no type of the interceptor it binds, and one whose
+     * {@code types} names a type of an interceptor.
+     */
+    public static class InterceptorRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void interceptors(InterceptorInfo interceptor) {
+            SEEN.add("interceptor " + interceptor.declaringClass().name());
+        }
+
+        @Registration(types = Traced.class)
+        public void bindings(InterceptorInfo interceptor) {
+            SEEN.add("binding " + interceptor.declaringClass().name());
+        }
+
+        @Registration(types = Serializable.class)
+        public void serializables(BeanInfo bean) {
+            SEEN.add("serializable " + bean.declaringClass().name());
+        }
+    }
+
+    /**
+     * A method with an {@code InterceptorInfo} parameter is called for each interceptor, and for no bean. A method whose
+     * {@code types} names a type of an interceptor is called for that interceptor, which has the type through a
+     * superclass the compilation compiles. A method whose {@code types} names the binding type of {@code vi.Tracer}
+     * is called for no interceptor. The processor that runs the extension calls them as the container does when it
+     * runs the extension at start, and as the build that freezes it does, and none of them for the vetoed interceptor
+     * of the same type (BUG-20261117-02).
+     */
+    @Test
+    @DisplayName("@Registration gets the same interceptors from the processor, at start and frozen")
+    void registrationGetsTheSameInterceptorsFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Tracer.java", """
+                package vi;
+                @%s
+                @jakarta.interceptor.Interceptor
+                @jakarta.annotation.Priority(jakarta.interceptor.Interceptor.Priority.APPLICATION)
+                public class Tracer {
+                    @jakarta.interceptor.AroundInvoke
+                    Object trace(jakarta.interceptor.InvocationContext invocation) throws Exception {
+                        return invocation.proceed();
+                    }
+                }
+                """.formatted(Traced.class.getName()));
+        var expected = List.of("interceptor " + LOGGER, "interceptor vi.Tracer", "serializable " + LOGGER);
+
+        var seen = seenThreeWays(sources, InterceptorRecorder.class, InterceptorRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /**
+     * Records the observers {@code @Registration} gives it: of any event, of a {@code Serializable} event, of an array of
+     * objects, of a {@code Number}, of an {@code Integer} and of an array of {@code int}.
+     */
+    public static class ObserverRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void observers(ObserverInfo observer) {
+            SEEN.add("observer " + described(observer));
+        }
+
+        @Registration(types = Serializable.class)
+        public void serializableEvents(ObserverInfo observer) {
+            SEEN.add("serializable event " + described(observer));
+        }
+
+        @Registration(types = Object[].class)
+        public void objectArrayEvents(ObserverInfo observer) {
+            SEEN.add("object array event " + described(observer));
+        }
+
+        @Registration(types = Number.class)
+        public void numberEvents(ObserverInfo observer) {
+            SEEN.add("number event " + described(observer));
+        }
+
+        @Registration(types = Integer.class)
+        public void integerEvents(ObserverInfo observer) {
+            SEEN.add("integer event " + described(observer));
+        }
+
+        @Registration(types = int[].class)
+        public void intArrayEvents(ObserverInfo observer) {
+            SEEN.add("int array event " + described(observer));
+        }
+
+        /** The class that declares {@code observer}, and the type of the event it observes. */
+        private static String described(ObserverInfo observer) {
+            return observer.declaringClass().name() + " of " + nameOf(observer.eventType());
+        }
+
+        private static String nameOf(Type type) {
+            if (type.isClass()) return type.asClass().declaration().name();
+            if (type.isArray()) return nameOf(type.asArray().componentType()) + "[]";
+            if (type.isTypeVariable()) return type.asTypeVariable().name();
+            if (type.isPrimitive()) return type.asPrimitive().name();
+            return type.toString();
+        }
+    }
+
+    /**
+     * CDI 4.1 calls a method with an {@code ObserverInfo} parameter for each observer whose observed event type is
+     * assignable to an expected type. The container matched the class that declares the observer instead, and the
+     * processor, which loaded that class, matched none the compilation compiles (BUG-20261117-05). An array is
+     * assignable to {@code Object}, {@code Cloneable}, {@code Serializable} and to an array of a supertype of its
+     * component, a type variable to what one of its bounds is, a primitive type to what its wrapper is, and an array of
+     * primitives to an array of the same primitives only. The container reads the event type of an observer it loads
+     * as a class type named {@code int}, the processor as the primitive type: both match alike.
+     */
+    @Test
+    @DisplayName("@Registration gets the observers of the events of its types from the processor, at start and frozen")
+    void registrationGetsTheObserversOfTheEventsOfItsTypesFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Ping.java", """
+                package vi;
+                public class Ping extends Wrapping {
+                }
+                """);
+        sources.put("vi/Listener.java", """
+                package vi;
+                @jakarta.enterprise.context.ApplicationScoped
+                public class Listener implements java.io.Serializable {
+                    void onPing(@jakarta.enterprise.event.Observes Ping ping) {
+                    }
+                    void onText(@jakarta.enterprise.event.Observes CharSequence text) {
+                    }
+                    void onTexts(@jakarta.enterprise.event.Observes String[] texts) {
+                    }
+                }
+                """);
+        sources.put("vi/Gauge.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Gauge<T extends Number> {
+                    void onReading(@jakarta.enterprise.event.Observes T reading) {
+                    }
+                }
+                """);
+        sources.put("vi/Counter.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Counter {
+                    void onCount(@jakarta.enterprise.event.Observes int count) {
+                    }
+                    void onCounts(@jakarta.enterprise.event.Observes int[] counts) {
+                    }
+                }
+                """);
+        var expected = sorted(List.of(
+                "observer vi.Listener of java.lang.CharSequence", "observer vi.Listener of vi.Ping",
+                "observer vi.Listener of java.lang.String[]", "observer vi.Gauge of T",
+                "observer vi.Counter of int", "observer vi.Counter of int[]",
+                "serializable event vi.Listener of vi.Ping", "serializable event vi.Listener of java.lang.String[]",
+                "serializable event vi.Gauge of T", "serializable event vi.Counter of int",
+                "serializable event vi.Counter of int[]",
+                "object array event vi.Listener of java.lang.String[]",
+                "number event vi.Gauge of T", "number event vi.Counter of int",
+                "integer event vi.Counter of int",
+                "int array event vi.Counter of int[]"));
+
+        var seen = seenThreeWays(sources, ObserverRecorder.class, ObserverRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /**
+     * Adds {@code @Deprecated}, unguarded, to each {@code @Dependent} subtype of {@code java.util.EventListener}, and
+     * counts it back on the class of each such bean {@code @Registration} gives it.
+     */
+    public static class DeprecatingExtension implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = java.util.EventListener.class, withSubtypes = true, withAnnotations = Dependent.class)
+        public void deprecate(ClassConfig clazz) {
+            clazz.addAnnotation(Deprecated.class);
+        }
+
+        @Registration(types = Object.class)
+        public void count(BeanInfo bean) {
+            var declaration = bean.declaringClass();
+            if (declaration.name().equals("vi.Impl") || declaration.name().equals("vi.Other")) {
+                SEEN.add(declaration.name() + " @Deprecated x"
+                        + declaration.annotations(annotation -> annotation.name().equals(Deprecated.class.getName()))
+                        .size());
+            }
+        }
+    }
+
+    /**
+     * {@code @Registration} sees a class as {@code @Enhancement} left it: the container gives it the {@code @Deprecated}
+     * an extension added, once, though it calls the {@code @Enhancement} method twice (BUG-20261117-08), at start and
+     * frozen. The processor gives it none (BUG-20261117-10).
+     */
+    @Test
+    @Disabled("BUG-20261117-10: in the processor, @Registration does not see the annotations @Enhancement added")
+    @DisplayName("@Registration sees the annotations @Enhancement added, from the processor, at start and frozen")
+    void registrationSeesTheAnnotationsEnhancementAddedFromTheProcessorAtStartAndFrozen() throws Exception {
+        var seen = seenThreeWays(withListenerSubtypes(), DeprecatingExtension.class, DeprecatingExtension.SEEN);
+
+        seen.assertEachIs(List.of("vi.Impl @Deprecated x1", "vi.Other @Deprecated x1"));
+    }
+
+
+    /** Records the {@code @Dependent} classes {@code @Enhancement} gives it as subtypes of {@code java.util.EventListener}. */
+    public static class ListenerEnhancer implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = java.util.EventListener.class, withSubtypes = true, withAnnotations = Dependent.class)
+        public void listeners(ClassInfo type) {
+            SEEN.add(type.name());
+        }
+    }
+
+    /**
+     * {@code @Enhancement(withSubtypes = true)} is called for each type of the deployment that is a subtype of an
+     * expected type: {@code vi.Impl} has it through the class it extends, {@code vi.Other} through an interface it
+     * implements, which extends it. The processor matched a class against the superclasses its index holds and the
+     * interfaces the class declares itself, and missed both, which the container finds at start by loading them
+     * (BUG-20261117-07). Each is counted once: the container calls the method twice for each, at start and at build
+     * (BUG-20261117-08).
+     */
+    @Test
+    @DisplayName("@Enhancement gets the subtypes of its types from the processor, at start and frozen")
+    void enhancementGetsTheSubtypesOfItsTypesFromTheProcessorAtStartAndFrozen() throws Exception {
+        var seen = seenThreeWays(withListenerSubtypes(), ListenerEnhancer.class, ListenerEnhancer.SEEN);
+
+        seen.distinct().assertEachIs(List.of("vi.Impl", "vi.Other"));
+    }
+
+    /**
+     * CDI 4.1 calls an {@code @Enhancement} method once for each type it matches. The container calls it twice at
+     * start, and the build that freezes it too: once in the enhancement pass over the classes no processor saw, and
+     * once more in the full run of the extensions, each with an instance of its own (BUG-20261117-08).
+     */
+    @Test
+    @Disabled("BUG-20261117-08: the container calls an @Enhancement method twice for each type, at start and frozen")
+    @DisplayName("@Enhancement is called once for each type, from the processor, at start and frozen")
+    void enhancementIsCalledOnceForEachTypeFromTheProcessorAtStartAndFrozen() throws Exception {
+        var seen = seenThreeWays(withListenerSubtypes(), ListenerEnhancer.class, ListenerEnhancer.SEEN);
+
+        seen.assertEachIs(List.of("vi.Impl", "vi.Other"));
+    }
+
+    /**
+     * The sources of {@link #withASerializableInterceptor()}, with two {@code @Dependent} subtypes of
+     * {@code java.util.EventListener}: {@code vi.Impl} through the class it extends, {@code vi.Other} through the
+     * interface it implements; neither of these two carries {@code @Dependent}.
+     */
+    private static Map<String, String> withListenerSubtypes() {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Base.java", """
+                package vi;
+                public abstract class Base implements java.util.EventListener {
+                }
+                """);
+        sources.put("vi/Impl.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Impl extends Base {
+                }
+                """);
+        sources.put("vi/Sub.java", """
+                package vi;
+                public interface Sub extends java.util.EventListener {
+                }
+                """);
+        sources.put("vi/Other.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Other implements Sub {
+                }
+                """);
+        return sources;
+    }
+
+    /**
+     * A bean has the types of the classes it extends. The container reads those of a class its index does not hold by
+     * loading it, which a class the compilation compiles does not on the processor, so the processor's bean types stop
+     * there: an extension it runs does not see {@code vi.SerialService} as a {@code Serializable}, which the container
+     * sees at start (BUG-20261117-03).
+     */
+    @Test
+    @Disabled("BUG-20261117-03: the processor's bean types stop at a superclass the compilation compiles")
+    @DisplayName("an extension run by the processor sees the types a bean has through a superclass it compiles")
+    void anExtensionRunByTheProcessorSeesTheTypesABeanHasThroughASuperclassItCompiles() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/SerialService.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class SerialService extends Wrapping {
+                }
+                """);
+        var serialService = "serializable vi.SerialService";
+
+        var seen = seenThreeWays(sources, InterceptorRecorder.class, InterceptorRecorder.SEEN);
+
+        assertTrue(seen.start().contains(serialService), () -> "at start: " + seen.start());
+        assertTrue(seen.processor().contains(serialService), () -> "in the processor: " + seen.processor());
     }
 
     /**
@@ -308,8 +631,76 @@ class VetoedInterceptorCompileTimeTest {
         return recorded();
     }
 
+    /** What an extension records when the processor runs it, when the container runs it at start, and frozen. */
+    private record SeenThreeWays(List<String> processor, List<String> start, List<String> build) {
+
+        void assertEachIs(List<String> expected) {
+            assertAll(() -> assertEquals(expected, processor, "what the extension sees in the processor"),
+                    () -> assertEquals(expected, start, "what the extension sees at start, run"),
+                    () -> assertEquals(expected, build, "what the extension sees at build, frozen"));
+        }
+
+        /** What each saw, each element once. */
+        SeenThreeWays distinct() {
+            return new SeenThreeWays(processor.stream().distinct().toList(), start.stream().distinct().toList(),
+                    build.stream().distinct().toList());
+        }
+    }
+
+    /**
+     * Compiles {@code sources} twice: once with a processor that runs {@code extension}, and once without, for the
+     * container to run it at start, and for the build to freeze it, after which it runs no more at start. Each time,
+     * {@code seen} is what the extension recorded.
+     */
+    private SeenThreeWays seenThreeWays(Map<String, String> sources, Class<? extends BuildCompatibleExtension> extension,
+                                        List<String> seen) throws Exception {
+        var processor = new VaubanProcessor();
+        processor.overrideBceClasses(List.of(extension));
+        seen.clear();
+        var processed = ProcessorCompiler.compile(workDir.resolve("processed"), sources, List.of(), processor);
+        assertTrue(processed.success(), () -> "compilation failed: " + processed.messages());
+        var inProcessor = sorted(seen);
+
+        var result = compile(sources);
+        registerExtension(result, extension);
+        seen.clear();
+        try (var loader = loader(result); var container = VaubanContainer.builder().classLoader(loader)
+                .scanClasspath().build()) {
+            assertFalse(container.extensionsAtStart().frozen());
+            assertEquals(LOGGED_HELLO, hello(container, loader.loadClass(LOGGED_SERVICE)));
+        }
+        var atStart = sorted(seen);
+
+        seen.clear();
+        try (var loader = loader(result)) {
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(result.classes());
+            assertTrue(outcome.frozen(), outcome.reason());
+        }
+        var atBuild = sorted(seen);
+        seen.clear();
+        try (var loader = loader(result); var container = VaubanContainer.builder().classLoader(loader)
+                .scanClasspath().build()) {
+            assertTrue(container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
+            assertEquals(LOGGED_HELLO, hello(container, loader.loadClass(LOGGED_SERVICE)));
+        }
+        assertEquals(List.of(), seen, "a frozen extension does not run at start");
+        return new SeenThreeWays(inProcessor, atStart, atBuild);
+    }
+
+    /** Lists {@code extension} as a service of the compiled classes, so that the container finds it. */
+    private static void registerExtension(ProcessorCompiler.Result result, Class<?> extension) throws IOException {
+        var services = result.classes().resolve("META-INF/services/" + BuildCompatibleExtension.class.getName());
+        Files.createDirectories(services.getParent());
+        Files.writeString(services, extension.getName() + "\n");
+    }
+
     private static List<String> recorded() {
-        return RegistrationRecorder.SEEN.stream().sorted().toList();
+        return sorted(RegistrationRecorder.SEEN);
+    }
+
+    private static List<String> sorted(List<String> seen) {
+        return seen.stream().sorted().toList();
     }
 
     /** The bean of the vetoed package is no bean, and its interceptor does not intercept the bean outside it. */
@@ -348,6 +739,31 @@ class VetoedInterceptorCompileTimeTest {
                 }
                 """);
         return sources;
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, where both interceptors extend {@code vi.Wrapping}, an abstract class the
+     * compilation compiles that implements {@link Serializable}, which no bean has: no annotation brings it into the
+     * index.
+     */
+    private static Map<String, String> withASerializableInterceptor() {
+        var sources = withAVetoedPackage();
+        sources.put("vi/Wrapping.java", """
+                package vi;
+                public abstract class Wrapping implements java.io.Serializable {
+                }
+                """);
+        sources.compute("vi/Logger.java", (_, source) -> extendsWrapping(source, "Logger"));
+        sources.compute("vi/quiet/QuietLogger.java", (_, source) -> extendsWrapping(source, "QuietLogger"));
+        return sources;
+    }
+
+    /** {@code source} where the class {@code name} extends {@code vi.Wrapping}; fails when there is no such class. */
+    private static String extendsWrapping(String source, String name) {
+        assertNotNull(source, () -> "no source of " + name);
+        var extended = source.replace("public class " + name + " {", "public class " + name + " extends vi.Wrapping {");
+        assertNotEquals(source, extended, () -> "no class " + name + " to extend in:\n" + source);
+        return extended;
     }
 
     /** The names of the files of {@code directory}, without those of its subdirectories. */

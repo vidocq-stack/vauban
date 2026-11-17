@@ -522,7 +522,7 @@ public final class BceProcessor {
                     if (processedClasses.contains(classInfo.name())) continue;
                     // Type matching: Object.class wildcard matches everything
                     if (!isObjectWildcard && !BceTypeMatcher.matchesClassByIndex(enhancement.types(),
-                            enhancement.withSubtypes(), classInfo, lookup)) continue;
+                            enhancement.withSubtypes(), classInfo, lookup, classLoader)) continue;
                     // Annotation matching via index
                     if (!withAnnotationNames.isEmpty()
                             && !BceTypeMatcher.matchesAnnotationsByIndex(withAnnotationNames, classInfo)) continue;
@@ -651,59 +651,82 @@ public final class BceProcessor {
 
             if (hasObserverInfoParam(method)) {
                 for (var observer : observers) {
-                    if (!BceTypeMatcher.matchesObserverTypes(registration.types(), observer, classLoader)) continue;
+                    if (!BceTypeMatcher.matchesObserverTypes(registration.types(), observer, lookup, classLoader)) {
+                        continue;
+                    }
                     var observerInfo = new VaubanBceObserverInfo(observer, lookup);
                     invokeRegistrationMethodWithObserver(method, bce, observerInfo, types, errors);
                 }
                 continue;
             }
 
-            // Collect interceptor class names to avoid double-processing
-            var interceptorClassNames = new java.util.HashSet<String>();
-            for (var ic : interceptors) {
-                interceptorClassNames.add(ic.interceptorClass().value());
+            for (var target : registrationTargets(method, registration.types(), beans, interceptors, lookup,
+                    classLoader, allArchiveClasses)) {
+                invokeRegistrationMethod(method, bce, target, classLoader, types, errors, beans);
             }
+        }
+    }
 
-            // Try matching against beans first (skip interceptors, handled below)
-            boolean matched = false;
+    /**
+     * What a {@code @Registration} method with a {@code BeanInfo} or an {@code InterceptorInfo} parameter is called
+     * for, in order: the beans whose bean types hold an expected type, the interceptors whose bean types do, and, when
+     * none does and the method takes no {@code InvokerFactory}, the classes of the archive that have one, beans or not.
+     * CDI 4.1 calls it for beans only, and the processor, whose archive classes hold none the compilation compiles,
+     * makes no such call (BUG-20261117-06, open). An {@code InterceptorInfo} parameter takes the interceptors only, as
+     * CDI 4.1 says: handed a bean, it failed the deployment with "argument type mismatch" (BUG-20261117-02).
+     */
+    private static List<BeanInfo> registrationTargets(Method method, Class<?>[] expected, List<BeanDescriptor> beans,
+            List<InterceptorDescriptor> interceptors, IndexLookup lookup, ClassLoader classLoader,
+            List<Class<?>> archiveClasses) {
+        var interceptorsOnly = hasInterceptorInfoParam(method);
+        var interceptorClasses = interceptors.stream()
+                .map(InterceptorDescriptor::interceptorClass)
+                .collect(Collectors.toSet());
+        var targets = new ArrayList<BeanInfo>();
+        if (!interceptorsOnly) {
             for (var bean : beans) {
-                if (interceptorClassNames.contains(bean.beanClass().value())) continue;
-                if (!BceTypeMatcher.matchesTypes(registration.types(), bean, classLoader)) continue;
-                matched = true;
-
-                var beanInfo = new VaubanBceBeanInfo(bean, lookup);
-                invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors, beans);
-            }
-
-            // Also try matching interceptors
-            for (var interceptor : interceptors) {
-                if (!BceTypeMatcher.matchesInterceptorTypes(registration.types(), interceptor, classLoader)) continue;
-                matched = true;
-
-                var interceptorInfo = new VaubanBceInterceptorInfo(interceptor, lookup);
-                invokeRegistrationMethod(method, bce, interceptorInfo, classLoader, types, errors, beans);
-            }
-
-            // If no beans matched and method doesn't use InvokerFactory, try archive classes
-            if (!matched && allArchiveClasses != null && !usesInvokerFactory(method)) {
-                for (var archiveClass : allArchiveClasses) {
-                    if (!BceTypeMatcher.matchesClass(registration.types(), true, archiveClass)) continue;
-
-                    var className = DotName.of(archiveClass.getName());
-                    var indexClass = lookup.getClass(className).orElse(null);
-                    if (indexClass == null) continue;
-
-                    var minimalBean = io.vidocq.vauban.core.bean.model.BeanDescriptor.minimal(className);
-                    var beanInfo = new VaubanBceBeanInfo(minimalBean, lookup);
-                    invokeRegistrationMethod(method, bce, beanInfo, classLoader, types, errors, beans);
+                // An interceptor is matched below, as an interceptor
+                if (!interceptorClasses.contains(bean.beanClass())
+                        && BceTypeMatcher.matchesTypes(expected, bean, classLoader)) {
+                    targets.add(new VaubanBceBeanInfo(bean, lookup));
                 }
             }
         }
+        for (var interceptor : interceptors) {
+            if (BceTypeMatcher.matchesInterceptorTypes(expected, interceptor, lookup, classLoader)) {
+                targets.add(new VaubanBceInterceptorInfo(interceptor, lookup));
+            }
+        }
+        if (targets.isEmpty() && !interceptorsOnly && archiveClasses != null && !usesInvokerFactory(method)) {
+            targets.addAll(archiveTargets(expected, archiveClasses, lookup));
+        }
+        return targets;
+    }
+
+    /** The indexed classes of the archive that are subtypes of an expected type, each as a minimal bean. */
+    private static List<BeanInfo> archiveTargets(Class<?>[] expected, List<Class<?>> archiveClasses,
+                                                 IndexLookup lookup) {
+        var targets = new ArrayList<BeanInfo>();
+        for (var archiveClass : archiveClasses) {
+            var className = DotName.of(archiveClass.getName());
+            if (BceTypeMatcher.matchesClass(expected, true, archiveClass) && lookup.getClass(className).isPresent()) {
+                targets.add(new VaubanBceBeanInfo(BeanDescriptor.minimal(className), lookup));
+            }
+        }
+        return targets;
     }
 
     private static boolean hasObserverInfoParam(Method method) {
         for (var param : method.getParameters()) {
             if (ObserverInfo.class.isAssignableFrom(param.getType())) return true;
+        }
+        return false;
+    }
+
+    /** Whether the method takes an {@code InterceptorInfo}: CDI 4.1 calls it for the interceptors, and no other bean. */
+    private static boolean hasInterceptorInfoParam(Method method) {
+        for (var param : method.getParameterTypes()) {
+            if (InterceptorInfo.class.isAssignableFrom(param)) return true;
         }
         return false;
     }

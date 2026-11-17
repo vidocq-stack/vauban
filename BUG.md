@@ -5,25 +5,300 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
-## BUG-20261117-02 — An extension the annotation processor runs sees no interceptor the compilation compiles
+## BUG-20261117-10 — In the processor, `@Registration` does not see the annotations `@Enhancement` added
 
 - **Date**: 2026-11-17
 - **Status**: OPEN
+- **Module**: `vauban-processor` (`VaubanProcessor.runRemainingBcePhases`), `vauban-core` (`VaubanBceBeanInfo.declaringClass`)
+- **Symptom**: an extension that adds `@Deprecated` to a class in `@Enhancement` and reads the class of the bean back
+  in `@Registration` (`bean.declaringClass().annotations(...)`) finds it once at start and when the build freezes the
+  extensions, and not at all while the processor runs it.
+- **Repro**: `VetoedInterceptorCompileTimeTest#registrationSeesTheAnnotationsEnhancementAddedFromTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, disabled until the fix: the processor sees `[vi.Impl @Deprecated x0, vi.Other @Deprecated
+  x0]`, start and frozen `[vi.Impl @Deprecated x1, vi.Other @Deprecated x1]` (`vauban-b10-red.log`).
+- **Cause** (hypothesis, from the code): `VaubanBceBeanInfo.declaringClass()` reads the class from the index. At
+  start, the index is the one the enhancement-only pass of BUG-20261117-08 enriched with the annotations it added
+  (`VaubanContainerBuilder.collectEnhancements`, `enrichIndex`); the full run's `@Enhancement` modifications go to the
+  bean descriptors only. The processor runs no such pass and hands `@Registration` the index as the compilation wrote
+  it. Fixing BUG-20261117-08 by dropping that pass would make start lose the annotation too.
+- **Next**: give `@Registration` a class view with the modifications of the `@Enhancement` phase that ran, in the
+  processor and at start alike, before or with BUG-20261117-08.
+- **Found by**: the probe of the review of BUG-20261117-08 (does an unguarded `addAnnotation` land twice?),
+  `vauban-b02-r2-probe.log`.
+
+## BUG-20261117-09 — An `ObserverInfo` has no observer method, no event parameter, no bean and no qualifier
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanBceObserverInfo`)
+- **Symptom**: the `ObserverInfo` a `@Registration` method gets answers `null` from `observerMethod()`,
+  `eventParameter()` and `bean()`, and an empty `qualifiers()`, for an observer method of a bean. CDI 4.1 gives the
+  method, its event parameter, the bean that declares it and the observed event qualifiers. An extension that reads
+  them throws `NullPointerException`, and the deployment fails.
+- **Repro**: `BceRegistrationObserverInfoTest#anObserverInfoGivesItsMethodItsEventParameterAndItsBean` in
+  `vauban-core`, disabled until the fix: `@Registration error: Cannot invoke "…MethodInfo.name()" because the return
+  value of "…ObserverInfo.observerMethod()" is null`.
+- **Cause**: `VaubanBceObserverInfo` returns `null` or `List.of()` for these four. `ObserverDescriptor` holds the
+  declaring class, the method name and the qualifiers, but no parameter types, so the method of an overloaded name
+  cannot be told apart, and no link to the declaring bean.
+- **Next**: record the erased parameter types in `ObserverDescriptor` (as producer methods' ids do, BUG-20261116-11),
+  find the `MethodInfo` through the index, and give the declaring class's managed bean as `bean()`. No brick of the
+  workspace declares an `ObserverInfo` `@Registration`.
+- **Found by**: the review of BUG-20261117-05.
+
+## BUG-20261117-08 — The container calls an `@Enhancement` method twice for each type, at start and when the build freezes
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanContainerBuilder.collectEnhancements`, `BceProcessor.processEnhancementOnly`,
+  `BceProcessor.process`)
+- **Symptom**: CDI 4.1 calls an `@Enhancement` method once for each type it matches. When the container runs the
+  extensions of an archive no processor ran them for, at start or when `vauban:generate` freezes them, it calls the
+  method twice for each: an extension that records the classes in a static list sees `[vi.Impl, vi.Impl, vi.Other,
+  vi.Other]`. The processor calls it once.
+- **Repro**: `VetoedInterceptorCompileTimeTest#enhancementIsCalledOnceForEachTypeFromTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, disabled until the fix: at start and frozen, `[vi.Impl, vi.Impl, vi.Other, vi.Other]`
+  instead of `[vi.Impl, vi.Other]`.
+- **Cause** (hypothesis, from the code): `collectEnhancements` runs `processEnhancementOnly` over the classes of the
+  unprocessed archives, with a new instance of each extension, to learn the annotations `@Enhancement` adds before
+  discovery; `BceProcessor.process` then runs every phase, `@Enhancement` again, with the instances of the Discovery
+  phase. An extension that keeps its state in its instance sees each class once per instance, and one that writes
+  elsewhere, a static field or a file, sees it twice.
+- **Impact today**: low. The bricks keep their state on the extension instance, and each instance sees each class
+  once; Mansart's `vetoRoutedRepositoryImpls` is stateless on purpose, as its Javadoc says ("the container may run
+  `@Enhancement` on a fresh extension instance").
+- **Next**: run `@Enhancement` once and hand its modifications to both, or let `process` skip the pass done before;
+  then audit the bricks' `@Enhancement` methods. It changes when every extension's `@Enhancement` runs, so it gets
+  its own change. Two risks to weigh:
+  - the first pass's modifications reach the index before the second pass runs (`enrichIndex` adds them without
+    deduplicating), and the second pass adds its own to the bean descriptors. An unguarded `addAnnotation` does not
+    land twice in what an extension reads: a probe that adds `@Deprecated` in `@Enhancement` and counts it back in
+    `@Registration` finds it once at start and frozen (`vauban-b02-r2-probe.log`), and a descriptor's qualifiers and
+    interceptor bindings are sets (`EnhancementApplier`). The same probe found that the processor shows none
+    (BUG-20261117-10): the class `@Registration` reads at start carries the first pass's annotations, so dropping that
+    pass changes what it reads;
+  - the first pass runs on a fresh instance, without the state the `@Discovery` phase built: Dirac's
+    `DiracExtension`, Mansart's `MansartDataExtension` and `MansartTransactionsExtension` declare both phases.
+- **Found by**: the test of BUG-20261117-07, which records what `@Enhancement` sees in the three places.
+
+## BUG-20261117-07 — An extension the processor runs misses an `@Enhancement` subtype whose type comes through a class or an interface above it
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-sees-interceptors`
+- **Module**: `vauban-core` (`BceTypeMatcher.matchesClassByIndex`), as `vauban-processor` runs it
+- **Symptom**: while the processor runs an extension, `@Enhancement(types = EventListener.class, withSubtypes = true)`
+  was called neither for `vi.Impl extends vi.Base`, where `Base implements EventListener`, nor for
+  `vi.Other implements vi.Sub`, where `Sub extends EventListener`. The container calls it for both, at start and when
+  the build freezes the extensions.
+- **Repro**: `VetoedInterceptorCompileTimeTest#enhancementGetsTheSubtypesOfItsTypesFromTheProcessorAtStartAndFrozen`
+  in `vauban-processor` (with `withAnnotations = Dependent.class`, `Impl` and `Other` `@Dependent`, `Base` and `Sub`
+  without annotations): the processor saw `[]`. `BceTypeMatcherMembersTest#anIndexedClassMatchesTheInterfacesOfItsSuperclassesAndOfItsInterfaces`
+  in `vauban-core`.
+- **Cause** (confirmed by the tests above): the processor matches a class that does not load on the index
+  (`processEnhancement`'s third path). `isSubtypeByIndex` walked its superclasses through `lookup.getClass`, the
+  index only, which stops at `vi.Base` (no annotation, so not indexed), and compared the expected type with the
+  interfaces the class declares itself, never those of a superclass nor of an interface. The bean path, which loads a
+  bean's types, did not catch them either: their processor bean types stop at the unindexed class or interface
+  (BUG-20261117-03).
+- **Fix**: with subtypes, `matchesClassByIndex` walks every class and interface above the class as the interceptor
+  and observer matchers do (`isSubtypeOfAny`): through `IndexLookup.describe`, so the processor's own description of
+  the compilation too, loading only a class nothing describes. Without subtypes it matches the class itself, as before.
+- **Verification**: red first on 5c784778 plus a 5-argument `matchesClassByIndex` that delegated to the 4-argument
+  matcher of 5c784778, so the new unit test compiled (`vauban-b02-r1-red.log`, then `vauban-b02-r1-red2.log` with the
+  three places reported at once): the unit test (`Impl` not matched) and the processor test (`[]` in the processor).
+  Green with the fix (`vauban-b02-r1-green.log`), the duplicate calls at start aside (BUG-20261117-08).
+- **Unannotated classes**: the repro filters on `withAnnotations = Dependent.class`. A probe without the filter, with
+  the abstract `vi.Base`, the interface `vi.Sub`, and the concrete `vi.Loose implements EventListener` and
+  `vi.LooseChild extends Base`, none of them annotated, finds the same `[vi.Impl, vi.Other]` in the processor, at
+  start and frozen (start twice each, BUG-20261117-08): neither place gives a class without an annotation, so the
+  filter hides no gap here (`vauban-b02-r2-probe.log`).
+- **Found by**: the review of BUG-20261117-02, which questioned "as `@Enhancement` already did".
+
+## BUG-20261117-06 — At start, a `@Registration` method with a `BeanInfo` parameter gets classes that are no beans
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`BceProcessor.registrationTargets`, `archiveTargets`), `vauban-processor`
+  (`VaubanProcessor.loadArchiveClasses`)
+- **Symptom**: when no bean and no interceptor has one of a `@Registration` method's `types`, the container calls
+  its `BeanInfo` method for each class of the archive that has one, bean or not: with `types = Marker.class`, the
+  abstract `MarkedPart implements Marker`, which is no bean, with `isClassBean()` true. CDI 4.1 calls it for beans
+  only. The processor makes no such call, so the same extension sees a class at start that it does not see at build.
+- **Repro**: `BceRegistrationInterceptorInfoTest#aBeanInfoParameterIsGivenNoClassThatIsNoBean` in `vauban-core`,
+  disabled until the fix: `[bean …$MarkedPart]` instead of `[]`.
+  `anInterceptorInfoParameterIsGivenNoClassOfTheDeploymentThatIsNoInterceptor` pins today's behaviour at start.
+- **Cause**: `registrationTargets` falls back to `archiveTargets` when no bean or interceptor matched and the method
+  takes no `InvokerFactory`: each archive class assignable to an expected type (by reflection) that the index holds
+  gets a `VaubanBceBeanInfo` over `BeanDescriptor.minimal`, a `MANAGED` descriptor. In the processor,
+  `loadArchiveClasses` loads the index's classes through the processor's class loader, which does not load a class
+  the compilation compiles: the list holds none of them. With `types = Object.class` there is always a bean, so the
+  fallback never runs.
+- **Foy**: `FoyWebExtension.collect` (`@Registration(types = {Servlet, Filter, EventListener})`, `BeanInfo`,
+  `isClassBean()`, then a `@WebServlet`, `@WebFilter` or `@WebListener`) does not rely on the fallback. The
+  processor, where Foy's extension runs in an application build and in every `FoyWebExtensionTest` case, never makes
+  the call, and those tests pass. At start, `defaultScope` (`@Enhancement(withAnnotations = {WebServlet, WebFilter,
+  WebListener})`) gives a web component without a scope `@Dependent` and records every concrete one itself, before
+  `@Registration` runs; the fallback runs only when no bean at all has `Servlet`, `Filter` or `EventListener`, and
+  then gives classes that are no beans, an abstract `@WebServlet` class say, which Foy's discovery skips as it skips
+  any class without a bean. Removing the fallback changes nothing Foy serves.
+- **Next**: drop the fallback, or keep the classes `@Enhancement` made beans only (`beansAfterEnhancement` already
+  adds them), and check the CDI Lite TCK and the bricks' `@Registration` methods again. It changes what extensions
+  see at start, so it gets its own change.
+- **Found by**: the review of BUG-20261117-02.
+
+## BUG-20261117-05 — `@Registration` over observers matches the class that declares them, not the observed event type
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-sees-interceptors`
+- **Module**: `vauban-core` (`BceTypeMatcher.matchesObserverTypes`, `BceProcessor.processRegistration`)
+- **Symptom**: CDI 4.1 calls a `@Registration` method with an `ObserverInfo` parameter once for each observer whose
+  observed event type is assignable to an expected type. The container called it for each observer whose declaring
+  class is a subtype of one: with `types = Serializable.class`, an observer of `CharSequence` declared by a
+  `Serializable` bean, and not an observer of a `Serializable` event declared by a bean that is not. While the
+  annotation processor ran the extensions, it called such a method for none of the observers the compilation compiles,
+  even with `types = Object.class`.
+- **Repro**: `BceRegistrationObserverInfoTest` in `vauban-core`: `[…$Ping, java.lang.CharSequence]` instead of
+  `[…$Ping]`. `VetoedInterceptorCompileTimeTest#registrationGetsTheObserversOfTheEventsOfItsTypesFromTheProcessorAtStartAndFrozen`
+  in `vauban-processor`: the processor sees `[]`.
+- **Cause**: `BceTypeMatcher.matchesObserverTypes` loaded `observer.declaringClass()` and asked whether an expected
+  type is assignable from it. The processor's class loader does not load a class the compilation compiles, the
+  cause of BUG-20261117-02.
+- **Fix**: `matchesObserverTypes` reads `observer.eventType()` (`BceTypeMatcher.isAssignableToAny`): a class or a
+  parameterized type through its class and the classes and interfaces above it, as `matchesInterceptorTypes` reads
+  them (BUG-20261117-02), whatever its type arguments; a primitive type as its wrapper class; an array as assignable
+  to `Object`, `Cloneable` and `Serializable`, and to an array of one dimension less of a type it is assignable to, an
+  array of primitives to an array of the same primitives only; a type variable through its bounds, one without a bound
+  to `Object` only; any other type to `Object` only. A class type named after a primitive, `int` say, which the
+  container gives the event type of an observer it loads by reflection (`BeanDiscovery.reflectTypeToTypeInfo`),
+  where the processor reads the primitive type, is read as that primitive, as the component of an array too
+  (`asPrimitives`): `@Observes int` matched `Number`, `Integer` and `Serializable` in the processor and only `Object`
+  at start and frozen (379aa55e). That class type shows nowhere else in what an extension sees: `TypeMapper` already
+  gives the language model a primitive type for it, and a bean's types are matched by loading them, which neither
+  form passes. The first version of the fix (5c784778) matched a class or a
+  parameterized type only, and gave an array or a type variable `Object` only: `@Observes String[]` was no
+  `Serializable` and no `Object[]`, `@Observes T` with `T extends Number` no `Number`. No brick of the workspace
+  declares an `ObserverInfo` `@Registration`; the CDI Lite TCK uses `types = Object.class`, which matches every
+  observer either way.
+- **Verification**: the red runs of the first version did not run on 85203ee4. They ran on the BUG-20261117-02 fix
+  (the interceptor matcher and `registrationTargets` in), before the observer matcher changed, when
+  `matchesObserverTypes` still loaded the declaring class: `BceRegistrationObserverInfoTest` at start
+  (`[…$Ping, java.lang.CharSequence]`, `vauban-b05-red2.log`), the processor test in the processor (`[]`,
+  `vauban-b05-red.log`). `BceTypeMatcherMembersTest#anObserverMatchesTheTypesOfTheEventItObserves` was written
+  after the fix and not run red then; it was shown red later on 5c784778 with `matchesObserverTypes` mutated to match
+  `observer.declaringClass()` (`Collection` not matched for a `List` event, `vauban-b02-r1-item3.log`). The arrays,
+  type variables and primitives: red on 5c784778 (`anArrayEventMatchesTheTypesOfEveryArrayAndTheArraysOfTheSupertypesOfItsComponent`,
+  `aTypeVariableEventMatchesTheTypesOfItsBoundsAndAPrimitiveThoseOfItsWrapper`, and the processor test with
+  `vi.Listener.onTexts(@Observes String[])` and `vi.Gauge<T extends Number>.onReading(@Observes T)`, which no
+  place matched, `vauban-b02-r1-red.log`), green after. The primitives at start: red on 379aa55e
+  (`aClassTypeNamedAfterAPrimitiveMatchesAsThatPrimitive`; the processor test with `vi.Counter.onCount(@Observes int)`
+  and `onCounts(@Observes int[])`, where start and frozen missed `int` for `Number`, `Integer` and `Serializable`,
+  `vauban-b02-r2-red.log`), green after (`vauban-b02-r2-green.log`). At start `int[]` already matched `int[]` and
+  not `Object[]` in that test; the unit test covers an array of the reflected `int`. Builds and TCK as BUG-20261117-02.
+- **Found by**: BUG-20261117-02, which reads the observer matcher beside the interceptor one.
+
+## BUG-20261117-04 — An `InterceptorInfo` has no bean type and no injection point
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanBceInterceptorInfo`)
+- **Symptom**: the `InterceptorInfo` a `@Registration` method gets answers an empty `types()`, `qualifiers()` and
+  `injectionPoints()`, at start, frozen and in the processor. CDI 4.1 gives an interceptor's `BeanInfo` its bean types
+  and its injection points, as a bean's. An extension that synthesizes a bean for each injection point it sees misses
+  those of an interceptor: Ravel's `ConfigCdiExtension` for an `@Inject @ConfigProperty` field of an interceptor,
+  Cervantes' `CervantesClaimExtension` for an `@Inject @Claim` one, unless a bean injects the same type.
+- **Repro**: `BceRegistrationInterceptorInfoTest#anInterceptorInfoGivesTheBeanTypesAndInjectionPoints` in
+  `vauban-core`, disabled until the fix: the extension sees `[]`.
+- **Cause**: `VaubanBceInterceptorInfo.types()`, `qualifiers()` and `injectionPoints()` return `List.of()`;
+  `InterceptorDescriptor` holds neither the bean types nor the injection points. The stubs of `VaubanBceObserverInfo`
+  are BUG-20261117-09.
+- **Next**: describe the interceptor as the managed bean of its class (`BceProcessor.process`'s `managedBean`), and
+  audit the bricks again: Ravel, Cervantes, Champollion and Mansart read `types()` or `injectionPoints()` in
+  `@Registration(types = Object.class)`. It changes what every brick's extensions see, so it gets its own change.
+- **Found by**: the audit of the bricks' `@Registration` methods for BUG-20261117-02.
+
+## BUG-20261117-03 — The processor's bean types stop at a superclass the compilation compiles
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`BeanDiscovery.collectBeanTypes`, `collectUnindexedSupertypes`), as `vauban-processor`
+  runs it
+- **Symptom**: in an application compiled with the annotation processor, a bean that extends a class the compilation
+  compiles and the index does not hold (an abstract class without annotations, say) lacks the types that class
+  brings: `vi.SerialService extends vi.Wrapping`, where `Wrapping implements Serializable`, is no `Serializable` to an
+  extension the processor runs, `@Registration(types = Serializable.class)` is not called for it, and the processor
+  resolves the injection points at build without that type. The container sees it at start.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionRunByTheProcessorSeesTheTypesABeanHasThroughASuperclassItCompiles`
+  in `vauban-processor`, disabled until the fix: the start sees `serializable vi.SerialService`, the processor
+  `[interceptor vi.Logger, serializable vi.Logger]`.
+- **Cause**: `collectBeanTypes` reads a supertype the index does not hold by loading it
+  (`collectUnindexedSupertypes`, through `DeploymentClasses.load`), and the processor's class loader does not load a
+  class the compilation compiles: the walk stops at `vi.Wrapping`.
+- **Next**: read such a supertype through the processor's description of the compilation (`IndexLookup.describe`, the
+  resolver the processor binds around the extension phases), around the processor's bean discovery too. It changes the
+  bean types, and so the resolution, the processor computes at build, so it gets its own change.
+- **Found by**: the tests of BUG-20261117-02, with a bean beside the interceptor that extends the same class.
+
+## BUG-20261117-02 — An extension the annotation processor runs sees no interceptor the compilation compiles
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/processor-sees-interceptors`
 - **Module**: `vauban-core` (`BceTypeMatcher.matchesInterceptorTypes`, `BceProcessor.processRegistration`), as
   `vauban-processor` runs them
 - **Symptom**: while the annotation processor runs the build compatible extensions of a compilation, a
   `@Registration(types = Object.class)` method with a `BeanInfo` parameter is called for the beans the compilation
   compiles, and for none of its interceptors. The container calls it for the interceptors too, whether the
   extensions run at start or `vauban:generate` froze them. An extension that acts on an interceptor in
-  `@Registration` does nothing for it at compile time.
+  `@Registration` does nothing for it at compile time. A method with an `InterceptorInfo` parameter is handed every
+  bean as well as the interceptors, at start, frozen and in the processor, and the deployment, or the compilation,
+  fails with `@Registration error: argument type mismatch`.
 - **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionRunByTheProcessorSeesTheInterceptorsTheCompilationCompiles`
-  in `vauban-processor`, disabled until the fix: `@Registration` sees `[vi.LoggedService]`, not
-  `[vi.LoggedService, vi.Logger]`.
-- **Cause** (hypothesis, not yet run in a debugger): `BceTypeMatcher.matchesInterceptorTypes` matches an interceptor
-  by loading its class through the processor's class loader, where a class the compilation compiles does not load, so
-  it matches nothing. A bean matches through its bean types, `java.lang.Object` among them, which do load. The index
-  matching `@Enhancement` already uses (`matchesClassByIndex`) is the likely fix; it changes what the extensions of
-  every brick see at compile time, so it gets its own change.
+  in `vauban-processor`: `@Registration` sees `[vi.LoggedService]`, not `[vi.LoggedService, vi.Logger]`.
+  `BceRegistrationInterceptorInfoTest` in `vauban-core`: `CDI deployment validation failed: @Registration error:
+  argument type mismatch`. `BceTypeMatcherMembersTest#anInterceptorThatDoesNotLoadMatchesTheTypesTheIndexAndTheProcessorDescribe`:
+  an interceptor whose class does not load matches not even `Object`.
+- **Cause** (confirmed by the tests above): `BceTypeMatcher.matchesInterceptorTypes` loaded the interceptor's class
+  through the class loader `BceProcessor.process` gets, the processor's own (`VaubanProcessor.class.getClassLoader()`)
+  when the processor runs it. A class the compilation compiles is not on it: `ClassNotFoundException`, caught, and the
+  interceptor matched no type, `Object` included. `processRegistration` leaves the interceptors out of the bean loop,
+  so nothing else reported them. A bean matches through its bean types, `java.lang.Object` among them, which load.
+  Separately, `processRegistration` handed a method of any parameter the beans it matched, and
+  `resolveRegistrationArgs` gives a `BeanInfo` to an `InterceptorInfo` parameter, which `Method.invoke` refuses.
+- **Fix**: `matchesInterceptorTypes` reads the interceptor's class and the classes and interfaces above it through
+  `IndexLookup.describe`: the index, and, while the processor runs the extension phases, its own description of the
+  classes the compilation compiles (the `unindexedResolver` of VAU-BCE-008). It matches by name, and loads only a class
+  nothing describes, one of the JDK say, as before; no class of the compilation is loaded. A method with an
+  `InterceptorInfo` parameter is called for the interceptors only, never for a bean nor for an archive class
+  (`BceProcessor.registrationTargets`). The processor, the container at start and `vauban:generate` that freezes the
+  extensions now call a method for the same interceptors and observers. They still differ on two points: the
+  processor's bean types of a bean that extends a class the compilation compiles (BUG-20261117-03), and the classes
+  that are no beans a `BeanInfo` method gets at start when no bean has one of its types (BUG-20261117-06).
+- **Bricks**: five extensions of the workspace declare a `@Registration`, all with a `BeanInfo` parameter. At compile
+  time they are now called for the interceptors the compilation compiles too, with an `InterceptorInfo` whose `types()`
+  and `injectionPoints()` are empty (BUG-20261117-04). Ravel's `ConfigCdiExtension` (`Object`, `Config`), Cervantes'
+  `CervantesClaimExtension` and Champollion's `JsonbCdiExtension` (`Object`) read only those, and do nothing new.
+  Mansart's `MansartDataExtension` (`Object`) adds the interceptor's class to `managedBeanClasses`, which it reads for a
+  repository implementation only. Foy's `FoyWebExtension` (`Servlet`, `Filter`, `EventListener`) is called for an
+  interceptor of those types only, and records it only with a `@WebServlet`, `@WebFilter` or `@WebListener`. None
+  throws, registers twice or synthesizes a bean twice; the container already made these calls at start.
+- **Verification**: red first, each on its assertion, on the main code of 85203ee4 plus one method that did nothing
+  new: a 4-argument `matchesInterceptorTypes(types, interceptor, lookup, loader)` that delegated to the 2-argument
+  matcher of 85203ee4, so the new unit tests compiled. The `vauban-core` runs used that code; the `vauban-processor`
+  runs used it installed in the separate local repository (`vauban-b02-red.log`: the unlabelled runs at its top,
+  `vauban-core` then `vauban-processor`, and "red run 5"; "red run 4" is a compilation failure and does not count).
+  `anExtensionRunByTheProcessorSeesTheInterceptorsTheCompilationCompiles`, enabled: `[vi.LoggedService]`;
+  `anExtensionRunByTheProcessorSeesNothingOfAVetoedPackage`, filled with the live interceptor: `[vi.LoggedService]`;
+  `registrationGetsTheSameInterceptorsFromTheProcessorAtStartAndFrozen` (an `InterceptorInfo` method over `Object`,
+  a `BeanInfo` method over `Serializable`, which the interceptor and its vetoed sibling have through `vi.Wrapping`,
+  an abstract class the compilation compiles and the index does not hold): `argument type mismatch` in the processor;
+  `BceRegistrationInterceptorInfoTest`: `argument type mismatch` at start; the two `BceTypeMatcherMembersTest`
+  interceptor cases: no match. Not on 85203ee4: `anInterceptorInfoParameterIsGivenNoClassOfTheDeploymentThatIsNoInterceptor`,
+  on the fix with the archive guard removed: `argument type mismatch` ("red run 6"); the interceptor binding case
+  (`@Registration(types = Traced.class)` with an `InterceptorInfo` parameter, no call), at start and in the three
+  places, on the fix with `matchesInterceptorTypes` mutated to match every type (`vauban-b02-r1-item9.log`). The processor test runs each extension in the processor, at start
+  and frozen (`vauban:generate`'s `freezeExtensions`), then starts the frozen deployment, where it does not run. Green:
+  `-o -Pquality clean install`, 2524 tests, 0 failures, 0 errors, 9 skipped (`vauban-core` 1461 with 6 skipped, the
+  repros of BUG-20261117-04, -06 and -09 among them; `vauban-processor` 316 with 3 skipped, the repros of
+  BUG-20261117-03, -08 and -10); CDI Lite TCK 774/774 and AtInject 1/1 (`-Ptck`).
 - **Found by**: BUG-20261117-01, whose processor test records what `@Registration` sees.
 
 ## BUG-20261117-01 — A package-level `@Vetoed` is ignored in a compiled application
