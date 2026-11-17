@@ -19,6 +19,14 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.annotation.AnnotationValues;
+import io.vidocq.vauban.core.langmodel.IndexLookup;
+import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
+import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
+import io.vidocq.vauban.core.langmodel.types.TypeMapper;
+import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
+import io.vidocq.vauban.core.types.TypeInfoUtils;
+import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.declarations.ParameterInfo;
@@ -27,16 +35,28 @@ import jakarta.enterprise.lang.model.types.TypeVariable;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Predicate;
 
+/**
+ * A member of an annotation type the index does not hold, read by reflection: the fallback of
+ * {@link VaubanClassConfig} for an annotation type {@code MetaAnnotations} gives an extension. It answers as the
+ * language model does for a member of an indexed annotation type: its return type, its receiver type (the annotation
+ * type: a member is an instance method), its declaring class and its annotations (BUG-20261118-02). They were
+ * {@code null}, {@code null}, {@code null} and none.
+ */
 final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declarations.MethodInfo {
 
     private final Method method;
+    private final IndexLookup lookup;
 
-    ReflectionMethodInfo(Method method) {
+    /** {@code lookup} describes the classes the types name; {@code null} leaves them stubs. */
+    ReflectionMethodInfo(Method method, IndexLookup lookup) {
         this.method = method;
+        this.lookup = lookup;
     }
 
     @Override
@@ -51,12 +71,13 @@ final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declar
 
     @Override
     public Type returnType() {
-        return null;
+        return TypeMapper.map(TypeInfoUtils.fromReflectType(method.getGenericReturnType()), lookup);
     }
 
+    /** The annotation type for an instance member, as {@code VaubanMethodInfo} gives it; {@code null} if static. */
     @Override
     public Type receiverType() {
-        return null;
+        return isStatic() ? null : new VaubanClassType(declaringName(), lookup);
     }
 
     @Override
@@ -76,17 +97,17 @@ final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declar
 
     @Override
     public boolean isStatic() {
-        return java.lang.reflect.Modifier.isStatic(method.getModifiers());
+        return Modifier.isStatic(method.getModifiers());
     }
 
     @Override
     public boolean isAbstract() {
-        return java.lang.reflect.Modifier.isAbstract(method.getModifiers());
+        return Modifier.isAbstract(method.getModifiers());
     }
 
     @Override
     public boolean isFinal() {
-        return java.lang.reflect.Modifier.isFinal(method.getModifiers());
+        return Modifier.isFinal(method.getModifiers());
     }
 
     @Override
@@ -96,7 +117,11 @@ final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declar
 
     @Override
     public ClassInfo declaringClass() {
-        return null;
+        return VaubanClassInfo.of(declaringName(), lookup);
+    }
+
+    private DotName declaringName() {
+        return DotName.of(method.getDeclaringClass().getName());
     }
 
     @Override
@@ -106,26 +131,32 @@ final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declar
 
     @Override
     public boolean hasAnnotation(Predicate<AnnotationInfo> predicate) {
-        return false;
+        return annotations().stream().anyMatch(predicate);
     }
 
     @Override
     public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return null;
+        var annotation = method.getAnnotation(annotationType);
+        return annotation == null ? null : info(annotation);
     }
 
     @Override
     public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return List.of();
+        var annotation = annotation(annotationType);
+        return annotation != null ? List.of(annotation) : List.of();
     }
 
     @Override
     public Collection<AnnotationInfo> annotations(Predicate<AnnotationInfo> predicate) {
-        return List.of();
+        return annotations().stream().filter(predicate).toList();
     }
 
     @Override
     public Collection<AnnotationInfo> annotations() {
-        return List.of();
+        return Arrays.stream(method.getDeclaredAnnotations()).map(this::info).toList();
+    }
+
+    private AnnotationInfo info(Annotation annotation) {
+        return new VaubanAnnotationInfo(AnnotationValues.toAnnotationInfo(annotation), lookup);
     }
 }

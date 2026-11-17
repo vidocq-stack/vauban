@@ -5,6 +5,50 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-03 — `ClassConfig.info()` is `null` for an annotation type outside the index
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-core` (`extensions.VaubanClassConfig`)
+- **Symptom**: in `@Discovery`, `MetaAnnotations.addQualifier(Graded.class).info()` is `null` when the index does not
+  hold `Graded`: an extension that reads `info().methods()` records nothing, and the start goes on without a word.
+  The language model never gives a `null` `ClassInfo`; for an indexed annotation type, `info()` describes it.
+- **Repro**: `AnnotationMembersOutsideTheIndexTest#theMembersOfAnAnnotationOutsideTheIndex` in `vauban-core`,
+  `@Disabled` with this id. Red with it enabled, on the BUG-20261118-02 fix (`stack-l1-r1.log`, "R1 BUG-20261118-02
+  with the fix; ClassInfo path (BUG-20261118-03 repro) still enabled, expected red": `but was: <[]>`).
+- **Cause**: the meta-annotation constructor of `VaubanClassConfig` looks the type up in the index alone
+  (`lookup.getClass`) and keeps `null` when it is missing; its method configs fall back to reflection
+  (`ReflectionMethodInfo`, BUG-20261118-02). Why the extension's `NullPointerException` is not reported is not
+  investigated.
+- **Fix idea**: describe the type with `IndexLookup.find`, as BUG-20261117-31 does for a class outside the index, and
+  keep the reflective member fallback for a type nothing describes.
+- **Found by**: the test of BUG-20261118-02.
+
+## BUG-20261118-02 — The members of an annotation type outside the index have no return type
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`extensions.ReflectionMethodInfo`, `extensions.VaubanClassConfig`)
+- **Symptom**: in `@Discovery`, `MetaAnnotations.addQualifier(Graded.class).methods()`, for an annotation type the
+  index does not hold, gives members whose `info().returnType()`, `receiverType()` and `declaringClass()` are `null`,
+  and whose `annotations()` are empty though `hasAnnotation(Nonbinding.class)` is true. The language model forbids a
+  `null` return type and declaring class, and a member is an instance method, with a receiver type. For an indexed
+  annotation type, `VaubanMethodInfo` gives them all.
+- **Repro**: `AnnotationMembersOutsideTheIndexTest#theMethodConfigsOfAnAnnotationOutsideTheIndex` in `vauban-core`:
+  the members of `Graded` (a `String`, a `@Nonbinding int`, a `Class<?>` and an enum array), indexed and not. Red
+  on 16088760 (`stack-l1-r1.log`, "R1 BUG-20261118-02 red": `returns null, receiver null, declared by null`, and no
+  `Nonbinding`, outside the index; the same answers as expected when indexed).
+- **Cause**: `ReflectionMethodInfo`, the reflective fallback `VaubanClassConfig` uses for an annotation type outside
+  the index, answered `null` or empty for everything but the name, the modifiers and `hasAnnotation(Class)`.
+- **Fix**: `ReflectionMethodInfo` takes the language model's `IndexLookup` and gives the generic return type through
+  `TypeInfoUtils.fromReflectType` and `TypeMapper`, the annotation type as receiver type and declaring class
+  (`VaubanClassInfo.of`), and the member's annotations as `VaubanAnnotationInfo`, as `VaubanMethodInfo` does for an
+  indexed annotation type. It stays the reflective fallback it was (`REFLECTIVE_FALLBACKS`).
+- **Who sees the change**: an extension that reads the members of a qualifier or an interceptor binding it adds in
+  `@Discovery`, of a type outside the index, gets their types and annotations.
+- **Verification**: green in `stack-l1-r1.log` ("R1 BUG-20261118-02 with the fix", the `ClassConfig` test).
+- **Found by**: the review of BUG-20261117-54, lane L1 round 1.
+
 ## BUG-20261117-54 — A constructor's `name()` is `<init>` and its `returnType()` is `void`
 
 - **Date**: 2026-11-17

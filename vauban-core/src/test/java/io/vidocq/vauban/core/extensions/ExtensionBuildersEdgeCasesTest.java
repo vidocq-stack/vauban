@@ -58,7 +58,7 @@ class ExtensionBuildersEdgeCasesTest {
 
     @Test
     void anAnnotationThatCannotNameItsTypeIsNotAdded() {
-        var config = new VaubanMethodConfig(new ReflectionMethodInfo(Object.class.getMethods()[0]));
+        var config = new VaubanMethodConfig(new ReflectionMethodInfo(Object.class.getMethods()[0], null));
         Annotation broken = new Annotation() {
             @Override
             public Class<? extends Annotation> annotationType() {

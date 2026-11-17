@@ -63,7 +63,7 @@ public final class VaubanClassConfig implements ClassConfig {
             }
         } else {
             for (var m : annotationType.getDeclaredMethods()) {
-                methodConfigs.add(new VaubanMethodConfig(new ReflectionMethodInfo(m)));
+                methodConfigs.add(new VaubanMethodConfig(new ReflectionMethodInfo(m, lookup)));
             }
         }
     }
