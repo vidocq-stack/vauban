@@ -79,7 +79,7 @@ final class ReflectionValidator {
                 validateNormalScopedPublicFields(clazz, errors);
                 validateTypedValues(clazz, errors);
                 boolean bean = mayBeABean(clazz, descriptorBeans);
-                validateInjectFields(clazz, errors);
+                validateInjectFields(clazz, bean, errors);
                 validateMethods(clazz, bean, errors);
                 if (bean) {
                     validateInheritedInjectionPoints(clazz, descriptorBeans, errors);
@@ -268,11 +268,12 @@ final class ReflectionValidator {
         }
     }
 
-    private static void validateInjectFields(Class<?> clazz, List<String> errors) {
+    private static void validateInjectFields(Class<?> clazz, boolean bean, List<String> errors) {
         for (var field : clazz.getDeclaredFields()) {
             if (!field.isAnnotationPresent(jakarta.inject.Inject.class)) continue;
-            validateNoRawParameterized(field.getGenericType(), field.getType(),
-                    clazz.getName() + "." + field.getName(), errors);
+            var location = clazz.getName() + "." + field.getName();
+            validateNoRawParameterized(field.getGenericType(), field.getType(), location, errors);
+            validateNoTypeVariable(bean, field.getGenericType(), location, errors);
         }
     }
 
@@ -366,9 +367,10 @@ final class ReflectionValidator {
 
     /**
      * An injection point of a type variable is a definition error (CDI 4.1, 5.2.3): an observer's parameter besides
-     * the event parameter, a disposer's besides the disposed one, a producer method's, an initializer's or a bean
-     * constructor's, of a class that {@link #mayBeABean may be a bean}. A subclass that inherits the observer or the
-     * initializer of a class that is none gives the type variable its class (BUG-20261117-16, BUG-20261117-30).
+     * the event parameter, a disposer's besides the disposed one, a producer method's, an initializer's, a bean
+     * constructor's or an {@code @Inject} field, of a class that {@link #mayBeABean may be a bean}. A subclass that
+     * inherits the observer, the initializer or the field of a class that is none gives the type variable its class
+     * (BUG-20261117-16, BUG-20261117-30, BUG-20261117-29).
      */
     private static void validateNoTypeVariable(boolean bean, Type type, String location, List<String> errors) {
         if (bean && type instanceof TypeVariable<?> variable) {
@@ -377,10 +379,10 @@ final class ReflectionValidator {
     }
 
     /**
-     * The initializers a class that may be a bean inherits from superclasses that are none, read as the class gives
-     * their type variables, as {@code IndexClassValidator} reads them: a parameter the class leaves a type variable is
-     * an injection point of a type variable (CDI 4.1, 5.2.3; BUG-20261117-30). An initializer a class below overrides
-     * is none.
+     * The {@code @Inject} fields and the initializers a class that may be a bean inherits from superclasses that are
+     * none, read as the class gives their type variables, as {@code IndexClassValidator} reads them: one the class
+     * leaves a type variable is an injection point of a type variable (CDI 4.1, 5.2.3; BUG-20261117-29,
+     * BUG-20261117-30). An initializer a class below overrides is none.
      */
     private static void validateInheritedInjectionPoints(Class<?> clazz, Predicate<Class<?>> descriptorBeans,
             List<String> errors) {
@@ -388,9 +390,21 @@ final class ReflectionValidator {
         var overridden = overridable(clazz);
         for (var type = clazz.getSuperclass(); type != null && type != Object.class; type = type.getSuperclass()) {
             if (!mayBeABean(type, descriptorBeans)) {
+                validateInheritedFields(clazz, type, mapping, errors);
                 validateInheritedInitializers(clazz, type, mapping, overridden, errors);
             }
             overridden.addAll(overridable(type));
+        }
+    }
+
+    /** The {@code @Inject} fields {@code clazz} inherits from {@code type}, a superclass that is no bean. */
+    private static void validateInheritedFields(Class<?> clazz, Class<?> type, Map<TypeVariable<?>, Type> mapping,
+            List<String> errors) {
+        for (var field : type.getDeclaredFields()) {
+            if (field.isAnnotationPresent(jakarta.inject.Inject.class) && !Modifier.isStatic(field.getModifiers())) {
+                reportLeftTypeVariable(clazz, field.getGenericType(), mapping, clazz.getName() + "." + field.getName(),
+                        errors);
+            }
         }
     }
 

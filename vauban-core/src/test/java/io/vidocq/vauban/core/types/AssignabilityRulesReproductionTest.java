@@ -38,7 +38,6 @@ import jakarta.enterprise.inject.spi.InjectionPoint;
 import jakarta.enterprise.util.TypeLiteral;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -391,6 +390,21 @@ class AssignabilityRulesReproductionTest {
     public static class GadgetField<T> {
         @Inject
         T gadget;
+    }
+
+    /** Not a bean: vetoed, with an {@code @Inject} field of its type variable. */
+    @jakarta.enterprise.inject.Vetoed
+    public static class VetoedGadgetField<T> {
+        @Inject
+        T gadget;
+    }
+
+    @Dependent
+    public static class GadgetFieldOfVetoed extends VetoedGadgetField<Gadget> {
+    }
+
+    @Dependent
+    public static class GenericFieldOfVetoed<T> extends VetoedGadgetField<T> {
     }
 
     /** Not a bean: abstract, with an initializer of its type variable that its subclass gives a class. */
@@ -1125,12 +1139,11 @@ class AssignabilityRulesReproductionTest {
 
     /**
      * An {@code @Inject} field of a type variable is an injection point of a type variable, a definition error (CDI
-     * 4.1, 5.2.3; TCK audit {@code legal_injection_point_types} c). No validator checks a field for one, and the
-     * start looks the field up by its erasure, {@code Object}: it reports an ambiguous dependency, a deployment
+     * 4.1, 5.2.3; TCK audit {@code legal_injection_point_types} c). No validator checked a field for one, and the
+     * start looked the field up by its erasure, {@code Object}: it reported an ambiguous dependency, a deployment
      * problem (BUG-20261117-29).
      */
     @Test
-    @Disabled("BUG-20261117-29: an @Inject field of a type variable is not a definition error")
     @DisplayName("an @Inject field of a type variable is a definition error")
     void anInjectFieldOfATypeVariableIsADefinitionError() {
         var builder = VaubanContainer.builder().addBeanClass(Gadget.class).addBeanClass(GadgetField.class);
@@ -1138,6 +1151,28 @@ class AssignabilityRulesReproductionTest {
         var refused = assertThrows(DefinitionException.class, builder::build, "no definition error");
         assertTrue(refused.getMessage().contains(TYPE_VARIABLE_PARAMETER)
                 && refused.getMessage().contains(GadgetField.class.getName() + ".gadget"), refused::getMessage);
+    }
+
+    /**
+     * An {@code @Inject} field a bean inherits from a vetoed class is given what the bean class gives its type
+     * variable, {@code T} as {@code Gadget}, as the CDI TCK's {@code inheritance.generics.Foo} has it; a bean class
+     * that passes its own type variable on, {@code GenericFieldOfVetoed<T>}, leaves the field an injection point of
+     * a type variable, a definition error (BUG-20261117-29).
+     */
+    @Test
+    @DisplayName("an inherited @Inject field of a type variable is legal unless the bean class leaves it one")
+    void anInheritedInjectFieldOfATypeVariableIsLegalUnlessTheBeanClassLeavesItOne() {
+        var legal = VaubanContainer.builder().addBeanClass(Gadget.class).addBeanClass(VetoedGadgetField.class)
+                .addBeanClass(GadgetFieldOfVetoed.class);
+        var illegal = VaubanContainer.builder().addBeanClass(Gadget.class).addBeanClass(VetoedGadgetField.class)
+                .addBeanClass(GenericFieldOfVetoed.class);
+
+        try (var container = assertDoesNotThrow(legal::build, "the container refused the deployment")) {
+            assertInstanceOf(Gadget.class, container.select(GadgetFieldOfVetoed.class).gadget, "what the field got");
+        }
+        var refused = assertThrows(DefinitionException.class, illegal::build, "no definition error");
+        assertTrue(refused.getMessage().contains(TYPE_VARIABLE_PARAMETER + GenericFieldOfVetoed.class.getName()
+                + ".gadget"), refused::getMessage);
     }
 
     /**

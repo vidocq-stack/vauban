@@ -66,6 +66,16 @@ class TypeVariableInjectionPointTest {
     public static class SetterSub extends SetterBase<Gadget> {
     }
 
+    /** No bean-defining annotation: no bean, and its field is its subclasses' (BUG-20261117-29, review round 1). */
+    public static class FieldBase<T> {
+        @Inject
+        T got;
+    }
+
+    @Dependent
+    public static class FieldSub extends FieldBase<Gadget> {
+    }
+
     @Vetoed
     public static class VetoedSetter<T> {
         T got;
@@ -109,6 +119,17 @@ class TypeVariableInjectionPointTest {
 
         try (var container = assertDoesNotThrow(builder::build, "the container refused the deployment")) {
             assertInstanceOf(Gadget.class, container.select(SetterSub.class).got, "what the initializer got");
+        }
+    }
+
+    @Test
+    @DisplayName("an @Inject field a class without a bean-defining annotation declares is its subclass's")
+    void anInjectFieldOfAClassWithoutABeanDefiningAnnotationIsItsSubclasss() {
+        var builder = VaubanContainer.builder().addBeanClass(Gadget.class).addBeanClass(FieldBase.class)
+                .addBeanClass(FieldSub.class);
+
+        try (var container = assertDoesNotThrow(builder::build, "the container refused the deployment")) {
+            assertInstanceOf(Gadget.class, container.select(FieldSub.class).got, "what the field got");
         }
     }
 

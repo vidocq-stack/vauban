@@ -341,9 +341,12 @@ public final class IndexClassValidator {
     }
 
     private void validateInjectFields(ClassInfo classInfo, List<String> errors) {
+        var bean = mayBeABean(classInfo);
         for (var field : classInfo.fields()) {
             if (has(field.annotations(), INJECT)) {
-                validateNoRawParameterized(field.type(), classInfo.name().value() + "." + field.name(), errors);
+                var location = classInfo.name().value() + "." + field.name();
+                validateNoRawParameterized(field.type(), location, errors);
+                validateNoTypeVariable(bean, field.type(), location, errors);
             }
         }
     }
@@ -405,11 +408,13 @@ public final class IndexClassValidator {
     }
 
     /**
-     * The initializers a class that may be a bean inherits from superclasses that are none, read as the class gives
-     * their type variables: {@code Sub extends VetoedSetter<Gadget>} gives {@code @Inject void set(T t)} a class, and
-     * {@code Sub<T> extends VetoedSetter<T>} leaves it a type variable, a definition error (CDI 4.1, 5.2.3;
-     * BUG-20261117-30). An initializer a class below overrides is none. A superclass that may be a bean reports its
-     * own initializers.
+     * The {@code @Inject} fields and the initializers a class that may be a bean inherits from superclasses that are
+     * none, read as the class gives their type variables: {@code Foo extends Bar<String, Qux>} gives {@code Bar}'s
+     * {@code @Inject T1 t1} a class, as the CDI TCK's {@code inheritance.generics} has it, and
+     * {@code Sub<T> extends Bar<T, Qux>} leaves it a type variable, a definition error (CDI 4.1, 5.2.3;
+     * BUG-20261117-29); so does {@code Sub<T> extends VetoedSetter<T>} the parameter of {@code @Inject void set(T t)}
+     * (BUG-20261117-30). An initializer a class below overrides is none. A superclass that may be a bean reports its
+     * own injection points.
      */
     private void validateInheritedInjectionPoints(ClassInfo classInfo, List<String> errors) {
         Map<String, TypeInfo> given = Map.of();
@@ -422,6 +427,12 @@ public final class IndexClassValidator {
             given = typeArguments(superClass, generic, given, own);
             own = false;
             if (!mayBeABean(superClass)) {
+                for (var field : superClass.fields()) {
+                    if (has(field.annotations(), INJECT) && !field.isStatic()) {
+                        reportLeftTypeVariable(field.type(), given, classInfo.name().value() + "." + field.name(),
+                                errors);
+                    }
+                }
                 for (var method : methods(superClass)) {
                     if (!has(method.annotations(), INJECT) || method.isStatic()
                             || !method.isPrivate() && overridden.contains(signature(method))) {
@@ -618,9 +629,10 @@ public final class IndexClassValidator {
     /**
      * As reflection judged it: an injection point of a type variable is a definition error (CDI 4.1, 5.2.3), here an
      * observer's parameter besides the event parameter, a disposer's besides the disposed one, a producer method's, an
-     * initializer's or a bean constructor's, of a class that {@link #mayBeABean may be a bean}. A subclass that
-     * inherits the observer or the initializer of a class that is none gives the type variable its class, as the CDI
-     * TCK's {@code MemberLevelInheritanceTest} has it (BUG-20261117-16, BUG-20261117-30).
+     * initializer's, a bean constructor's or an {@code @Inject} field, of a class that {@link #mayBeABean may be a
+     * bean}. A subclass that inherits the observer, the initializer or the field of a class that is none gives the
+     * type variable its class, as the CDI TCK's {@code MemberLevelInheritanceTest} has it (BUG-20261117-16,
+     * BUG-20261117-30, BUG-20261117-29).
      */
     private static void validateNoTypeVariable(boolean bean, TypeInfo type, String location, List<String> errors) {
         if (bean && type instanceof TypeInfo.TypeVariable(var name, _)) {

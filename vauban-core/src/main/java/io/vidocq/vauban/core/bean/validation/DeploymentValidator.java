@@ -182,7 +182,10 @@ public final class DeploymentValidator {
                         "Illegal injection of built-in metadata type with type variable or raw type: "
                                 + ip.description() + MSG_OF_TYPE + ip.requiredType(),
                         bean));
-            } else if (!isBuiltInType(ip)) {
+            } else if (!isBuiltInType(ip) && !(ip.requiredType() instanceof TypeInfo.TypeVariable)) {
+                // An injection point of a type variable is a definition error the definition rules report
+                // (CDI 4.1, 5.2.3): looked up by its erasure, it was reported unsatisfied or ambiguous
+                // (BUG-20261117-29)
                 validateResolution(ip, bean, errors);
             }
         }

@@ -201,6 +201,42 @@ class IndexClassValidatorTest {
         @Override void set(T value) { /* no behaviour needed */ }
     }
 
+    @Dependent
+    public static class TypeVariableInjectField<T> {
+        @Inject T value;
+    }
+
+    @jakarta.enterprise.inject.Vetoed
+    public static class VetoedTypeVariableInjectField<T> {
+        @Inject T value;
+    }
+
+    public abstract static class AbstractTypeVariableInjectField<T> {
+        @Inject T value;
+    }
+
+    @Dependent
+    public static class GenericInjectFieldOfVetoed<T> extends VetoedTypeVariableInjectField<T> {}
+
+    @Dependent
+    public static class TextInjectFieldOfVetoed extends VetoedTypeVariableInjectField<String> {}
+
+    @Dependent @SuppressWarnings("rawtypes")
+    public static class RawInjectFieldOfVetoed extends VetoedTypeVariableInjectField {}
+
+    public abstract static class MiddleInjectField<U> extends AbstractTypeVariableInjectField<U> {}
+
+    @Dependent
+    public static class DeepInjectField<V> extends MiddleInjectField<V> {}
+
+    /** No bean-defining annotation: no bean, its field is its subclasses' (BUG-20261117-29, review round 1). */
+    public static class NoBeanTypeVariableInjectField<T> {
+        @Inject T value;
+    }
+
+    @Dependent
+    public static class TextInjectFieldOfNoBean extends NoBeanTypeVariableInjectField<String> {}
+
     /** Its superclass is not in the index: the index cannot tell which annotations it inherits. */
     @Dependent
     public static class OutsideTheIndex extends java.util.AbstractList<String> {
@@ -220,7 +256,11 @@ class IndexClassValidatorTest {
             VetoedTypeVariableInitializerParameter.class, AbstractTypeVariableInitializerParameter.class,
             NoBeanTypeVariableInitializerParameter.class, NoBeanTypeVariableObserverParameter.class,
             GenericInitializerOfVetoed.class, TextInitializerOfVetoed.class, TextInitializerOfNoBean.class,
-            OverridingInitializerOfVetoed.class);
+            OverridingInitializerOfVetoed.class,
+            TypeVariableInjectField.class, VetoedTypeVariableInjectField.class, AbstractTypeVariableInjectField.class,
+            GenericInjectFieldOfVetoed.class, TextInjectFieldOfVetoed.class, RawInjectFieldOfVetoed.class,
+            MiddleInjectField.class, DeepInjectField.class, NoBeanTypeVariableInjectField.class,
+            TextInjectFieldOfNoBean.class);
 
     /**
      * The {@code package-info} classes the index reads whether a package is vetoed from: one {@code @Vetoed}, one
@@ -261,7 +301,8 @@ class IndexClassValidatorTest {
             TypeVariableObserverParameter.class, TypeVariableDisposerParameter.class,
             TypeVariableProducerParameter.class, MarkedTypeVariableObserver.class,
             TypeVariableInitializerParameter.class, TypeVariableConstructorParameter.class,
-            GenericInitializerOfVetoed.class})
+            GenericInitializerOfVetoed.class,
+            TypeVariableInjectField.class, GenericInjectFieldOfVetoed.class, DeepInjectField.class})
     @DisplayName("the index reports what reflection reports")
     void sameErrorsAsReflection(Class<?> beanClass) {
         var index = index();
@@ -325,16 +366,46 @@ class IndexClassValidatorTest {
     }
 
     /**
-     * A class that is no bean, vetoed, in a vetoed package or abstract, has no observer or initializer of its own: a
-     * subclass inherits it and gives the type variable a class, as the CDI TCK's {@code inheritance.generics.Bar} and
-     * {@code Foo} (BUG-20261117-16, BUG-20261117-30).
+     * An {@code @Inject} field of a type variable is an injection point of a type variable, a definition error (CDI
+     * 4.1, 5.2.3; TCK audit {@code legal_injection_point_types} c), at build as at start. No rule checked a field for
+     * one, and the start looked it up by its erasure. A field inherited from a class that is no bean counts when the
+     * bean class leaves it a type variable, through one superclass or more (BUG-20261117-29).
+     */
+    @Test
+    @DisplayName("an @Inject field of a type variable is a definition error")
+    void typeVariableInjectField() {
+        var index = index();
+
+        var validator = validator(index);
+
+        assertEquals(List.of("Injection point has type variable type T: " + TypeVariableInjectField.class.getName()
+                        + ".value"),
+                validator.validate(index.getClassByName(DotName.of(TypeVariableInjectField.class.getName()))
+                        .orElseThrow()).orElseThrow());
+        assertEquals(List.of("Injection point has type variable type T: " + GenericInjectFieldOfVetoed.class.getName()
+                        + ".value"),
+                validator.validate(index.getClassByName(DotName.of(GenericInjectFieldOfVetoed.class.getName()))
+                        .orElseThrow()).orElseThrow());
+        assertEquals(List.of("Injection point has type variable type V: " + DeepInjectField.class.getName()
+                        + ".value"),
+                validator.validate(index.getClassByName(DotName.of(DeepInjectField.class.getName()))
+                        .orElseThrow()).orElseThrow());
+    }
+
+    /**
+     * A class that is no bean, vetoed, in a vetoed package or abstract, has no observer, initializer or injected field
+     * of its own: a subclass inherits it and gives the type variable a class, as the CDI TCK's
+     * {@code inheritance.generics.Bar} and {@code Foo} (BUG-20261117-16, BUG-20261117-30, BUG-20261117-29).
      */
     @ParameterizedTest
     @ValueSource(classes = {VetoedTypeVariableObserverParameter.class, AbstractTypeVariableObserverParameter.class,
             VetoedTypeVariableProducerParameter.class, PackageVetoedTypeVariableObserver.class,
             VetoedTypeVariableInitializerParameter.class, AbstractTypeVariableInitializerParameter.class,
             NoBeanTypeVariableInitializerParameter.class, NoBeanTypeVariableObserverParameter.class,
-            TextInitializerOfVetoed.class, TextInitializerOfNoBean.class, OverridingInitializerOfVetoed.class})
+            TextInitializerOfVetoed.class, TextInitializerOfNoBean.class, OverridingInitializerOfVetoed.class,
+            VetoedTypeVariableInjectField.class, AbstractTypeVariableInjectField.class, TextInjectFieldOfVetoed.class,
+            RawInjectFieldOfVetoed.class, MiddleInjectField.class, NoBeanTypeVariableInjectField.class,
+            TextInjectFieldOfNoBean.class})
     @DisplayName("an injection point of a type variable in a class that is no bean, or given a class, is no error")
     void typeVariableParametersOfAClassThatIsNoBean(Class<?> beanClass) {
         var index = index();

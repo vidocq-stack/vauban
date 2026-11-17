@@ -1100,9 +1100,9 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-29 — An `@Inject` field of a type variable is not a definition error
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`)
 - **Module**: `vauban-core` (`ClassValidator.validateFields`, `IndexClassValidator` and `ReflectionValidator`,
-  `validateInjectFields`)
+  `validateInjectFields`, `DeploymentValidator`)
 - **Symptom**: the bean `@Dependent GadgetField<T> { @Inject T gadget; }` has an injection point of a type variable,
   a definition error (CDI 4.1, 5.2.3; TCK audit `legal_injection_point_types` c). The start reports a deployment
   problem instead, the field looked up by its erasure: `DeploymentException: CDI deployment validation failed: -
@@ -1110,11 +1110,42 @@ suspected cause, status. Updated on every investigation.
   bounds=[]]. Matching beans: [...$Gadget, ...$GadgetField]`.
 - **Repro**: `AssignabilityRulesReproductionTest#anInjectFieldOfATypeVariableIsADefinitionError` in `vauban-core`,
   disabled; red when enabled, on a3d8c032, fix round 2b of BUG-20261117-16 (`vauban-b16-red.log`, "Red run 16").
-- **Cause** (by reading): no validator checks a field for a bare type variable: `ClassValidator.validateFields`
+- **Cause** (proved): no validator checks a field for a bare type variable: `ClassValidator.validateFields`
   checks `@Produces` with `@Inject` and `final`, and `validateInjectFields` of the index and of the reflection
   validators check for a raw `Event` or `Instance` only. A fix needs the "may be a bean" scope of
   BUG-20261117-16: the CDI TCK's vetoed `inheritance.generics.Bar<T1, T2>` has `@Inject T1 t1`, which its bean
   subclass `Foo extends Bar<String, Qux>` gives a class.
+- **Fix**: `validateInjectFields` of `IndexClassValidator` and `ReflectionValidator` reports an `@Inject` field of a
+  type variable on a class that may be a bean, `Injection point has type variable type T: <class>.<field>`, and one
+  inherited from superclasses that are none, read as the class gives their type variables: `Foo extends
+  Bar<String, Qux>` gives `T1` a class, no error; `GenericFieldOfVetoed<T> extends VetoedGadgetField<T>` leaves it
+  `T`, an error, through one superclass or more. The processor's validator describes a superclass it did not index,
+  a vetoed one, from the compiler's elements: it skipped every class that extends one. `DeploymentValidator` no
+  longer looks an injection point of a type variable up by its erasure, which reported it ambiguous or unsatisfied:
+  the build failed on that error before the definition warning.
+- **Who sees the change**: the start throws a `DefinitionException` where it threw a `DeploymentException`, the
+  build warns of the definition error where it failed with `Ambiguous dependency` or `Unsatisfied dependency`, and a
+  bean that leaves an inherited `@Inject` field a type variable no longer starts. The processor now validates a bean
+  class whose superclass it did not index, and may warn of its other definition errors at build.
+- **Review round 1** (2026-11-18): the check refused a legal deployment. A concrete `FieldBase<T> { @Inject T got; }`
+  without a bean-defining annotation is no bean under annotated discovery, and the bean `FieldSub extends
+  FieldBase<Gadget>` gives the field its class; the start threw `DefinitionException ... FieldBase.got`, while the
+  processor, which validates bean classes only, said nothing. Fix: the "may be a bean" rule of BUG-20261117-30's
+  round 1 (a bean-defining annotation or a bean descriptor, as bean discovery decides), and the field walk joins the
+  initializer walk of the superclasses that are no bean (`validateInheritedInjectionPoints` in both validators); a
+  static field is no injection point. Verification: `stack-l3-red.log`, "BUG-20261117-29 review round 1 red: the new
+  field tests, main code of the first 'field of a type variable' commit": the legal `FieldSub` refused at start
+  (`TypeVariableInjectionPointTest#anInjectFieldOfAClassWithoutABeanDefiningAnnotationIsItsSubclasss`), and the index
+  reporting `NoBeanTypeVariableInjectField`; the processor's
+  `anInjectFieldOfAClassWithoutABeanDefiningAnnotationIsInheritedAtBuildAtStartAndFrozen` was green before too (a
+  scanned class path). Green: `stack-l3-green.log`, "BUG-20261117-29 review round 1 fix" (vauban-core 1648 tests, 13
+  skipped; vauban-processor 388, 16 skipped), then `stack-l3-r1-b29-full.log`.
+- **Verification**: red on the main code of "no erased-class fallback for an injection" (`stack-l3-red.log`,
+  "BUG-20261117-29 red": a
+  `DeploymentException` for `GadgetField`, nothing for `GenericFieldOfVetoed`, no error from the index; "red:
+  vauban-processor": the build failed with `Ambiguous dependency`). Green: `stack-l3-green.log`, "BUG-20261117-29
+  fix, round 2" (vauban-core 1634 tests, 13 skipped; vauban-processor 385, 16 skipped), and the whole reactor,
+  `stack-l3-b29-full.log`.
 - **Found by**: the review of fix round 2b of BUG-20261117-16.
 
 ## BUG-20261117-28 — A non-contextual injection point falls back on its erased class

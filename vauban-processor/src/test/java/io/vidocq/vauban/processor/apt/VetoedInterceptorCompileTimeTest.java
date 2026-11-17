@@ -1154,6 +1154,72 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * An {@code @Inject} field of a type variable is an injection point of a type variable, a definition error (CDI
+     * 4.1, 5.2.3), the field declared by the bean class, {@code GadgetField<T>}, or inherited from a vetoed class
+     * that the bean class leaves it a type variable, {@code GenericFieldOfVetoed<T> extends VetoedGadgetField<T>}. No
+     * rule checked a field, and the start looked {@code GadgetField}'s up by its erasure (BUG-20261117-29).
+     */
+    @Test
+    @DisplayName("an @Inject field of a type variable is a definition error, at build, at start and frozen")
+    void anInjectFieldOfATypeVariableIsADefinitionErrorAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Gadget", DEPENDENT + "public class Gadget {\n}");
+        putType(sources, "GadgetField", DEPENDENT + """
+                public class GadgetField<T> {
+                    @jakarta.inject.Inject
+                    T gadget;
+                }""");
+        putType(sources, "VetoedGadgetField", VETOED + """
+
+                public class VetoedGadgetField<T> {
+                    @jakarta.inject.Inject
+                    T gadget;
+                }""");
+        putType(sources, "GenericFieldOfVetoed", DEPENDENT
+                + "public class GenericFieldOfVetoed<T> extends VetoedGadgetField<T> {\n}");
+        putType(sources, "GadgetFieldOfVetoed", DEPENDENT
+                + "public class GadgetFieldOfVetoed extends VetoedGadgetField<Gadget> {\n}");
+
+        var refused = assertDefinitionErrorsAtBuildAtStartAndFrozen(sources, List.of(
+                "Injection point has type variable type T: vi.types.GadgetField.gadget",
+                "Injection point has type variable type T: vi.types.GenericFieldOfVetoed.gadget"));
+        assertFalse(refused.contains("GadgetFieldOfVetoed.gadget"), refused);
+    }
+
+    /**
+     * A concrete class without a bean-defining annotation is no bean in the annotated discovery mode: the
+     * {@code @Inject T gadget} field {@code PlainGadgetField<T>} declares is its bean subclass's, given a
+     * {@code Gadget}. The start refused it as an injection point of a type variable, and the build did not warn
+     * (BUG-20261117-29, review round 1).
+     */
+    @Test
+    @DisplayName("an @Inject field of a class without a bean-defining annotation is inherited, build, start, frozen")
+    void anInjectFieldOfAClassWithoutABeanDefiningAnnotationIsInheritedAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Gadget", DEPENDENT + "public class Gadget {\n}");
+        putType(sources, "PlainGadgetField", """
+                public class PlainGadgetField<T> implements java.util.function.Supplier<Object> {
+                    @jakarta.inject.Inject
+                    T gadget;
+                    @Override
+                    public Object get() {
+                        return gadget.getClass().getName();
+                    }
+                }""");
+        putType(sources, "GadgetFieldOfPlain", DEPENDENT
+                + "public class GadgetFieldOfPlain extends PlainGadgetField<Gadget> {\n}");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        assertTrue(built.messages().stream().noneMatch(m -> m.contains("type variable type")),
+                () -> String.join("\n", built.messages()));
+        var gets = (StartedCheck) (container, loader) -> assertEquals(TYPES + "Gadget",
+                hello(container, loader.loadClass(TYPES + "GadgetFieldOfPlain")), "what the field got");
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, gets);
+        assertFalse(seen.start().isEmpty(), "the extension saw no bean");
+    }
+
+    /**
      * The initializer {@code GadgetSetterOfAbstract} inherits from {@code AbstractGadgetSetter<T>} is given a
      * {@code Gadget}, at start and frozen; the build does not warn (BUG-20261117-30).
      */
