@@ -26,20 +26,31 @@ import jakarta.enterprise.lang.model.types.ClassType;
 import jakarta.enterprise.lang.model.types.ParameterizedType;
 import jakarta.enterprise.lang.model.types.Type;
 
-import java.lang.annotation.Annotation;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Predicate;
 
-public final class VaubanParameterizedType implements ParameterizedType {
+public final class VaubanParameterizedType implements ParameterizedType, AnnotatedTypeUse {
 
     private final VaubanClassType genericClass;
     private final List<Type> typeArguments;
+    /** The annotations on this use of the type (BUG-20261117-60); they take no part in its equality. */
+    private final List<AnnotationInfo> annotations;
 
     public VaubanParameterizedType(DotName rawType, List<Type> typeArguments, IndexLookup lookup) {
+        this(rawType, typeArguments, lookup, List.of());
+    }
+
+    /** The type {@code rawType<typeArguments>}, used with {@code annotations} on it (BUG-20261117-60). */
+    public VaubanParameterizedType(DotName rawType, List<Type> typeArguments, IndexLookup lookup,
+            List<AnnotationInfo> annotations) {
         this.genericClass = new VaubanClassType(rawType, lookup);
         this.typeArguments = List.copyOf(typeArguments);
+        this.annotations = List.copyOf(annotations);
+    }
+
+    @Override
+    public List<AnnotationInfo> annotations() {
+        return annotations;
     }
 
     @Override
@@ -50,36 +61,6 @@ public final class VaubanParameterizedType implements ParameterizedType {
     @Override
     public List<Type> typeArguments() {
         return typeArguments;
-    }
-
-    @Override
-    public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return false;
-    }
-
-    @Override
-    public boolean hasAnnotation(Predicate<AnnotationInfo> predicate) {
-        return false;
-    }
-
-    @Override
-    public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return null;
-    }
-
-    @Override
-    public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations(Predicate<AnnotationInfo> predicate) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations() {
-        return List.of();
     }
 
     @Override

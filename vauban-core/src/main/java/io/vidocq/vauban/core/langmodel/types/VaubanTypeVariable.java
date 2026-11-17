@@ -23,47 +23,27 @@ import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
 
-import java.lang.annotation.Annotation;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Predicate;
 
-public record VaubanTypeVariable(String name, List<Type> bounds) implements TypeVariable {
+/**
+ * A type variable of the language model.
+ *
+ * @param annotations the annotations on this use of the type variable, or on the type parameter it declares
+ *                    (BUG-20261117-60); they take no part in its equality
+ */
+public record VaubanTypeVariable(String name, List<Type> bounds, List<AnnotationInfo> annotations)
+        implements TypeVariable, AnnotatedTypeUse {
 
     public VaubanTypeVariable {
         Objects.requireNonNull(name);
         bounds = List.copyOf(bounds);
+        annotations = List.copyOf(annotations);
     }
 
-    @Override
-    public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return false;
-    }
-
-    @Override
-    public boolean hasAnnotation(Predicate<AnnotationInfo> predicate) {
-        return false;
-    }
-
-    @Override
-    public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return null;
-    }
-
-    @Override
-    public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations(Predicate<AnnotationInfo> predicate) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations() {
-        return List.of();
+    /** A type variable without annotations. */
+    public VaubanTypeVariable(String name, List<Type> bounds) {
+        this(name, bounds, List.of());
     }
 
     @Override
@@ -83,7 +63,7 @@ public record VaubanTypeVariable(String name, List<Type> bounds) implements Type
     @Override
     public boolean equals(Object o) {
         return this == o
-                || (o instanceof VaubanTypeVariable(var otherName, var otherBounds)
+                || (o instanceof VaubanTypeVariable(var otherName, var otherBounds, _)
                         && name.equals(otherName) && bounds.equals(otherBounds));
     }
 

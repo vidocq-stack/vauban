@@ -26,6 +26,7 @@ import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.FieldInfo;
 import io.vidocq.vauban.indexer.model.MethodInfo;
 import io.vidocq.vauban.indexer.model.ParameterInfo;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo.*;
 
@@ -37,6 +38,9 @@ import java.lang.constant.MethodTypeDesc;
 import java.util.*;
 
 public final class ClassFileScanner {
+
+    /** The {@code supertype_index} of a type annotation on the superclass (JVMS 4.7.20.1). */
+    private static final int SUPERCLASS_INDEX = 65535;
 
     /** No generic supertype: {@link ClassInfo} names the supertypes of the class file raw. */
     private static final ClassTypeParameters.Supertypes RAW = new ClassTypeParameters.Supertypes(null, null);
@@ -65,11 +69,15 @@ public final class ClassFileScanner {
         // Read first: the fields and methods resolve their type variables against the class's.
         var signature = classSignature(cm);
         var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
+        List<TypeVariable> typeParameters = signature.map(ClassTypeParameters::of).orElse(List.of());
+        var members = new Members(name, classParameters,
+                TypeAnnotationReader.of(cm, ClassFileScanner::buildAnnotationInfo),
+                TypeAnnotationReader.receiver(name, typeParameters));
 
         for (var element : cm) {
             switch (element) {
-                case FieldModel fm -> fields.add(buildFieldInfo(fm, classParameters));
-                case MethodModel mm -> methods.add(buildMethodInfo(mm, classParameters));
+                case FieldModel fm -> fields.add(buildFieldInfo(fm, members));
+                case MethodModel mm -> methods.add(buildMethodInfo(mm, members));
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
                 case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
@@ -80,14 +88,39 @@ public final class ClassFileScanner {
         }
 
         var kind = determineKind(cm, superName);
-        List<TypeVariable> typeParameters = signature.map(ClassTypeParameters::of).orElse(List.of());
         // The supertypes as the class declares them, with their type arguments (BUG-20261117-22), or raw, as the
         // class file names them, when the signature does not name as many interfaces, or the class file no superclass.
         var supertypes = signature.map(ClassTypeParameters::supertypes)
                 .filter(declared -> superName != null && declared.interfaces().size() == interfaces.size())
                 .orElse(RAW);
+        var typeAnnotations = classTypeAnnotations(cm, members, typeParameters,
+                superName == null ? null
+                        : Objects.requireNonNullElse(supertypes.superclass(), new ClassType(superName)),
+                supertypes.interfaces() == null ? interfaces.stream().<TypeInfo>map(ClassType::new).toList()
+                        : supertypes.interfaces());
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
-                typeParameters, true, supertypes.superclass(), supertypes.interfaces());
+                typeParameters, true, supertypes.superclass(), supertypes.interfaces(), typeAnnotations);
+    }
+
+    /**
+     * What a field or a method is read against: the type parameters of its class, the reader of its type annotations,
+     * and the receiver type of the class's methods.
+     */
+    private record Members(DotName className, List<Signature.TypeParam> classParameters,
+                           TypeAnnotationReader typeAnnotations, TypeInfo receiver) {}
+
+    /** The annotations on the supertypes of a class, its type parameters and their bounds (BUG-20261117-60). */
+    private static List<TypeAnnotationInfo> classTypeAnnotations(ClassModel cm, Members members,
+            List<TypeVariable> typeParameters, TypeInfo superclass, List<TypeInfo> interfaces) {
+        return members.typeAnnotations().read(cm, annotation -> switch (annotation.targetInfo()) {
+            case TypeAnnotation.SupertypeTarget supertype when supertype.supertypeIndex() == SUPERCLASS_INDEX ->
+                    TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.SUPERCLASS, 0, superclass);
+            case TypeAnnotation.SupertypeTarget supertype -> TypeAnnotationReader.Placed.on(
+                    TypeAnnotationInfo.Target.INTERFACE, supertype.supertypeIndex(),
+                    element(interfaces, supertype.supertypeIndex()));
+            default -> TypeAnnotationReader.typeParameter(annotation, typeParameters,
+                    i -> ClassTypeParameters.classBound(members.classParameters().get(i)));
+        });
     }
 
     /**
@@ -172,18 +205,21 @@ public final class ClassFileScanner {
         }
     }
 
-    private static FieldInfo buildFieldInfo(FieldModel fm, List<Signature.TypeParam> classParameters) {
+    private static FieldInfo buildFieldInfo(FieldModel fm, Members members) {
         var name = fm.fieldName().stringValue();
-        var type = fieldType(fm, classParameters);
+        var type = fieldType(fm, members.classParameters());
         var accessFlags = fm.flags().flagsMask();
         var annotations = extractAnnotations(fm);
-        return new FieldInfo(name, type, accessFlags, annotations);
+        var typeAnnotations = members.typeAnnotations().read(fm,
+                annotation -> annotation.targetInfo().targetType() == TypeAnnotation.TargetType.FIELD
+                        ? TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.FIELD, 0, type) : null);
+        return new FieldInfo(name, type, accessFlags, annotations, typeAnnotations);
     }
 
-    private static MethodInfo buildMethodInfo(MethodModel mm, List<Signature.TypeParam> classParameters) {
+    private static MethodInfo buildMethodInfo(MethodModel mm, Members members) {
         var name = mm.methodName().stringValue();
         var methodType = mm.methodTypeSymbol();
-        var generic = methodTypes(mm, classParameters);
+        var generic = methodTypes(mm, members.classParameters());
         var returnType = generic.map(ClassTypeParameters.MethodTypes::result)
                 .orElseGet(() -> parseTypeFromDesc(methodType.returnType()));
         var parameters = buildParameters(mm, methodType,
@@ -196,8 +232,75 @@ public final class ClassFileScanner {
         var accessFlags = mm.flags().flagsMask();
         var annotations = extractAnnotations(mm);
         var defaultValue = extractDefaultValue(mm);
+        List<TypeAnnotationInfo> typeAnnotations = List.of();
+        if (TypeAnnotationReader.hasTypeAnnotations(mm)) {
+            var typeParameters = generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(List.of());
+            var methodParameters = mm.findAttribute(Attributes.signature())
+                    .map(signature -> signature.asMethodSignature().typeParameters()).orElse(List.of());
+            int offset = generic.map(types -> methodType.parameterCount() - types.parameters().size())
+                    .orElseGet(() -> leadingImplicitParameters(mm, members));
+            var shape = new MethodShape("<init>".equals(name) ? members.receiver() : returnType,
+                    parameters.stream().map(ParameterInfo::type).toList(), offset, exceptionTypes, typeParameters,
+                    methodParameters, members.receiver());
+            typeAnnotations = members.typeAnnotations().read(mm, annotation -> placed(annotation, shape));
+        }
         return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,
-                generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(null));
+                generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(null), typeAnnotations);
+    }
+
+    /**
+     * The types of a method a type annotation can be on: the type its return type annotations are on (the class for a
+     * constructor), its parameter types, the offset of the first one its source declares, its {@code throws} types,
+     * its type parameters as the index records them and as its signature declares them, and its receiver type.
+     */
+    private record MethodShape(TypeInfo returned, List<TypeInfo> parameters, int offset, List<TypeInfo> thrown,
+                               List<TypeVariable> typeParameters, List<Signature.TypeParam> declared,
+                               TypeInfo receiver) {}
+
+    /** Where a type annotation of a method is; {@code null} for one the index does not keep. */
+    private static TypeAnnotationReader.Placed placed(TypeAnnotation annotation, MethodShape shape) {
+        return switch (annotation.targetInfo()) {
+            case TypeAnnotation.FormalParameterTarget parameter -> TypeAnnotationReader.Placed.on(
+                    TypeAnnotationInfo.Target.PARAMETER, parameter.formalParameterIndex() + shape.offset(),
+                    element(shape.parameters(), parameter.formalParameterIndex() + shape.offset()));
+            case TypeAnnotation.ThrowsTarget thrown -> TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.THROWS,
+                    thrown.throwsTargetIndex(), element(shape.thrown(), thrown.throwsTargetIndex()));
+            case TypeAnnotation.TargetInfo target when target.targetType() == TypeAnnotation.TargetType.METHOD_RETURN ->
+                    TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.RETURN, 0, shape.returned());
+            case TypeAnnotation.TargetInfo target
+                    when target.targetType() == TypeAnnotation.TargetType.METHOD_RECEIVER ->
+                    TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.RECEIVER, 0, shape.receiver());
+            default -> TypeAnnotationReader.typeParameter(annotation, shape.typeParameters(),
+                    i -> i < shape.declared().size() ? ClassTypeParameters.classBound(shape.declared().get(i)) : -1);
+        };
+    }
+
+    /** The element at {@code index}, or {@code null} past the end. */
+    private static <T> T element(List<T> list, int index) {
+        return index >= 0 && index < list.size() ? list.get(index) : null;
+    }
+
+    /**
+     * How many leading parameters of a method without a {@code Signature} its source does not declare: the outer
+     * instance of an inner class's constructor. A type annotation numbers the parameters the source declares. The
+     * {@code MethodParameters} attribute marks them, synthetic or mandated, where javac writes it: for an inner
+     * class's constructor since Java 21. Without it, a constructor of a class the {@code InnerClasses} attribute names
+     * an inner member class takes its outer instance first, as javac has always compiled it; a local or anonymous
+     * class's constructor, whose captured values javac before Java 21 does not mark either, is read as declaring them.
+     */
+    private static int leadingImplicitParameters(MethodModel mm, Members members) {
+        var attribute = mm.findAttribute(Attributes.methodParameters());
+        if (attribute.isEmpty()) {
+            return "<init>".equals(mm.methodName().stringValue())
+                    && members.typeAnnotations().isInnerMember(members.className()) ? 1 : 0;
+        }
+        var described = attribute.get().parameters();
+        int count = 0;
+        while (count < described.size()
+                && (described.get(count).flagsMask() & (ClassFile.ACC_SYNTHETIC | ClassFile.ACC_MANDATED)) != 0) {
+            count++;
+        }
+        return count;
     }
 
     /** The default an annotation type member declares in its {@code AnnotationDefault} attribute, or {@code null}. */

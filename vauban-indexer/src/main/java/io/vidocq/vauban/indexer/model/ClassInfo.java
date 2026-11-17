@@ -36,7 +36,8 @@ public record ClassInfo(
         List<TypeInfo.TypeVariable> typeParameters,
         boolean genericMembers,
         TypeInfo genericSuperclass,
-        List<TypeInfo> genericInterfaces
+        List<TypeInfo> genericInterfaces,
+        List<TypeAnnotationInfo> typeAnnotations
 ) {
 
     public enum ClassKind {
@@ -65,6 +66,8 @@ public record ClassInfo(
      * @param genericInterfaces the interfaces as the class declares them, with their type arguments, in the order of
      *                          {@code interfaces}, as {@link Class#getGenericInterfaces()} gives them. {@code null}
      *                          gives each of {@code interfaces} raw (BUG-20261117-22).
+     * @param typeAnnotations   the runtime-retained annotations on the types the class declares: its supertypes,
+     *                          its type parameters and their bounds (BUG-20261117-60). {@code null} means none.
      * @throws IllegalArgumentException when {@code genericSuperclass} is given without a {@code superName}, or when
      *                                  {@code genericInterfaces} does not name as many interfaces as
      *                                  {@code interfaces}: each says how the class declares a supertype the class
@@ -89,6 +92,16 @@ public record ClassInfo(
             throw new IllegalArgumentException(name + " declares " + interfaces.size() + " interfaces, not "
                     + genericInterfaces.size());
         }
+        typeAnnotations = TypeAnnotationInfo.canonical(typeAnnotations);
+    }
+
+    /** A class info whose types carry no annotation. */
+    public ClassInfo(DotName name, DotName superName, List<DotName> interfaces, int accessFlags,
+                     List<FieldInfo> fields, List<MethodInfo> methods, List<AnnotationInfo> annotations,
+                     ClassKind kind, String simpleName, List<TypeInfo.TypeVariable> typeParameters,
+                     boolean genericMembers, TypeInfo genericSuperclass, List<TypeInfo> genericInterfaces) {
+        this(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName, typeParameters,
+                genericMembers, genericSuperclass, genericInterfaces, null);
     }
 
     /** A class info whose supertypes are those {@code superName} and {@code interfaces} name, raw. */
@@ -97,7 +110,7 @@ public record ClassInfo(
                      ClassKind kind, String simpleName, List<TypeInfo.TypeVariable> typeParameters,
                      boolean genericMembers) {
         this(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName, typeParameters,
-                genericMembers, null, null);
+                genericMembers, null, null, null);
     }
 
     /** A class info whose member types are erased (no {@code Signature} read). */
@@ -125,7 +138,7 @@ public record ClassInfo(
     /** The same class with other annotations, as an enrichment step adds them. */
     public ClassInfo withAnnotations(List<AnnotationInfo> newAnnotations) {
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, newAnnotations, kind,
-                simpleName, typeParameters, genericMembers, genericSuperclass, genericInterfaces);
+                simpleName, typeParameters, genericMembers, genericSuperclass, genericInterfaces, typeAnnotations);
     }
 
     private static List<TypeInfo> raw(List<DotName> interfaces) {

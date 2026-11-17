@@ -22,7 +22,9 @@ package io.vidocq.vauban.core.langmodel.declarations;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
+import io.vidocq.vauban.core.langmodel.types.TypeParameterScope;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
@@ -52,7 +54,8 @@ public final class VaubanFieldInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public Type type() {
-        return TypeMapper.map(indexField.type(), lookup);
+        return TypeMapper.map(indexField.type(), lookup, TypeParameterScope.of(List.of(), indexField.typeAnnotations(),
+                declaringClass.typeParameterScope()).use(Target.FIELD, 0));
     }
 
     @Override

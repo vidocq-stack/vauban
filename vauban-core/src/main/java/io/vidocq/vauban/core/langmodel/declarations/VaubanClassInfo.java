@@ -22,7 +22,9 @@ package io.vidocq.vauban.core.langmodel.declarations;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
+import io.vidocq.vauban.core.langmodel.types.TypeParameterScope;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
@@ -31,6 +33,7 @@ import java.lang.annotation.Annotation;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 
 public final class VaubanClassInfo implements jakarta.enterprise.lang.model.declarations.ClassInfo {
 
@@ -99,9 +102,21 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
      */
     @Override
     public List<TypeVariable> typeParameters() {
-        return indexClass().typeParameters().stream()
-                .map(parameter -> TypeMapper.typeParameter(parameter, lookup))
-                .toList();
+        return typeParameterScope().typeParameters(lookup);
+    }
+
+    /** The type parameters the class declares, as the index records them. */
+    List<io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable> indexTypeParameters() {
+        return indexClass().typeParameters();
+    }
+
+    /**
+     * The type parameters of the class, with the annotations on the types the class declares (BUG-20261117-60): the
+     * scope its members' types are read in.
+     */
+    public TypeParameterScope typeParameterScope() {
+        var described = indexClass();
+        return TypeParameterScope.of(described.typeParameters(), described.typeAnnotations(), null);
     }
 
     /**
@@ -114,7 +129,8 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
     public Type superClass() {
         var described = indexClass();
         var superclass = described.genericSuperclass();
-        return superclass == null || hasNoSuperclass(described) ? null : TypeMapper.map(superclass, lookup);
+        return superclass == null || hasNoSuperclass(described) ? null
+                : TypeMapper.map(superclass, lookup, typeParameterScope().use(Target.SUPERCLASS, 0));
     }
 
     /**
@@ -145,8 +161,10 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
      */
     @Override
     public List<Type> superInterfaces() {
-        return indexClass().genericInterfaces().stream()
-                .map(i -> TypeMapper.map(i, lookup))
+        var interfaces = indexClass().genericInterfaces();
+        var scope = typeParameterScope();
+        return IntStream.range(0, interfaces.size())
+                .mapToObj(i -> TypeMapper.map(interfaces.get(i), lookup, scope.use(Target.INTERFACE, i)))
                 .toList();
     }
 

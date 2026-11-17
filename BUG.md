@@ -150,6 +150,75 @@ suspected cause, status. Updated on every investigation.
 - **Verification**: green in `stack-l1-r1.log` ("R1 BUG-20261118-02 with the fix", the `ClassConfig` test).
 - **Found by**: the review of BUG-20261117-54, lane L1 round 1.
 
+## BUG-20261118-01 — An inner class's constructor has no receiver type
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-indexer` (`model.ClassInfo`, `scanner.ClassFileScanner`), `vauban-processor`
+  (`apt.ElementScanner`), `vauban-core` (`langmodel.declarations.VaubanMethodInfo`)
+- **Symptom**: for `class Enclosing { class Inner { Inner() {} } }`, `MethodInfo.receiverType()` of `Inner`'s
+  constructor is `null` in the processor, at start and frozen. The language model asks for the type of the receiver
+  parameter it may declare, `Enclosing`: `null` only "if this method is `static` or is a constructor of a top-level
+  class or a `static` nested class", as `Constructor.getAnnotatedReceiverType()` gives it. The language model TCK does
+  not check it.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheReceiverTypeOfAnInnerClassConstructor` in
+  `vauban-processor`, `@Disabled` with this id. Red with the `@Disabled` lifted, on the BUG-20261117-53 fix
+  (`stack-l1-bug53.log`, "BUG-53 green attempt ... BUG-20261118-01 repro enabled, expected red": `receiver null`
+  all three ways).
+- **Cause**: the index does not record whether a class is inner, nor the class that encloses it: the class file keeps
+  both in its `InnerClasses` attribute (the `static` flag is not in the class's own access flags), which
+  `ClassFileScanner` reads for the simple name only; `ElementScanner` reads neither. BUG-20261117-53's
+  `receiverType()` answers `null` for every constructor.
+- **Fix idea**: an additive slot on the index's `ClassInfo`, the enclosing class of an inner member class, read from
+  the `InnerClasses` entry (`ACC_STATIC` clear, an outer class named) and from the compiler's `NestingKind.MEMBER`
+  without `static`. It changes the index model that lane L2 (type annotations) changes too, and goes with the start's
+  synthetic outer-instance parameter of the same constructors, which the processor does not show (as BUG-20261117-43
+  and the enum constructors of the TCK's group 10): left for a commit of its own.
+- **Found by**: the review of the API for BUG-20261117-53.
+
+## BUG-20261117-60 — The language model shows no annotation on a type
+
+- **Date**: 2026-11-18
+- **Status**: OPEN — fixed at start (index and language model); the processor and the frozen record follow
+- **Module**: `vauban-indexer` (`model.TypeAnnotationInfo`, `scanner.ClassFileScanner`,
+  `scanner.TypeAnnotationReader`), `vauban-core` (`langmodel.types`, `langmodel.declarations`), `vauban-processor`
+  (`apt.ElementScanner`), `vauban-core` (`container.ClassChecksums`)
+- **Symptom**: every `annotations()` of a type of the language model (`jakarta.enterprise.lang.model.types`) is
+  empty, in the processor, at start and frozen: `List<@A String>`, `@A String field`, `String @A []`,
+  `extends @A Base<@B T>`, `<@A T extends @B Number>`, `throws @A Exception` and an annotated receiver. A build
+  compatible extension cannot read a type-use annotation such as a nullness or validation marker on a type argument.
+  The probe of the language model TCK (BUG-20261117-40, group 1) counts 14 failing checks with its type annotation
+  checks off and 93 more with them on, in `AnnotatedTypes`, `AnnotatedSuperTypes`, `AnnotatedThrowsTypes` and
+  `AnnotatedReceiverTypes`.
+- **Repro**: `BceTypeAnnotationsTest#theTypesOfAClassShowTheirAnnotations` in `vauban-core`: red on 81fab2cb
+  (`stack-l2-red.log`, "RED BUG-20261117-60 at start"), every annotation missing, the types themselves right:
+  `typeParameters [T extends Number, U extends T extends Number]` for
+  `[@A T extends @B Number, U extends @C T extends @B Number]`, `arrays String [] []` for `@C String @A [] @B []`.
+- **Cause**: the bytecode scan reads no `RuntimeVisibleTypeAnnotations` attribute; the index's `TypeInfo` has no
+  place for an annotation; every `Vauban*Type` returns `List.of()` from its annotation methods; the processor's
+  `ElementScanner` reads no annotation from a `TypeMirror`.
+- **Fix (start)**: the index keeps the type annotations beside its types, not in them: `TypeInfo` is what the
+  container compares, and an annotation on a type use changes neither a bean type nor an injection point. A
+  `TypeAnnotationInfo` holds the annotation, its target (field, return, receiver, parameter, `throws`, type parameter,
+  bound, superclass, interface) with its index, and its path (array, wildcard bound, type argument), in terms of the
+  index's types: a parameter by its position in the parameters the index records (after the outer instance of an
+  inner class's constructor, or the name and ordinal of an enum's), a bound by its position in the bounds the index
+  records (an annotated `Object` it leaves out at `0`), a nested type by its innermost name. `ClassInfo`, `MethodInfo`
+  and `FieldInfo` gain a `typeAnnotations` component, in a canonical order, every earlier constructor kept.
+  `ClassFileScanner` reads them through `TypeAnnotationReader`, which follows a type path along the index's type:
+  `Outer.@A Inner` is kept, `@A Outer.Inner`, which the language model has no type for, is left out, by the depth of
+  each inner class the `InnerClasses` attribute gives. The language model's `TypeMapper` walks a type and its use
+  together (`TypeUse`); a `TypeParameterScope` of the method, then of its class, annotates the bounds of a type
+  variable where it is used as its type parameter declares them, and gives the class's `typeParameters()` with
+  their own annotations. The types share their annotation queries (`AnnotatedTypeUse`); the annotations take no part
+  in their equality.
+- **Waits for**: a receiver type (BUG-20261117-53), a method's type parameters (BUG-20261117-51) and a generic
+  `throws` type at start (BUG-20261117-52) carry their annotations once those land: `VaubanMethodInfo.typeUse` gives
+  their use, and the index already holds their annotations. A constructor's return type shows the annotations on the
+  constructor's `RETURN` target, placed on the class, once BUG-20261117-54 gives it the class. Three tests of
+  `BceTypeAnnotationsTest` are disabled with those ids.
+- **Found by**: the language model TCK probe (BUG-20261117-40, `vauban-tickets/40.md`, group 1).
+
 ## BUG-20261117-54 — A constructor's `name()` is `<init>` and its `returnType()` is `void`
 
 - **Date**: 2026-11-17
@@ -181,32 +250,6 @@ suspected cause, status. Updated on every investigation.
 - **Verification**: green in `stack-l1-bug54.log` ("BUG-54 module tests with the fix") and in `stack-l1-r1.log`
   ("R1 item 2 green").
 - **Found by**: the language model TCK probe (vauban#336).
-
-## BUG-20261118-01 — An inner class's constructor has no receiver type
-
-- **Date**: 2026-11-18
-- **Status**: OPEN
-- **Module**: `vauban-indexer` (`model.ClassInfo`, `scanner.ClassFileScanner`), `vauban-processor`
-  (`apt.ElementScanner`), `vauban-core` (`langmodel.declarations.VaubanMethodInfo`)
-- **Symptom**: for `class Enclosing { class Inner { Inner() {} } }`, `MethodInfo.receiverType()` of `Inner`'s
-  constructor is `null` in the processor, at start and frozen. The language model asks for the type of the receiver
-  parameter it may declare, `Enclosing`: `null` only "if this method is `static` or is a constructor of a top-level
-  class or a `static` nested class", as `Constructor.getAnnotatedReceiverType()` gives it. The language model TCK does
-  not check it.
-- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheReceiverTypeOfAnInnerClassConstructor` in
-  `vauban-processor`, `@Disabled` with this id. Red with the `@Disabled` lifted, on the BUG-20261117-53 fix
-  (`stack-l1-bug53.log`, "BUG-53 green attempt ... BUG-20261118-01 repro enabled, expected red": `receiver null`
-  all three ways).
-- **Cause**: the index does not record whether a class is inner, nor the class that encloses it: the class file keeps
-  both in its `InnerClasses` attribute (the `static` flag is not in the class's own access flags), which
-  `ClassFileScanner` reads for the simple name only; `ElementScanner` reads neither. BUG-20261117-53's
-  `receiverType()` answers `null` for every constructor.
-- **Fix idea**: an additive slot on the index's `ClassInfo`, the enclosing class of an inner member class, read from
-  the `InnerClasses` entry (`ACC_STATIC` clear, an outer class named) and from the compiler's `NestingKind.MEMBER`
-  without `static`. It changes the index model that lane L2 (type annotations) changes too, and goes with the start's
-  synthetic outer-instance parameter of the same constructors, which the processor does not show (as BUG-20261117-43
-  and the enum constructors of the TCK's group 10): left for a commit of its own.
-- **Found by**: the review of the API for BUG-20261117-53.
 
 ## BUG-20261117-53 — `MethodInfo.receiverType()` is always `null`
 

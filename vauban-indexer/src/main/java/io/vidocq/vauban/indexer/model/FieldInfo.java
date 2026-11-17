@@ -21,10 +21,23 @@ package io.vidocq.vauban.indexer.model;
 
 import java.util.List;
 
-public record FieldInfo(String name, TypeInfo type, int accessFlags, List<AnnotationInfo> annotations) {
+/**
+ * A field of an indexed class.
+ *
+ * @param typeAnnotations the runtime-retained annotations on its type, each {@link TypeAnnotationInfo.Target#FIELD}
+ *                        (BUG-20261117-60); {@code null} means none
+ */
+public record FieldInfo(String name, TypeInfo type, int accessFlags, List<AnnotationInfo> annotations,
+                        List<TypeAnnotationInfo> typeAnnotations) {
 
     public FieldInfo {
         annotations = List.copyOf(annotations);
+        typeAnnotations = TypeAnnotationInfo.canonical(typeAnnotations);
+    }
+
+    /** A field whose type carries no annotation. */
+    public FieldInfo(String name, TypeInfo type, int accessFlags, List<AnnotationInfo> annotations) {
+        this(name, type, accessFlags, annotations, null);
     }
 
     public boolean isStatic() {

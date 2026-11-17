@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
@@ -34,13 +35,16 @@ import java.util.function.Predicate;
 public final class VaubanParameterInfo implements jakarta.enterprise.lang.model.declarations.ParameterInfo {
 
     private final io.vidocq.vauban.indexer.model.ParameterInfo indexParam;
+    private final int position;
     private final VaubanMethodInfo declaringMethod;
     private final IndexLookup lookup;
 
-    public VaubanParameterInfo(io.vidocq.vauban.indexer.model.ParameterInfo indexParam,
+    /** @param position the position of the parameter in the parameters of {@code declaringMethod} */
+    public VaubanParameterInfo(io.vidocq.vauban.indexer.model.ParameterInfo indexParam, int position,
                                VaubanMethodInfo declaringMethod,
                                IndexLookup lookup) {
         this.indexParam = indexParam;
+        this.position = position;
         this.declaringMethod = declaringMethod;
         this.lookup = lookup;
     }
@@ -52,7 +56,7 @@ public final class VaubanParameterInfo implements jakarta.enterprise.lang.model.
 
     @Override
     public Type type() {
-        return TypeMapper.map(indexParam.type(), lookup);
+        return TypeMapper.map(indexParam.type(), lookup, declaringMethod.typeUse(Target.PARAMETER, position));
     }
 
     @Override

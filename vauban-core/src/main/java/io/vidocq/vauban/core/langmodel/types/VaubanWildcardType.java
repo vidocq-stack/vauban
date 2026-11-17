@@ -23,42 +23,24 @@ import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.WildcardType;
 
-import java.lang.annotation.Annotation;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Predicate;
 
-public record VaubanWildcardType(Type upperBound, Type lowerBound) implements WildcardType {
+/**
+ * A wildcard type of the language model.
+ *
+ * @param annotations the annotations on this use of the wildcard (BUG-20261117-60); they take no part in its equality
+ */
+public record VaubanWildcardType(Type upperBound, Type lowerBound, List<AnnotationInfo> annotations)
+        implements WildcardType, AnnotatedTypeUse {
 
-    @Override
-    public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return false;
+    public VaubanWildcardType {
+        annotations = List.copyOf(annotations);
     }
 
-    @Override
-    public boolean hasAnnotation(Predicate<AnnotationInfo> predicate) {
-        return false;
-    }
-
-    @Override
-    public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return null;
-    }
-
-    @Override
-    public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations(Predicate<AnnotationInfo> predicate) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations() {
-        return List.of();
+    /** A wildcard type without annotations. */
+    public VaubanWildcardType(Type upperBound, Type lowerBound) {
+        this(upperBound, lowerBound, List.of());
     }
 
     /** {@code ?} for {@code ? extends Object}, as the language model represents {@code ?}, as reflection names it. */
@@ -77,7 +59,7 @@ public record VaubanWildcardType(Type upperBound, Type lowerBound) implements Wi
     @Override
     public boolean equals(Object o) {
         return this == o
-                || (o instanceof VaubanWildcardType(var otherUpper, var otherLower)
+                || (o instanceof VaubanWildcardType(var otherUpper, var otherLower, _)
                         && Objects.equals(upperBound, otherUpper) && Objects.equals(lowerBound, otherLower));
     }
 

@@ -162,6 +162,14 @@ final class ClassTypeParameters {
         };
     }
 
+    /**
+     * The class bound of a type parameter as the index keeps it: {@code 1} for one it records, {@code 0} for a
+     * {@code java.lang.Object} it leaves out, {@code -1} for none, the first bound being an interface.
+     */
+    static int classBound(Signature.TypeParam parameter) {
+        return parameter.classBound().map(bound -> isObject(bound) ? 0 : 1).orElse(-1);
+    }
+
     private static boolean isObject(Signature bound) {
         return bound instanceof Signature.ClassTypeSig type
                 && type.outerType().isEmpty()

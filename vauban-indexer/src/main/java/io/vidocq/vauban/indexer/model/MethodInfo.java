@@ -28,6 +28,9 @@ import java.util.List;
  *                       member without one and for every method that is not an annotation member
  * @param typeParameters the type parameters the method declares ({@code <U>} in {@code <U> U get()}), as its
  *                       {@code Signature} gives them; empty when the index did not read it (VAU-PERF-008)
+ * @param typeAnnotations the runtime-retained annotations on the types the method declares: its return type, receiver,
+ *                        parameters, {@code throws} clause and type parameters (BUG-20261117-60); {@code null} means
+ *                        none
  */
 public record MethodInfo(
         String name,
@@ -37,7 +40,8 @@ public record MethodInfo(
         int accessFlags,
         List<AnnotationInfo> annotations,
         AnnotationValue defaultValue,
-        List<TypeInfo.TypeVariable> typeParameters
+        List<TypeInfo.TypeVariable> typeParameters,
+        List<TypeAnnotationInfo> typeAnnotations
 ) {
 
     public MethodInfo {
@@ -45,6 +49,15 @@ public record MethodInfo(
         exceptionTypes = List.copyOf(exceptionTypes);
         annotations = List.copyOf(annotations);
         typeParameters = typeParameters == null ? List.of() : List.copyOf(typeParameters);
+        typeAnnotations = TypeAnnotationInfo.canonical(typeAnnotations);
+    }
+
+    /** A method whose types carry no annotation. */
+    public MethodInfo(String name, TypeInfo returnType, List<ParameterInfo> parameters,
+                      List<TypeInfo> exceptionTypes, int accessFlags, List<AnnotationInfo> annotations,
+                      AnnotationValue defaultValue, List<TypeInfo.TypeVariable> typeParameters) {
+        this(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue, typeParameters,
+                null);
     }
 
     /** A method whose type parameters are not recorded. */

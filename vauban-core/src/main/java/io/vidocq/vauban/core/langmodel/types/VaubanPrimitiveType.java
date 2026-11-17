@@ -23,23 +23,36 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.PrimitiveType;
 
-import java.lang.annotation.Annotation;
-import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.function.Predicate;
 
-public final class VaubanPrimitiveType implements PrimitiveType {
+public final class VaubanPrimitiveType implements PrimitiveType, AnnotatedTypeUse {
 
     private final PrimitiveKind primitiveKind;
+    /** The annotations on this use of the type (BUG-20261117-60); they take no part in its equality. */
+    private final List<AnnotationInfo> annotations;
 
     public VaubanPrimitiveType(PrimitiveKind primitiveKind) {
+        this(primitiveKind, List.of());
+    }
+
+    public VaubanPrimitiveType(PrimitiveKind primitiveKind, List<AnnotationInfo> annotations) {
         this.primitiveKind = Objects.requireNonNull(primitiveKind);
+        this.annotations = List.copyOf(annotations);
     }
 
     public VaubanPrimitiveType(TypeInfo.PrimitiveType indexType) {
-        this(mapKind(indexType.kind()));
+        this(indexType, List.of());
+    }
+
+    public VaubanPrimitiveType(TypeInfo.PrimitiveType indexType, List<AnnotationInfo> annotations) {
+        this(mapKind(indexType.kind()), annotations);
+    }
+
+    @Override
+    public List<AnnotationInfo> annotations() {
+        return annotations;
     }
 
     @Override
@@ -64,36 +77,6 @@ public final class VaubanPrimitiveType implements PrimitiveType {
             case FLOAT -> PrimitiveKind.FLOAT;
             case DOUBLE -> PrimitiveKind.DOUBLE;
         };
-    }
-
-    @Override
-    public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return false;
-    }
-
-    @Override
-    public boolean hasAnnotation(Predicate<AnnotationInfo> predicate) {
-        return false;
-    }
-
-    @Override
-    public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return null;
-    }
-
-    @Override
-    public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations(Predicate<AnnotationInfo> predicate) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations() {
-        return List.of();
     }
 
     @Override

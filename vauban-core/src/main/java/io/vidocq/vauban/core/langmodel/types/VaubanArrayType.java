@@ -23,46 +23,25 @@ import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.ArrayType;
 import jakarta.enterprise.lang.model.types.Type;
 
-import java.lang.annotation.Annotation;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Predicate;
 
-public record VaubanArrayType(Type componentType) implements ArrayType {
+/**
+ * An array type of the language model.
+ *
+ * @param annotations the annotations on this use of the type (BUG-20261117-60); they take no part in its equality
+ */
+public record VaubanArrayType(Type componentType, List<AnnotationInfo> annotations)
+        implements ArrayType, AnnotatedTypeUse {
 
     public VaubanArrayType {
         Objects.requireNonNull(componentType);
+        annotations = List.copyOf(annotations);
     }
 
-    @Override
-    public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return false;
-    }
-
-    @Override
-    public boolean hasAnnotation(Predicate<AnnotationInfo> predicate) {
-        return false;
-    }
-
-    @Override
-    public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return null;
-    }
-
-    @Override
-    public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations(Predicate<AnnotationInfo> predicate) {
-        return List.of();
-    }
-
-    @Override
-    public Collection<AnnotationInfo> annotations() {
-        return List.of();
+    /** An array type without annotations. */
+    public VaubanArrayType(Type componentType) {
+        this(componentType, List.of());
     }
 
     @Override
@@ -73,7 +52,7 @@ public record VaubanArrayType(Type componentType) implements ArrayType {
     @Override
     public boolean equals(Object o) {
         return this == o
-                || (o instanceof VaubanArrayType(var otherComponent) && componentType.equals(otherComponent));
+                || (o instanceof VaubanArrayType(var otherComponent, _) && componentType.equals(otherComponent));
     }
 
     // The hash the class had before it became a record: same values, same iteration orders.

@@ -22,9 +22,11 @@ package io.vidocq.vauban.core.langmodel.declarations;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
-import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
-import io.vidocq.vauban.core.langmodel.types.VaubanParameterizedType;
+import io.vidocq.vauban.core.langmodel.types.TypeParameterScope;
+import io.vidocq.vauban.core.langmodel.types.TypeUse;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
@@ -36,6 +38,8 @@ import java.util.List;
 import java.util.function.Predicate;
 
 public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.declarations.MethodInfo {
+
+    private static final TypeInfo OBJECT = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
 
     private final io.vidocq.vauban.indexer.model.MethodInfo indexMethod;
     private final VaubanClassInfo declaringClass;
@@ -59,7 +63,7 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
     public List<jakarta.enterprise.lang.model.declarations.ParameterInfo> parameters() {
         var params = new ArrayList<jakarta.enterprise.lang.model.declarations.ParameterInfo>();
         for (int i = 0; i < indexMethod.parameters().size(); i++) {
-            params.add(new VaubanParameterInfo(indexMethod.parameters().get(i), this, lookup));
+            params.add(new VaubanParameterInfo(indexMethod.parameters().get(i), i, this, lookup));
         }
         return List.copyOf(params);
     }
@@ -67,8 +71,23 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
     /** The return type of the method; for a constructor, the class type of its class, not void (BUG-20261117-54). */
     @Override
     public Type returnType() {
-        return indexMethod.isConstructor() ? new VaubanClassType(DotName.of(declaringClass.name()), lookup)
-                : TypeMapper.map(indexMethod.returnType(), lookup);
+        var returned = indexMethod.isConstructor() ? new TypeInfo.ClassType(DotName.of(declaringClass.name()))
+                : indexMethod.returnType();
+        return TypeMapper.map(returned, lookup, typeUse(Target.RETURN, 0));
+    }
+
+    /**
+     * The use of the type the method declares at {@code target} and {@code index}, with the type annotations of the
+     * method on it, and the type parameters of the method, then of its class, in scope (BUG-20261117-60).
+     */
+    public TypeUse typeUse(Target target, int index) {
+        return typeParameterScope().use(target, index);
+    }
+
+    /** The type parameters of the method, inside those of its class. */
+    TypeParameterScope typeParameterScope() {
+        return TypeParameterScope.of(indexMethod.typeParameters(), indexMethod.typeAnnotations(),
+                declaringClass.typeParameterScope());
     }
 
     /**
@@ -84,16 +103,24 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
             return null;
         }
         var name = DotName.of(declaringClass.name());
-        var typeParameters = declaringClass.typeParameters();
-        return typeParameters.isEmpty() ? new VaubanClassType(name, lookup)
-                : new VaubanParameterizedType(name, List.<Type>copyOf(typeParameters), lookup);
+        var typeParameters = declaringClass.indexTypeParameters().stream()
+                .<TypeInfo>map(parameter -> parameter.bounds().isEmpty()
+                        ? new TypeInfo.TypeVariable(parameter.name(), List.of(OBJECT)) : parameter)
+                .toList();
+        var receiver = typeParameters.isEmpty() ? new TypeInfo.ClassType(name)
+                : new TypeInfo.ParameterizedType(name, typeParameters);
+        return TypeMapper.map(receiver, lookup, typeUse(Target.RECEIVER, 0));
     }
 
     @Override
     public List<Type> throwsTypes() {
-        return indexMethod.exceptionTypes().stream()
-                .map(t -> TypeMapper.map(t, lookup))
-                .toList();
+        var thrown = indexMethod.exceptionTypes();
+        var scope = typeParameterScope();
+        var result = new ArrayList<Type>(thrown.size());
+        for (int i = 0; i < thrown.size(); i++) {
+            result.add(TypeMapper.map(thrown.get(i), lookup, scope.use(Target.THROWS, i)));
+        }
+        return List.copyOf(result);
     }
 
     /**
@@ -102,9 +129,7 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
      */
     @Override
     public List<TypeVariable> typeParameters() {
-        return indexMethod.typeParameters().stream()
-                .map(parameter -> TypeMapper.typeParameter(parameter, lookup))
-                .toList();
+        return typeParameterScope().typeParameters(lookup);
     }
 
     @Override
