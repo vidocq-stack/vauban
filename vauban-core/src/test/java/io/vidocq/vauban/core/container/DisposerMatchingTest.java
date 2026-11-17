@@ -34,6 +34,7 @@ import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.DefinitionException;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.inject.Qualifier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -112,6 +113,10 @@ class DisposerMatchingTest {
         @SuppressWarnings("rawtypes")
         public void disposeWithRawBean(@Disposes Candy candy, Bean bean) {
             // a raw Bean parameter
+        }
+
+        public void disposeWithNames(@Disposes Candy candy, List<String> names) {
+            // a parameterized parameter
         }
     }
 
@@ -260,6 +265,37 @@ class DisposerMatchingTest {
         var thrown = assertThrows(DefinitionException.class, () -> validateParameters(disposers));
 
         assertTrue(thrown.getMessage().contains("Bean<?>"), thrown.getMessage());
+    }
+
+    /**
+     * A disposer's parameter the descriptor does not describe is checked by its parameterized type,
+     * {@code List<String>}, and named by it when unsatisfied: the erased {@code List} satisfied neither producer
+     * (BUG-20261117-25).
+     */
+    @Test
+    @DisplayName("an undescribed parameterized disposer parameter is checked and named by its parameterized type")
+    void undescribedParameterizedParameter() {
+        var disposers = List.of(shopDisposer("disposeWithNames"));
+        var strings = listProducer("p#strings", String.class);
+        var integers = listProducer("p#integers", Integer.class);
+        var index = new IndexBuilder().build();
+        var matcher = QualifierMatcher.standalone();
+        var bothProducers = List.of(sweetMethod(), strings, integers);
+        var integersOnly = List.of(sweetMethod(), integers);
+
+        assertDoesNotThrow(() -> DisposerInvoker.validateDisposerParameters(disposers, bothProducers, index, matcher));
+        var thrown = assertThrows(DeploymentException.class,
+                () -> DisposerInvoker.validateDisposerParameters(disposers, integersOnly, index, matcher));
+        assertTrue(thrown.getMessage().contains("of type java.util.List<java.lang.String>"), thrown::getMessage);
+    }
+
+    /** A {@code @Default} producer method of {@code List<element>}. */
+    private static BeanDescriptor listProducer(String id, Class<?> element) {
+        var type = new TypeInfo.ParameterizedType(DotName.of(List.class.getName()), List.of(cls(element)));
+        return new BeanDescriptor(new BeanId(id), DotName.of(Shop.class.getName()),
+                BeanDescriptor.BeanKind.PRODUCER_METHOD, Set.of(type),
+                Set.of(QualifierInstance.DEFAULT, QualifierInstance.ANY), ScopeInfo.DEPENDENT, false, 0, List.of(),
+                null);
     }
 
     private static void validateParameters(List<DisposerDescriptor> disposers) {

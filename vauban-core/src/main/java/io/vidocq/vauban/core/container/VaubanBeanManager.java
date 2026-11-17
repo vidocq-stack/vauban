@@ -26,6 +26,10 @@ import io.vidocq.vauban.core.event.EventDispatcher;
 import io.vidocq.vauban.core.event.EventImpl;
 import io.vidocq.vauban.core.event.VaubanObserverMethod;
 import io.vidocq.vauban.core.interceptor.InterceptorManager;
+import io.vidocq.vauban.core.types.AssignabilityRules;
+import io.vidocq.vauban.core.types.TypeInfoUtils;
+import io.vidocq.vauban.indexer.IndexBuilder;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.el.ELResolver;
 import jakarta.el.ExpressionFactory;
 import jakarta.enterprise.context.spi.Context;
@@ -43,6 +47,8 @@ import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.*;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * Minimal BeanManager implementation for Vauban.
@@ -101,6 +107,12 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
     private final transient EventDispatcher eventDispatcher;
     private final transient InterceptorManager interceptorManager;
     private transient List<Bean<?>> builtInBeans;
+    /**
+     * The bean types of this container's beans, in the index model. Each bean builds its types once, so this holds one
+     * entry per bean type of the deployment. A caller's type never goes in: a {@code ParameterizedType} of its own,
+     * whose {@code equals} may be identity, would add an entry at each call.
+     */
+    private final transient Map<Type, TypeInfo> convertedTypes = new java.util.concurrent.ConcurrentHashMap<>();
 
     public EventDispatcher getEventDispatcher() {
         return eventDispatcher;
@@ -178,9 +190,12 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
 
     @Override
     public Object getReference(Bean<?> bean, Type beanType, CreationalContext<?> ctx) {
-        // Validate that beanType is actually a type of the bean
-        boolean valid = bean.getTypes().stream()
-            .anyMatch(bt -> typesMatch(bt, beanType));
+        // Validate that beanType is actually a type of the bean. The types of a bean of this container are converted
+        // once, as getBeans converts them; those of a Bean a caller makes are not kept.
+        Predicate<Type> typeMatching = bean instanceof ManagedBean<?> || bean instanceof BuiltInBean<?>
+                ? deploymentTypesMatching(beanType)
+                : bt -> beanTypeMatches(bt, beanType);
+        boolean valid = bean.getTypes().stream().anyMatch(typeMatching);
         // Built-in beans match any parameterization of their raw type
         if (!valid && bean instanceof BuiltInBean<?>) {
             valid = bean.getTypes().stream().anyMatch(bt ->
@@ -260,12 +275,13 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
 
         var result = new LinkedHashSet<Bean<?>>();
         var matcher = container.qualifierMatcher();
+        var typeMatching = deploymentTypesMatching(beanType);
 
         // Check built-in beans
         for (var builtIn : getBuiltInBeans()) {
             boolean typeMatch = false;
             for (var bt : builtIn.getTypes()) {
-                if (typesMatch(bt, beanType)) {
+                if (typeMatching.test(bt)) {
                     typeMatch = true;
                     break;
                 }
@@ -301,7 +317,7 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
             // Type matching (supports Class, ParameterizedType, etc.)
             boolean typeMatch = false;
             for (var bt : bean.getTypes()) {
-                if (typesMatch(bt, beanType)) {
+                if (typeMatching.test(bt)) {
                     typeMatch = true;
                     break;
                 }
@@ -866,28 +882,9 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
             // CDI spec: parameterized types with wildcards are not legal bean types
             if (bt instanceof java.lang.reflect.ParameterizedType bpt
                     && containsWildcard(bpt)) continue;
-            if (bt.equals(requiredType)) {
-                typeMatch = true;
-                break;
-            }
-            if (bt instanceof Class<?> btClass && requiredType instanceof Class<?> reqClass
-                    && (btClass == reqClass || isPrimitiveWrapperMatch(btClass, reqClass))) {
-                // CDI assignability: requiredType must be assignable FROM beanType
-                // But ONLY consider bean types explicitly listed, plus Object
-                typeMatch = true;
-                break;
-            }
-            // Parameterized type matching
-            if (bt instanceof java.lang.reflect.ParameterizedType beanPt
-                    && requiredType instanceof java.lang.reflect.ParameterizedType reqPt
-                    && typesMatch(beanPt, reqPt)) {
-                typeMatch = true;
-                break;
-            }
-            // Raw type requested, parameterized bean type
-            if (requiredType instanceof Class<?> reqClass
-                    && bt instanceof java.lang.reflect.ParameterizedType beanPt
-                    && reqClass == beanPt.getRawType()) {
+            // The rules of getBeans and of the resolution of an injection point: a raw required type took any
+            // parameterization of its class here (BUG-20261117-16)
+            if (beanTypeMatches(bt, requiredType)) {
                 typeMatch = true;
                 break;
             }
@@ -984,289 +981,116 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
         return false;
     }
 
-    // Name comparison intentional throughout: CDI cross-classloader type matching
-    @SuppressWarnings("java:S1872")
     /**
-     * Erases a {@code GenericArrayType} to its runtime array class, but only
-     * when the component's type arguments are all unbounded wildcards (e.g.
-     * {@code Class<?>[]} → {@code Class[].class}). Returns {@code null} for
-     * components with concrete type arguments ({@code List<String>[]}), which
-     * must not silently match the erased bean type.
+     * The rules of the resolution of an injection point with no index, the subtypes read from the classes: for
+     * {@link #typesMatch(Type, Type)}, which has no container at hand.
      */
-    private static Class<?> erasedArrayClassIfUnbounded(java.lang.reflect.GenericArrayType gat) {
-        int dimensions = 1;
-        Type component = gat.getGenericComponentType();
-        while (component instanceof java.lang.reflect.GenericArrayType inner) {
-            dimensions++;
-            component = inner.getGenericComponentType();
-        }
-        Class<?> rawComponent = switch (component) {
-            case java.lang.reflect.ParameterizedType pt when pt.getRawType() instanceof Class<?> raw
-                    && hasOnlyUnboundedArguments(pt) -> raw;
-            case Class<?> c -> c;
-            case null, default -> null;
-        };
-        if (rawComponent == null) {
-            return null;
-        }
-        return java.lang.reflect.Array.newInstance(rawComponent, new int[dimensions]).getClass();
-    }
+    private static final AssignabilityRules UNINDEXED_RULES = new AssignabilityRules(new IndexBuilder().build());
 
-    /** Whether every type argument of {@code type} is {@code Object} or an unbounded wildcard. */
-    private static boolean hasOnlyUnboundedArguments(java.lang.reflect.ParameterizedType type) {
-        for (Type argument : type.getActualTypeArguments()) {
-            boolean unbounded = argument instanceof java.lang.reflect.WildcardType w
-                    && w.getLowerBounds().length == 0
-                    && (w.getUpperBounds().length == 0 || w.getUpperBounds()[0] == Object.class);
-            if (!unbounded && argument != Object.class) {
-                return false;
-            }
-        }
-        return true;
-    }
-
+    /** {@link #typesMatch(AssignabilityRules, Type, Type, Function)} with no index and no cache. */
     static boolean typesMatch(Type beanType, Type requiredType) {
-        if (beanType.equals(requiredType)) return true;
-
-        // Primitive <-> wrapper matching
-        if (requiredType instanceof Class<?> reqClass && beanType instanceof Class<?> btClass
-                && isPrimitiveWrapperMatch(reqClass, btClass)) {
-            return true;
-        }
-
-        return switch (requiredType) {
-            case java.lang.reflect.GenericArrayType reqGat -> genericArrayTypeMatches(beanType, reqGat);
-            case Class<?> reqClass -> rawRequiredTypeMatches(beanType, reqClass);
-            case java.lang.reflect.ParameterizedType reqPt -> parameterizedRequiredTypeMatches(beanType, reqPt);
-            case null, default -> false;
-        };
+        return typesMatch(UNINDEXED_RULES, beanType, requiredType, TypeInfoUtils::fromReflectType);
     }
 
     /**
-     * Array injection points with a generic component ({@code Class<?>[]} is a
-     * {@code GenericArrayType}) match a bean's erased array class when every type
-     * argument of the component is an unbounded wildcard — CDI 4.1 §5.2.4
-     * raw ↔ parameterized equivalence applied to array element types.
-     * Cf. VAU-BCE-004.
+     * {@link #typesMatch(AssignabilityRules, Type, Type, Function)} with the container's rules, over its index, for
+     * bean types a caller gives: nothing is kept.
      */
-    private static boolean genericArrayTypeMatches(Type beanType, java.lang.reflect.GenericArrayType reqGat) {
-        Class<?> reqErased = erasedArrayClassIfUnbounded(reqGat);
-        if (reqErased != null && beanType instanceof Class<?> btClass && btClass.isArray()) {
-            return reqErased == btClass || reqErased.getName().equals(btClass.getName());
-        }
-        return beanType instanceof java.lang.reflect.GenericArrayType btGat
-                && btGat.getTypeName().equals(reqGat.getTypeName());
+    private boolean beanTypeMatches(Type beanType, Type requiredType) {
+        return typesMatch(container.assignability(), beanType, requiredType, TypeInfoUtils::fromReflectType);
     }
 
     /**
-     * CDI 4.1 Section 5.2.5: raw types must be identical, compared by name as well to handle
-     * cross-classloader scenarios.
+     * Whether a bean type of this container's beans matches {@code requiredType}, as
+     * {@link #beanTypeMatches(Type, Type)}: the required type converted once, here, and each bean type once for the
+     * life of the container ({@link #convertedTypes}).
      */
-    private static boolean rawRequiredTypeMatches(Type beanType, Class<?> reqClass) {
-        if (beanType instanceof Class<?> btClass) {
-            return reqClass == btClass || reqClass.getName().equals(btClass.getName());
+    private Predicate<Type> deploymentTypesMatching(Type requiredType) {
+        if (!isRequiredType(requiredType)) {
+            return requiredType::equals;
         }
-        return beanType instanceof java.lang.reflect.ParameterizedType pt
-                && parameterizedBeanTypeMatchesRaw(pt, reqClass);
+        var rules = container.assignability();
+        var required = TypeInfoUtils.fromReflectType(boxed(requiredType));
+        return beanType -> beanType.equals(requiredType) || rules.beanTypeMatches(
+                convertedTypes.computeIfAbsent(boxed(beanType), TypeInfoUtils::fromReflectType), required);
     }
 
     /**
-     * CDI 5.2.4: a parameterized bean type matches a raw required type only if the raw types are
-     * identical AND all type params are unbounded type variables or Object.
+     * {@code beanType} matches {@code requiredType} by the rules the resolution of an injection point applies at build
+     * and at start, {@link AssignabilityRules#beanTypeMatches}, a primitive boxed first. {@code getBeans} kept a copy
+     * of them that read a type variable's declared bounds where the resolution read the uppermost ones, and took a
+     * wildcard for an unbounded type variable: an injection point the start validated failed at run time
+     * (BUG-20261117-16).
      */
-    private static boolean parameterizedBeanTypeMatchesRaw(java.lang.reflect.ParameterizedType pt, Class<?> reqClass) {
-        if (reqClass != pt.getRawType()
-                && !reqClass.getName().equals(((Class<?>) pt.getRawType()).getName())) return false;
-        for (Type arg : pt.getActualTypeArguments()) {
-            boolean unbounded = arg instanceof java.lang.reflect.TypeVariable<?> tv
-                    ? allObject(tv.getBounds())
-                    : arg == Object.class;
-            if (!unbounded) return false;
-        }
-        return true;
+    private static boolean typesMatch(AssignabilityRules rules, Type beanType, Type requiredType,
+                                      Function<Type, TypeInfo> converter) {
+        return beanType.equals(requiredType) || (isRequiredType(requiredType) && rules.beanTypeMatches(
+                converter.apply(boxed(beanType)), converter.apply(boxed(requiredType))));
     }
 
-    private static boolean parameterizedRequiredTypeMatches(Type beanType, java.lang.reflect.ParameterizedType reqPt) {
-        if (beanType instanceof java.lang.reflect.ParameterizedType beanPt) {
-            return parameterizedTypesMatch(beanPt, reqPt);
-        }
-        // Raw bean type matches parameterized required type only if raw types identical
-        return beanType instanceof Class<?> btClass && rawBeanTypeMatchesParameterized(btClass, reqPt);
+    /**
+     * A class, a parameterized type or an array type: what a bean type is matched against. A type variable or a
+     * wildcard matches nothing but itself, as in Weld's {@code BeanTypeAssignabilityRules}.
+     */
+    private static boolean isRequiredType(Type type) {
+        return type instanceof Class<?> || type instanceof java.lang.reflect.ParameterizedType
+                || type instanceof java.lang.reflect.GenericArrayType;
     }
 
-    /** Raw types identical (compared by name for cross-classloader) and type arguments matching exactly (invariant). */
-    private static boolean parameterizedTypesMatch(java.lang.reflect.ParameterizedType beanPt,
-                                                   java.lang.reflect.ParameterizedType reqPt) {
-        if (!sameRawType(beanPt.getRawType(), reqPt.getRawType())) return false;
-        var reqArgs = reqPt.getActualTypeArguments();
-        var beanArgs = beanPt.getActualTypeArguments();
-        if (reqArgs.length != beanArgs.length) return false;
-        for (int i = 0; i < reqArgs.length; i++) {
-            if (!typeArgumentsMatch(beanArgs[i], reqArgs[i])) return false;
-        }
-        return true;
+    /** {@code type}, or its wrapper when it is a primitive class. */
+    private static Type boxed(Type type) {
+        return type instanceof Class<?> c && c.isPrimitive() ? primitiveToWrapper(c) : type;
     }
 
-    /** The same raw type, or two classes of the same name loaded by different class loaders. */
-    private static boolean sameRawType(Type beanRaw, Type requiredRaw) {
-        return beanRaw == requiredRaw
-                || (beanRaw instanceof Class<?> bc && requiredRaw instanceof Class<?> rc
-                    && bc.getName().equals(rc.getName()));
-    }
+    /**
+     * An event type argument against an observed one (CDI 4.1, 10.3.1). Neither holds a type variable:
+     * {@code isMatchingEvent} refuses one before it gets here, so the rules of a type variable have no use.
+     */
+    private static boolean typeArgumentsMatch(Type eventArg, Type observedArg) {
+        if (eventArg.equals(observedArg)) return true;
 
-    private static boolean rawBeanTypeMatchesParameterized(Class<?> btClass, java.lang.reflect.ParameterizedType reqPt) {
-        if (btClass != reqPt.getRawType()) return false;
-        for (Type arg : reqPt.getActualTypeArguments()) {
-            if (!isUnboundedArgument(arg)) return false;
-        }
-        return true;
-    }
-
-    /** Object, a type variable bounded by Object only, or a wildcard with no bound other than Object. */
-    private static boolean isUnboundedArgument(Type arg) {
-        if (arg instanceof java.lang.reflect.TypeVariable<?> tv) {
-            return allObject(resolvedBounds(tv));
-        }
-        if (arg instanceof java.lang.reflect.WildcardType wt) {
-            // A lower bound other than Object makes the wildcard bounded.
-            return allObject(wt.getUpperBounds())
-                    && Arrays.stream(wt.getLowerBounds()).allMatch(lb -> lb == Object.class || lb == null);
-        }
-        return arg == Object.class;
-    }
-
-    /** Whether every one of {@code types} is {@code Object}. */
-    private static boolean allObject(Type[] types) {
-        return Arrays.stream(types).allMatch(t -> t == Object.class);
-    }
-
-    private static boolean typeArgumentsMatch(Type beanArg, Type requiredArg) {
-        if (beanArg.equals(requiredArg)) return true;
-
-        // CDI spec (c/da/dc): required is wildcard
-        if (requiredArg instanceof java.lang.reflect.WildcardType reqWild) {
-            var upper = reqWild.getUpperBounds();
-            var lower = reqWild.getLowerBounds();
+        if (observedArg instanceof java.lang.reflect.WildcardType wildcard) {
+            var lower = wildcard.getLowerBounds();
             if (lower.length > 0) {
-                // (dc) bean is TV: lower bound must be assignable to TV upper bounds
-                // (c) bean is actual: lower bound must be assignable to bean arg
-                if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
-                    for (Type lb : lower) {
-                        if (!lowerBoundAssignableToBounds(lb, beanTv)) return false;
-                    }
-                    return true;
-                }
                 for (Type lb : lower) {
-                    if (!isTypeAssignableTo(lb, beanArg)) return false;
+                    if (!isTypeAssignableTo(lb, eventArg)) return false;
                 }
                 return true;
             }
-            // ? extends X or unbounded ?
-            if (upper.length == 1 && upper[0] == Object.class) return true;
-            // (da) bean is TV: upper bound assignable to or from wildcard upper bound
-            // (c) bean is actual: actual assignable to wildcard upper bound
-            if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
-                for (Type ub : upper) {
-                    if (!upperBoundAssignableToOrFrom(ub, beanTv)) return false;
-                }
-                return true;
-            }
-            for (Type ub : upper) {
-                if (!isTypeAssignableTo(beanArg, ub)) return false;
+            for (Type ub : wildcard.getUpperBounds()) {
+                if (!isTypeAssignableTo(eventArg, ub)) return false;
             }
             return true;
         }
 
-        // CDI spec (f): required is TypeVariable, bean is TypeVariable
-        // Each bean TV bound must be covered by at least one required TV bound
-        if (requiredArg instanceof java.lang.reflect.TypeVariable<?> reqTv) {
-            if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
-                Type[] reqBounds = resolvedBounds(reqTv);
-                for (Type beanBound : beanTv.getBounds()) {
-                    if (beanBound == Object.class) continue;
-                    boolean covered = false;
-                    for (Type reqBound : reqBounds) {
-                        if (isTypeAssignableTo(reqBound, beanBound)) {
-                            covered = true;
-                            break;
-                        }
-                    }
-                    if (!covered) return false;
-                }
-                return true;
-            }
-            // CDI spec: no rule for required TV vs bean actual type -> no match
-            return false;
-        }
-
-        // CDI spec (e): bean is TypeVariable, required is actual type
-        if (beanArg instanceof java.lang.reflect.TypeVariable<?> beanTv) {
-            // Required actual type must be assignable to each upper bound of the TV
-            for (Type bound : beanTv.getBounds()) {
-                if (bound != Object.class && !isTypeAssignableTo(requiredArg, bound)) return false;
-            }
-            return true;
-        }
-
-        if (beanArg instanceof java.lang.reflect.WildcardType beanWild) {
-            var upper = beanWild.getUpperBounds();
+        if (eventArg instanceof java.lang.reflect.WildcardType eventWildcard) {
+            var upper = eventWildcard.getUpperBounds();
             if (upper.length > 0) {
-                return isTypeAssignableTo(upper[0], requiredArg);
+                return isTypeAssignableTo(upper[0], observedArg);
             }
         }
 
-        if (beanArg instanceof java.lang.reflect.ParameterizedType && requiredArg instanceof java.lang.reflect.ParameterizedType) {
-            return typesMatch(beanArg, requiredArg);
+        if (eventArg instanceof java.lang.reflect.ParameterizedType eventPt
+                && observedArg instanceof java.lang.reflect.ParameterizedType observedPt) {
+            return sameRawTypeAndArguments(eventPt, observedPt);
         }
 
         return false;
     }
 
-    private static Type[] resolvedBounds(java.lang.reflect.TypeVariable<?> tv) {
-        var bounds = tv.getBounds();
-        var result = new java.util.ArrayList<Type>();
-        for (Type b : bounds) {
-            if (b instanceof java.lang.reflect.TypeVariable<?> nested) {
-                Collections.addAll(result, resolvedBounds(nested));
-            } else if (b != Object.class) {
-                result.add(b);
-            }
-        }
-        return result.isEmpty() ? new Type[]{ Object.class } : result.toArray(new Type[0]);
-    }
-
-    private static boolean lowerBoundAssignableToBounds(Type lowerBound, java.lang.reflect.TypeVariable<?> tv) {
-        Type[] lbBounds = (lowerBound instanceof java.lang.reflect.TypeVariable<?> lbTv)
-                ? lbTv.getBounds() : new Type[]{ lowerBound };
-        for (Type beanBound : tv.getBounds()) {
-            if (beanBound == Object.class) continue;
-            boolean satisfied = false;
-            for (Type lb : lbBounds) {
-                if (isTypeAssignableTo(lb, beanBound)) {
-                    satisfied = true;
-                    break;
-                }
-            }
-            if (!satisfied) return false;
-        }
-        return true;
-    }
-
-    @SuppressWarnings("java:S135")
-    private static boolean upperBoundAssignableToOrFrom(Type type, java.lang.reflect.TypeVariable<?> tv) {
-        Type[] otherBounds = (type instanceof java.lang.reflect.TypeVariable<?> otherTv)
-                ? otherTv.getBounds() : new Type[]{ type };
-        for (Type beanBound : tv.getBounds()) {
-            if (beanBound == Object.class) continue;
-            boolean satisfied = false;
-            for (Type otherBound : otherBounds) {
-                if (otherBound == Object.class) continue;
-                if (isTypeAssignableTo(otherBound, beanBound) || isTypeAssignableTo(beanBound, otherBound)) {
-                    satisfied = true;
-                    break;
-                }
-            }
-            if (!satisfied) return false;
+    /**
+     * The same raw type, by name, and each argument matching by {@link #typeArgumentsMatch}: how the type arguments of
+     * an event recurse into a parameterized argument (CDI 4.1, 10.3.1, "according to these rules"). The bean types
+     * of {@code getBeans} follow {@link AssignabilityRules} instead (BUG-20261117-16).
+     */
+    private static boolean sameRawTypeAndArguments(java.lang.reflect.ParameterizedType sub,
+                                                   java.lang.reflect.ParameterizedType sup) {
+        if (!sub.getRawType().getTypeName().equals(sup.getRawType().getTypeName())) return false;
+        var subArgs = sub.getActualTypeArguments();
+        var supArgs = sup.getActualTypeArguments();
+        if (subArgs.length != supArgs.length) return false;
+        for (int i = 0; i < subArgs.length; i++) {
+            if (!typeArgumentsMatch(subArgs[i], supArgs[i])) return false;
         }
         return true;
     }
@@ -1274,11 +1098,6 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
     private static boolean isTypeAssignableTo(Type subType, Type superType) {
         if (subType.equals(superType)) return true;
         if (superType == Object.class) return true;
-        // Resolve TypeVariable to its first (primary) upper bound
-        if (subType instanceof java.lang.reflect.TypeVariable<?> tv) {
-            var bounds = tv.getBounds();
-            return bounds.length > 0 && isTypeAssignableTo(bounds[0], superType);
-        }
         if (subType instanceof Class<?> subClass && superType instanceof Class<?> superClass) {
             return superClass.isAssignableFrom(subClass);
         }
@@ -1289,7 +1108,7 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
             return ((Class<?>) superPt.getRawType()).isAssignableFrom(subClass);
         }
         if (subType instanceof java.lang.reflect.ParameterizedType subPt && superType instanceof java.lang.reflect.ParameterizedType superPt) {
-            return typesMatch(subPt, superPt);
+            return sameRawTypeAndArguments(subPt, superPt);
         }
         return false;
     }
@@ -1317,12 +1136,6 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
                 return ((Class<?>) obsPt.getRawType()).isAssignableFrom(evtClass);
             }
         }
-        return false;
-    }
-
-    private static boolean isPrimitiveWrapperMatch(Class<?> a, Class<?> b) {
-        if (a.isPrimitive()) return b == primitiveToWrapper(a);
-        if (b.isPrimitive()) return a == primitiveToWrapper(b);
         return false;
     }
 

@@ -138,11 +138,15 @@ class TypesMatchCharacterizationTest {
             assertFalse(matches(LIST_OF_STRING, LIST_OF_EXTENDS_NUMBER));
         }
 
+        /**
+         * CDI 4.1, 5.2.4: each type argument of the required type is Object or an unbounded type variable. A wildcard
+         * is neither, as for the resolution of an injection point (BUG-20261117-16).
+         */
         @Test
-        @DisplayName("a raw bean type matches when every required argument is unbounded")
+        @DisplayName("a raw bean type matches when every required argument is Object or an unbounded type variable")
         void rawBeanType() {
             assertTrue(matches(List.class, LIST_OF_OBJECT));
-            assertTrue(matches(List.class, LIST_OF_ANY));
+            assertFalse(matches(List.class, LIST_OF_ANY));
             assertTrue(matches(List.class, LIST_OF_T));
             assertFalse(matches(List.class, LIST_OF_N));
             assertFalse(matches(List.class, LIST_OF_EXTENDS_NUMBER));

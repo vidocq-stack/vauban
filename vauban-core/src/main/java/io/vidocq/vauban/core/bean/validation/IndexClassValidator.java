@@ -67,6 +67,7 @@ public final class IndexClassValidator {
     private static final DotName INJECTION_POINT = DotName.of("jakarta.enterprise.inject.spi.InjectionPoint");
     private static final DotName DEPENDENT = DotName.of("jakarta.enterprise.context.Dependent");
     private static final DotName SINGLETON = DotName.of("jakarta.inject.Singleton");
+    private static final DotName VETOED = DotName.of("jakarta.enterprise.inject.Vetoed");
     private static final String VALUE = "value";
 
     private static final String TYPED_VALUE = "@Typed value ";
@@ -325,6 +326,7 @@ public final class IndexClassValidator {
 
     private void validateMethods(ClassInfo classInfo, List<String> errors) {
         var className = classInfo.name().value();
+        var bean = mayBeABean(classInfo);
         for (var method : methods(classInfo)) {
             boolean producer = has(method.annotations(), PRODUCES);
             var location = className + "." + method.name();
@@ -341,16 +343,22 @@ public final class IndexClassValidator {
                 }
             }
             if (method.parameters().stream().anyMatch(IndexClassValidator::isObserves)) {
-                for (var parameter : method.parameters()) {
-                    if (!isObserves(parameter)) {
-                        validateNoRawParameterized(parameter.type(), location + " observer param", errors);
+                var parameters = method.parameters();
+                for (int i = 0; i < parameters.size(); i++) {
+                    if (!isObserves(parameters.get(i))) {
+                        validateNoRawParameterized(parameters.get(i).type(), location + " observer param", errors);
+                        validateNoTypeVariable(bean, parameters.get(i).type(), location + " observer param " + i,
+                                errors);
                     }
                 }
             }
             if (method.parameters().stream().anyMatch(IndexClassValidator::isDisposes)) {
-                for (var parameter : method.parameters()) {
+                var parameters = method.parameters();
+                for (int i = 0; i < parameters.size(); i++) {
+                    var parameter = parameters.get(i);
                     if (!isDisposes(parameter)) {
                         validateNoRawParameterized(parameter.type(), location + " disposer param", errors);
+                        validateNoTypeVariable(bean, parameter.type(), location + " disposer param " + i, errors);
                     }
                     if (INJECTION_POINT.equals(rawClass(parameter.type()))) {
                         errors.add("Disposer method " + location + " must not have InjectionPoint parameter");
@@ -358,8 +366,10 @@ public final class IndexClassValidator {
                 }
             }
             if (producer) {
-                for (var parameter : method.parameters()) {
-                    validateNoRawParameterized(parameter.type(), location + " producer param", errors);
+                var parameters = method.parameters();
+                for (int i = 0; i < parameters.size(); i++) {
+                    validateNoRawParameterized(parameters.get(i).type(), location + " producer param", errors);
+                    validateNoTypeVariable(bean, parameters.get(i).type(), location + " producer param " + i, errors);
                 }
             }
         }
@@ -487,6 +497,30 @@ public final class IndexClassValidator {
         if (INSTANCE.equals(raw)) {
             errors.add("Raw Instance type injected at " + location + " — must be parameterized");
         }
+    }
+
+    /**
+     * As reflection judged it: an injection point of a type variable is a definition error (CDI 4.1, 5.2.3), here an
+     * observer's parameter besides the event parameter, a disposer's besides the disposed one or a producer method's,
+     * of a class that {@link #mayBeABean may be a bean}. A subclass that inherits the observer of a class that is none
+     * gives the type variable its class, as the CDI TCK's {@code MemberLevelInheritanceTest} has it
+     * (BUG-20261117-16).
+     */
+    private static void validateNoTypeVariable(boolean bean, TypeInfo type, String location, List<String> errors) {
+        if (bean && type instanceof TypeInfo.TypeVariable(var name, _)) {
+            errors.add("Injection point has type variable type " + name + ": " + location);
+        }
+    }
+
+    /** Neither abstract nor vetoed, nor in a vetoed package: a class whose own observers the container may call. */
+    private boolean mayBeABean(ClassInfo classInfo) {
+        if (classInfo.isAbstract() || classInfo.hasAnnotation(VETOED)) {
+            return false;
+        }
+        var name = classInfo.name().value();
+        var dot = name.lastIndexOf('.');
+        return dot < 0 || index.getClassByName(DotName.of(name.substring(0, dot) + ".package-info"))
+                .map(packageInfo -> !packageInfo.hasAnnotation(VETOED)).orElse(true);
     }
 
     private static void validateProducerReturnType(TypeInfo type, String location, List<String> errors) {

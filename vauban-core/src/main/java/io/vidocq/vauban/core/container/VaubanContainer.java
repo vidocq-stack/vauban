@@ -115,6 +115,8 @@ public final class VaubanContainer implements AutoCloseable {
     private final io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher;
     private final Map<DotName, BeanDescriptor> managedDescriptors;
     private final VaubanIndex index;
+    /** The rules the resolution of an injection point and {@code BeanManager.getBeans} share (BUG-20261117-16). */
+    private final AssignabilityRules assignability;
     private final VaubanLookup vaubanLookup;
     private final ComponentProviders componentProviders;
     final BeanLifecycle beanLifecycle;
@@ -231,7 +233,7 @@ public final class VaubanContainer implements AutoCloseable {
             }
         }
 
-        var assignability = new AssignabilityRules(index);
+        this.assignability = new AssignabilityRules(index, classLoader);
         this.resolver = new BeanResolver(descriptors, interceptorDescriptors, assignability, qualifierMatcher);
         this.eventDispatcher = new EventDispatcher(observers, this);
         this.interceptorManager = new InterceptorManager(interceptorDescriptors);
@@ -482,6 +484,11 @@ public final class VaubanContainer implements AutoCloseable {
         return qualifierMatcher;
     }
 
+    /** The type rules this container resolves with, over its index: its injection points and its BeanManager. */
+    AssignabilityRules assignability() {
+        return assignability;
+    }
+
     /**
      * Returns the ClassLoader used for loading bean classes.
      */
@@ -612,14 +619,25 @@ public final class VaubanContainer implements AutoCloseable {
         return false;
     }
 
+    /**
+     * The required type of an observer's or a disposer's parameter: its parameterized type, {@code Counter<Integer>},
+     * as an injection point has it, and its class otherwise. The erased class, {@code Counter}, is a raw required
+     * type, which a bean of {@code Counter<T extends Number>} or of {@code Holder<String>} does not satisfy (CDI 4.1,
+     * 5.2.4; BUG-20261117-25).
+     */
+    static io.vidocq.vauban.indexer.model.TypeInfo requiredTypeOf(java.lang.reflect.Parameter param) {
+        return param.getParameterizedType() instanceof java.lang.reflect.ParameterizedType parameterized
+                ? io.vidocq.vauban.core.types.TypeInfoUtils.fromReflectType(parameterized)
+                : new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
+                        io.vidocq.vauban.indexer.model.DotName.of(param.getType().getName()));
+    }
+
     /** Fails the deployment when no bean, or more than one, matches the type of an observer parameter. */
     private static void checkResolvable(io.vidocq.vauban.core.bean.model.ObserverDescriptor observer,
                                         java.lang.reflect.Parameter param,
                                         io.vidocq.vauban.core.bean.resolution.BeanResolver resolver) {
-        var paramType = param.getType();
         var ip = new io.vidocq.vauban.core.bean.model.InjectionPointInfo(
-                new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(
-                        io.vidocq.vauban.indexer.model.DotName.of(paramType.getName())),
+                requiredTypeOf(param),
                 java.util.Set.of(new io.vidocq.vauban.core.bean.model.QualifierInstance(
                         io.vidocq.vauban.indexer.model.DotName.of("jakarta.enterprise.inject.Default"),
                         java.util.Map.of()),
@@ -633,12 +651,12 @@ public final class VaubanContainer implements AutoCloseable {
             throw new jakarta.enterprise.inject.spi.DeploymentException(
                     "Observer method " + observer.declaringClass().simpleName() + "." + observer.methodName()
                             + "(): unsatisfied dependency for parameter " + param.getName()
-                            + " of type " + paramType.getName());
+                            + " of type " + param.getParameterizedType().getTypeName());
         } else if (result.status() == io.vidocq.vauban.core.bean.resolution.BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
             throw new jakarta.enterprise.inject.spi.DeploymentException(
                     "Observer method " + observer.declaringClass().simpleName() + "." + observer.methodName()
                             + "(): ambiguous dependency for parameter " + param.getName()
-                            + " of type " + paramType.getName());
+                            + " of type " + param.getParameterizedType().getTypeName());
         }
     }
 

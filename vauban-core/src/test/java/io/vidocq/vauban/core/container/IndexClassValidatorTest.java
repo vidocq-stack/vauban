@@ -20,6 +20,8 @@
 package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.bean.validation.IndexClassValidator;
+import io.vidocq.vauban.core.container.marked.MarkedTypeVariableObserver;
+import io.vidocq.vauban.core.container.vetoed.PackageVetoedTypeVariableObserver;
 import io.vidocq.vauban.indexer.IndexBuilder;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -28,6 +30,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.event.Event;
+import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
@@ -121,6 +124,36 @@ class IndexClassValidatorTest {
         @Inject void init(@Named String value) { /* no behaviour needed */ }
     }
 
+    @Dependent
+    public static class TypeVariableObserverParameter<T> {
+        void on(@Observes String event, T value) { /* no behaviour needed */ }
+    }
+
+    @Dependent
+    public static class TypeVariableDisposerParameter<T> {
+        @Produces String make() { return ""; }
+        void dispose(@Disposes String value, T other) { /* no behaviour needed */ }
+    }
+
+    @Dependent
+    public static class TypeVariableProducerParameter<T> {
+        @Produces String make(T seed) { return String.valueOf(seed); }
+    }
+
+    @jakarta.enterprise.inject.Vetoed
+    public static class VetoedTypeVariableProducerParameter<T> {
+        @Produces String make(T seed) { return String.valueOf(seed); }
+    }
+
+    @jakarta.enterprise.inject.Vetoed
+    public static class VetoedTypeVariableObserverParameter<T> {
+        void on(@Observes String event, T value) { /* no behaviour needed */ }
+    }
+
+    public abstract static class AbstractTypeVariableObserverParameter<T> {
+        void on(@Observes String event, T value) { /* no behaviour needed */ }
+    }
+
     /** Its superclass is not in the index: the index cannot tell which annotations it inherits. */
     @Dependent
     public static class OutsideTheIndex extends java.util.AbstractList<String> {
@@ -132,12 +165,25 @@ class IndexClassValidatorTest {
             ApplicationStereotype.class, Valid.class, RawEvent.class, WildcardProducer.class,
             GenericInitializer.class, PublicField.class, NotASupertype.class, DisposerWithInjectionPoint.class,
             StereotypeWithName.class, ConflictingScopes.class, GenericScoped.class, NamedWithoutValue.class,
-            OutsideTheIndex.class);
+            TypeVariableObserverParameter.class, TypeVariableDisposerParameter.class,
+            TypeVariableProducerParameter.class, VetoedTypeVariableProducerParameter.class,
+            VetoedTypeVariableObserverParameter.class, AbstractTypeVariableObserverParameter.class,
+            OutsideTheIndex.class, PackageVetoedTypeVariableObserver.class, MarkedTypeVariableObserver.class);
+
+    /**
+     * The {@code package-info} classes the index reads whether a package is vetoed from: one {@code @Vetoed}, one
+     * annotated {@code @PackageMark} alone.
+     */
+    private static final List<String> PACKAGE_INFOS = List.of(
+            PackageVetoedTypeVariableObserver.class.getPackageName() + ".package-info",
+            MarkedTypeVariableObserver.class.getPackageName() + ".package-info");
 
     private static VaubanIndex index() {
         var builder = new IndexBuilder();
-        for (var type : CLASSES) {
-            try (var in = type.getResourceAsStream("/" + type.getName().replace('.', '/') + ".class")) {
+        var names = new java.util.ArrayList<>(CLASSES.stream().map(Class::getName).toList());
+        names.addAll(PACKAGE_INFOS);
+        for (var name : names) {
+            try (var in = IndexClassValidatorTest.class.getResourceAsStream("/" + name.replace('.', '/') + ".class")) {
                 builder.add(ClassFileScanner.scan(in.readAllBytes()));
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
@@ -159,7 +205,9 @@ class IndexClassValidatorTest {
     @ParameterizedTest
     @ValueSource(classes = {Valid.class, RawEvent.class, WildcardProducer.class, GenericInitializer.class,
             PublicField.class, NotASupertype.class, DisposerWithInjectionPoint.class, StereotypeWithName.class,
-            ConflictingScopes.class, GenericScoped.class, NamedWithoutValue.class})
+            ConflictingScopes.class, GenericScoped.class, NamedWithoutValue.class,
+            TypeVariableObserverParameter.class, TypeVariableDisposerParameter.class,
+            TypeVariableProducerParameter.class, MarkedTypeVariableObserver.class})
     @DisplayName("the index reports what reflection reports")
     void sameErrorsAsReflection(Class<?> beanClass) {
         var index = index();
@@ -169,6 +217,53 @@ class IndexClassValidatorTest {
 
         assertEquals(reflective, new TreeSet<>(fromIndex));
         assertEquals(beanClass != Valid.class, !fromIndex.isEmpty(), fromIndex::toString);
+    }
+
+    /**
+     * An observer's parameter besides the event parameter, a disposer's besides the disposed one and a producer
+     * method's are injection points, and an injection point of a type variable is a definition error (CDI 4.1,
+     * 5.2.3), at build as at start (BUG-20261117-16, fix round 2).
+     */
+    @Test
+    @DisplayName("an observer's, a disposer's or a producer's parameter of a type variable is a definition error")
+    void typeVariableParameters() {
+        var index = index();
+        var validator = validator(index);
+
+        assertEquals(List.of("Injection point has type variable type T: "
+                        + TypeVariableObserverParameter.class.getName() + ".on observer param 1"),
+                validator.validate(index.getClassByName(DotName.of(TypeVariableObserverParameter.class.getName()))
+                        .orElseThrow()).orElseThrow());
+        assertEquals(List.of("Injection point has type variable type T: "
+                        + TypeVariableDisposerParameter.class.getName() + ".dispose disposer param 1"),
+                validator.validate(index.getClassByName(DotName.of(TypeVariableDisposerParameter.class.getName()))
+                        .orElseThrow()).orElseThrow());
+        assertEquals(List.of("Injection point has type variable type T: "
+                        + TypeVariableProducerParameter.class.getName() + ".make producer param 0"),
+                validator.validate(index.getClassByName(DotName.of(TypeVariableProducerParameter.class.getName()))
+                        .orElseThrow()).orElseThrow());
+        // A package-info that does not veto its package leaves a class of it a bean
+        assertEquals(List.of("Injection point has type variable type T: "
+                        + MarkedTypeVariableObserver.class.getName() + ".on observer param 1"),
+                validator.validate(index.getClassByName(DotName.of(MarkedTypeVariableObserver.class.getName()))
+                        .orElseThrow()).orElseThrow());
+    }
+
+    /**
+     * A class that is no bean, vetoed, in a vetoed package or abstract, has no observer of its own: a subclass inherits
+     * its observer and gives the type variable a class, as the CDI TCK's {@code inheritance.generics.Bar} and
+     * {@code Foo}.
+     */
+    @ParameterizedTest
+    @ValueSource(classes = {VetoedTypeVariableObserverParameter.class, AbstractTypeVariableObserverParameter.class,
+            VetoedTypeVariableProducerParameter.class, PackageVetoedTypeVariableObserver.class})
+    @DisplayName("an observer's parameter of a type variable in a class that is no bean is no error")
+    void typeVariableParametersOfAClassThatIsNoBean(Class<?> beanClass) {
+        var index = index();
+
+        assertEquals(List.of(), validator(index).validate(index.getClassByName(DotName.of(beanClass.getName()))
+                .orElseThrow()).orElseThrow(), "from the index");
+        assertEquals(List.of(), ReflectionValidator.validateWithReflection(List.of(beanClass)), "by reflection");
     }
 
     @Test

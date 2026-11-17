@@ -4,6 +4,55 @@
 [.lead]
 New in the `{project-version}` development line — everything listed here landed **after the {release-version} release** and is not part of it. Every entry links to the section that documents it, and those sections carry the [.tag-new]#NEW# badge. Each brick of the suite keeps its own page of this kind; xref:home::whats-new.adoc[the ecosystem index] gathers them. When the next release train ships, this page is frozen with it and restarts empty on the dev line.
 
+* **What changes: a raw bean type satisfies only the parameterizations CDI allows** (BUG-20261117-16).
++
+*What changed.* CDI 4.1, 5.2.4: "A raw bean type is considered assignable to a parameterized required type if the raw types are identical and all type parameters of the required type are either unbounded type variables or `java.lang.Object`." The resolution of an injection point, at build, at start and frozen, and `BeanManager.getBeans`, `getReference` and `isMatchingBean` now apply one rule set, read as Weld reads it:
++
+** A producer of a raw `Foo`, `@Produces Foo foo()` with `Foo<T>` generic, satisfies `@Inject Foo<Object>`, and no other `Foo<X>`, nor `Foo<?>`. It satisfied `@Inject Foo<Integer>`.
+** A raw required type is satisfied by a `Foo<T>` bean type only when `T` declares no bound but `Object`: a bean of `Repo<T extends Number>` satisfies no raw `@Inject Repo` nor `VaubanContainer.select(Repo.class)`, as `BeanManager.getBeans(Repo.class)` already did not, and `T extends U` counts as bounded.
+** A bean of a generic class has its class with its type variables among its bean types, `Repo<T>` for `class Repo<T>`, as `Bean.getTypes()` has it. It still satisfies `@Inject Repo<String>`.
+** A type variable bounded by another is read up to its uppermost bound: `Chained<U extends Number, T extends U> implements Holder<T>` satisfies `@Inject Holder<Integer>`, which the start validated and the injection then refused.
++
+*The messages.* The build fails when `Foo` is a class, the two qualifiers in either order:
++
+----
+[Vauban] Unsatisfied dependency: field Reader.injected of type ParameterizedType[rawType=vi.types.Foo, typeArguments=[ClassType[name=java.lang.Integer]]] with qualifiers [QualifierInstance[annotationName=jakarta.enterprise.inject.Any, members={}], QualifierInstance[annotationName=jakarta.enterprise.inject.Default, members={}]]
+----
++
+When `Foo` is an interface, the build warns with the same text followed by ` — the required type is not declared by this compilation unit; resolution deferred to the runtime container.`, and the start, extensions run or frozen, throws a `jakarta.enterprise.inject.spi.DeploymentException`:
++
+----
+CDI deployment validation failed:
+  - Unsatisfied dependency: field Reader.injected of type ParameterizedType[rawType=vi.types.Foo, typeArguments=[ClassType[name=java.lang.Integer]]] with qualifiers [QualifierInstance[annotationName=jakarta.enterprise.inject.Any, members={}], QualifierInstance[annotationName=jakarta.enterprise.inject.Default, members={}]]
+----
++
+*Who is affected.*
++
+** An application that injects a parameterization of a type that only a raw producer produces.
+** An application that injects or selects a bean of a bounded generic class by its raw class. A bounded generic `@Dependent` Cassini resource or provider, which Cassini looks up by its class, now fails at request time with `IllegalArgumentException: Not managed by Vauban: ...` (`VaubanBeanProvider.getBean`).
+** An injection point of a producer of an inner class of a generic class, `@Inject Holder<String>` for a producer of `Outer<String>.Inner<Integer>` where `Inner<I> implements Holder<O>`, resolved through the old rule only: it is unsatisfied at build and at start until BUG-20261117-21 is fixed.
+** A bean whose observer method has a parameter besides the event parameter, whose disposer method has one besides the disposed parameter, or whose producer method has one, `… sprocket producer param 0`, of a type variable of its class: `void dispose(@Disposes Widget widget, T gadget)` in `WidgetFactory<T extends Gadget>`. Such a parameter is an injection point, and an injection point of a type variable is a definition error (CDI 4.1, 5.2.3). The build warns:
++
+----
+WARNING: [Vauban] Injection point has type variable type T: vi.types.WidgetFactory.dispose disposer param 1 — the container rejects this deployment at start.
+----
++
+and the start, and the build's freeze, refuse the deployment with a `jakarta.enterprise.inject.spi.DefinitionException`:
++
+----
+CDI definition validation failed:
+  - Injection point has type variable type T: vi.types.WidgetFactory.dispose disposer param 1
+----
++
+An observer a bean inherits from an abstract or vetoed class, whose type variable the bean class gives a class, is not concerned. The start looked a disposer's parameter of a type variable up by its erased class, `Gadget`, and checked an observer's not at all.
++
+*The ways out.*
++
+** For a raw producer: give it its parameterized return type, `@Produces Foo<Integer> foo()`, or inject the raw type, `@Inject Foo`.
+** For a bounded generic class: inject or look up a parameterization within the bound, `@Inject Repo<Integer>` or `select(new TypeLiteral<Repo<Integer>>() {})`, or declare the type variable unbounded.
+** For an observer's, a disposer's or a producer method's parameter of a type variable: declare it of its bound, `Gadget gadget`, or move the method to a subclass that gives the type variable a class.
++
+Fixed with it: a `@Typed` producer keeps the parameterized forms of the types it names (BUG-20261117-19); a bean's type variable meets a wildcard and an actual type within its bound (BUG-20261117-24); an observer's or a disposer's parameter is checked, resolved and named by its parameterized type, `Holder<java.lang.Integer>` (BUG-20261117-25). See xref:migration.adoc#upgrading[Upgrading from Vauban {release-version}].
 * **The synthetic metadata file is the same at every build.** `META-INF/vauban-synthetic-metadata.properties` carried the date `Properties.store` writes, so a build tool that watched it, the `vidocq:dev` loop among them, saw a change at every compile and swapped the whole layer instead of redefining the class. It is written without the date and with its keys sorted; a file of an earlier version still reads. See xref:concepts.adoc[Concepts].
 * **The build gives a bean the types a class it compiles brings.** In an application compiled with the annotation processor, a bean that extends a class the compilation compiles and no annotation brings into the index, an abstract class say, lacked the classes and interfaces above that class: `vi.SerialService extends vi.Wrapping`, where `Wrapping implements Serializable`, was no `Serializable` to the extensions the processor ran nor to the injection points the build resolved. An `@Inject @Serial Serializable` that only it satisfies failed the build as unsatisfied, two such beans passed the build and were refused at start as ambiguous, and `@Registration(types = Serializable.class)` was not called for it. The container saw those types at start. The processor now reads those classes from its own description of the compilation, around its bean discovery as around the extension phases; the container already read them at start, by loading the classes (BUG-20261117-03). The client proxy the processor generates for a normal-scoped producer is the proxy the container looks up: the produced type, or for a `@Typed` producer the first type of the `@Typed` the container meets above it; it could be the proxy of another class or interface above it, a different one from one build to the next (BUG-20261117-15). Those types, the types a bean of the compilation declares, `Callable<String>` say, and those above a producer's type, `Box<String>` say, carry their type arguments, as at start: they were raw, and a raw type matched every parameterization, so an injection point of `Callable<String>` or `Repo<String>` that two beans reach with different type arguments was reported ambiguous at build. What changes at start, and in the extensions frozen at build: the container resolves a type variable inside a wildcard, an array and the class that encloses an inner class, as the compiler does, so a bean of `ArrayShelf<S> implements Holder<S[]>` given `String` is a `Holder<String[]>` and satisfies an injection point of it, which the start refused. A type that is no legal bean type, one with a wildcard type argument or with a type variable of a class above the bean's class, which only a supertype named raw leaves there, is no longer among the types an extension sees for a bean, as it never was in `Bean.getTypes()`. For the second, the bean has its raw class instead, in both, as Java erases the types above a raw type: a bean of `LegacyNames extends ArrayList`, raw, is a `List` in `Bean.getTypes()` too, which dropped `List<E>` and its class with it, and a producer of it no longer has `List<E>` there, but `List`. A type argument of a produced type that is not a class keeps its shape in the types above it, at build as at start: a producer of `Box<List<String>>`, where `Box<T> implements Repo<T>`, is a `Repo<List<String>>`, and no longer a `Box<Object>` and a `Repo<Object>`, as the start gave it, and a producer of `<T> Box<T>` is a `Repo<T>`, where the build gave it the raw `Repo` (BUG-20261117-14, BUG-20261117-17). A primitive type matches the class named after it whatever the default locale: under a Turkish one, `int` and an array of `int` no longer matched (BUG-20261117-20). See xref:concepts.adoc#classes-outside-the-index[Build Compatible Extensions].
 * **The annotation processor runs from a processor module path.** javac given `vauban-processor` on `--processor-module-path`, in a JVM whose module path holds `vauban-core`, defines the processor's module in a layer above vauban-core's, which the packages vauban-core exports to the processor alone do not reach: a compilation with a normal-scoped bean, or with an intercepted method that carries an annotation, failed with `IllegalAccessError`. The processor now gets them from vauban-core when it starts. A build with Maven's `annotationProcessorPaths`, the `vidocq:dev` loop included, puts the processor on a class path and was not affected (BUG-20261117-23). See xref:reference.adoc[Reference].

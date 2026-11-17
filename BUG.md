@@ -5,6 +5,190 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-30 — The start refuses an inherited initializer's parameter of a type variable
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`ClassValidator.validateInjectionParameters`)
+- **Symptom**: `AbstractGadgetSetter<T>`, abstract, declares `@Inject void set(T gadget)`, and the bean
+  `GadgetSetterOfAbstract extends AbstractGadgetSetter<Gadget>` inherits it with `T` given a class; so does
+  `GadgetSetterOfVetoed` from the `@Vetoed` `VetoedGadgetSetter<T>`. The start refuses the deployment:
+  `DefinitionException: CDI definition validation failed: - Injection point has type variable type:
+  ...$AbstractGadgetSetter.set - Injection point has type variable type: ...$VetoedGadgetSetter.set`. The class that
+  declares the initializer is no bean, and its subclass gives `T` a class, as for an inherited observer (CDI TCK,
+  `MemberLevelInheritanceTest`). The build does not warn about it, by reading: the processor runs
+  `IndexClassValidator`, which checks no initializer for a type variable, and `ClassValidator` runs at start only.
+- **Repro**: `AssignabilityRulesReproductionTest#anInheritedInitializersParameterOfATypeVariableItsBeanClassGivesAClassIsLegal`
+  in `vauban-core`, disabled; red when enabled, on a3d8c032, fix round 2b of BUG-20261117-16 (`vauban-b16-red.log`,
+  "Red run 16").
+- **Cause** (by reading): `ClassValidator.validateInjectionParameters` checks the parameters of every `@Inject`
+  method of every class in the index, a bean or not. The fix needs the "may be a bean" scope of
+  BUG-20261117-16 (neither abstract, nor `@Vetoed`, nor in a vetoed package); the injection already resolves `T`
+  by the bean class (`BeanInjector.injectSingleMethod`, `ManagedBean.resolveType`), not checked by a run. The same
+  scope serves BUG-20261117-29.
+- **Found by**: the review of fix round 2b of BUG-20261117-16.
+
+## BUG-20261117-29 — An `@Inject` field of a type variable is not a definition error
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`ClassValidator.validateFields`, `IndexClassValidator` and `ReflectionValidator`,
+  `validateInjectFields`)
+- **Symptom**: the bean `@Dependent GadgetField<T> { @Inject T gadget; }` has an injection point of a type variable,
+  a definition error (CDI 4.1, 5.2.3; TCK audit `legal_injection_point_types` c). The start reports a deployment
+  problem instead, the field looked up by its erasure: `DeploymentException: CDI deployment validation failed: -
+  Ambiguous dependency: field AssignabilityRulesReproductionTest$GadgetField.gadget of type TypeVariable[name=T,
+  bounds=[]]. Matching beans: [...$Gadget, ...$GadgetField]`.
+- **Repro**: `AssignabilityRulesReproductionTest#anInjectFieldOfATypeVariableIsADefinitionError` in `vauban-core`,
+  disabled; red when enabled, on a3d8c032, fix round 2b of BUG-20261117-16 (`vauban-b16-red.log`, "Red run 16").
+- **Cause** (by reading): no validator checks a field for a bare type variable: `ClassValidator.validateFields`
+  checks `@Produces` with `@Inject` and `final`, and `validateInjectFields` of the index and of the reflection
+  validators check for a raw `Event` or `Instance` only. A fix needs the "may be a bean" scope of
+  BUG-20261117-16: the CDI TCK's vetoed `inheritance.generics.Bar<T1, T2>` has `@Inject T1 t1`, which its bean
+  subclass `Foo extends Bar<String, Qux>` gives a class.
+- **Found by**: the review of fix round 2b of BUG-20261117-16.
+
+## BUG-20261117-28 — A non-contextual injection point falls back on its erased class
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`BeanInjector.injectBeanField`, `VaubanContainer.resolveParameter`,
+  `DisposerInvoker.disposerArgument`)
+- **Symptom**: a deployment with a producer of a raw `Foo`, `@Produces Foo foo()` with `Foo<T>` generic. A class
+  that is no bean, `FooOfIntegerClient { @Inject Foo<Integer> foo; }`, injected through
+  `BeanManager.getInjectionTargetFactory(...).createInjectionTarget(null).inject(...)`, gets the raw producer's
+  `Foo`, and so does the initializer `@Inject void init(Foo<Integer> foo)` of a class `Unmanaged` creates. The raw
+  `Foo` satisfies `Foo<Object>` only (CDI 4.1, 5.2.4), and the start refuses the same injection point on a bean.
+- **Repro**: `AssignabilityRulesReproductionTest#aNonContextualInjectionPointIsNotSatisfiedByABeanTheStrictRuleRefuses`
+  and `#aNonContextualInitializerParameterIsNotSatisfiedByABeanTheStrictRuleRefuses` in `vauban-core`, disabled; red
+  when enabled, on b42eb9a6 (`vauban-b16-red.log`, "Red run 10", the field) and on fix round 2 of BUG-20261117-16
+  ("Red run 14", both).
+- **Cause** (by reading): when `getBeans` of the parameterized type finds no bean, `BeanInjector.injectBeanField`
+  falls back on `container.select(field.getType())` and `VaubanContainer.resolveParameter` on `select(paramType)`:
+  the erased class, which the raw producer satisfies. The start's validation refuses such an injection point on a
+  bean before the fallback can run; a class that is no bean is not validated at start, and creating its
+  `InjectionTarget` does not refuse it either. `DisposerInvoker.disposerArgument` (~471) keeps the same fallback,
+  `container.select(paramType)`, for a disposer's parameter; there the start's check of a disposer's parameters
+  (BUG-20261117-25) refuses what `getBeans` does not satisfy before a disposer is called. The same family as
+  BUG-20261117-25 and BUG-20261117-27.
+- **Found by**: the review of fix round 1 of BUG-20261117-16.
+
+## BUG-20261117-27 — An invoker's argument lookup resolves the erased class of its parameter
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanInvoker.lookupBean`)
+- **Symptom**: an invoker of `String read(Holder<String> holder)` with `withArgumentLookup(0)`, and a bean of
+  `TextHolder implements Holder<String>`: the call throws `UnsatisfiedResolutionException: No bean found for type:
+  …Holder`.
+- **Repro**: `VaubanInvokerLookupTest#anArgumentLookupOfAParameterizedTypeResolvesThatType` in `vauban-core`,
+  disabled; red when enabled, on 3ce0b832 (`vauban-b16-red.log`, "Red run 8") and on fix round 1 of
+  BUG-20261117-16 ("Red run 9").
+- **Cause** (by reading): `lookupArgument` hands `lookupBean` the parameter's class, and `lookupBean` calls
+  `cdi.select(type)`: a raw required type, which a parameterized bean type satisfies only with `Object` or unbounded
+  type variables for arguments (CDI 4.1, 5.2.4). The generic type is at hand (`genParamTypes`), and the `Instance`
+  and `Event` lookups already read it. The same family as BUG-20261117-25.
+- **Found by**: the review of fix round 1 of BUG-20261117-16.
+
+## BUG-20261117-26 — The start does not check an inherited observer's parameters
+
+- **Date**: 2026-11-17
+- **Status**: OPEN
+- **Module**: `vauban-core` (`VaubanContainer.validateObserverParameters`, `observerMethodNamed`)
+- **Symptom**: `IntegerHolderListenerBase` declares `void on(@Observes Pung pung, Holder<Integer> holder)`, and the
+  bean `InheritedIntegerHolderListener` extends it; no bean is a `Holder<Integer>`. The start passes; the call fails
+  at the first event.
+- **Repro**: `AssignabilityRulesReproductionTest#anInheritedObserversUnsatisfiedParameterFailsTheStart` in
+  `vauban-core`, disabled; red when enabled, on fix round 1 of BUG-20261117-16 (`vauban-b16-red.log`, "Red run 9":
+  nothing thrown).
+- **Cause** (by reading): `observerMethodNamed` reads the methods the bean class declares, `getDeclaredMethods()`; an
+  inherited observer is not there, and its parameters are not checked. When they are, the check has to resolve the
+  type variables the subclass gives, `Holder<X>` as `Holder<String>`, as the call does
+  (`EventDispatcher.resolveObserverParamType`): `requiredTypeOf` does not
+  (`#anInheritedObserversParameterOfItsTypeVariableResolvesAsTheSubclassGivesIt` passes today because the check
+  does not run). Unchecked as well: `Sub<T> extends VetoedBase<T>`, where `VetoedBase<T>` declares
+  `void on(@Observes E e, T t)`. The inherited observer keeps `T`, an injection point of a type variable on a class
+  that may be a bean (CDI 4.1, 5.2.3), but the definition validation reads the class that declares the observer,
+  which is none (BUG-20261117-16 scopes the check so), and this check does not see the inherited observer.
+- **Found by**: the review of fix round 1 of BUG-20261117-16, which suspected `requiredTypeOf`; the repro showed the
+  check never reaches it.
+
+## BUG-20261117-25 — An observer's or a disposer's parameter is resolved by its erased class
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/raw-type-assignability`
+- **Module**: `vauban-core` (`VaubanContainer.checkResolvable`, `DisposerInvoker.validateDisposerParameter` and
+  `disposerArgument`, `EventDispatcher.beanArgument`)
+- **Symptom**: `void on(@Observes Ping ping, Holder<String> holder)` with a bean of `TextHolder implements
+  Holder<String>`: the start fails, `Observer method …ParameterizedListener.on(): unsatisfied dependency for parameter
+  arg2 of type …Holder`. Under the rule of BUG-20261117-16, a parameter `Counter<Integer>` with a bean of
+  `Counter<T extends Number>` fails the start the same way, firing the event throws `IllegalArgumentException: Type
+  class …Counter is not a bean type of class …Counter`, and a disposer `dispose(@Disposes Ticket t, Counter<Integer>
+  c)` is not called, without a word: `callDisposer` suppresses what its arguments throw.
+- **Repro**: `AssignabilityRulesReproductionTest#anObserversAndADisposersParametersOfAParameterizedTypeResolveAsInjectionPoints`
+  in `vauban-core`. Red on the main code of 154c46fc (`vauban-b16-red.log`, "Red run 6": the observer's `Holder`), on
+  the strict rule ("Red run 5", base 6e2f2a1b: the observer's `Counter`), and, the check and the observer fixed, on the
+  disposer ("Red run 7", base af47d553: the disposer received nothing).
+- **Cause**: the observer check and the disposer check fall back on the parameter's erased class,
+  `param.getType()`, for the required type; the observer call and the disposer call find the bean by the
+  parameterized type, or the class, and ask `getReference` with the class, which a bean of `Counter<T extends
+  Number>` or `Holder<String>` does not have among its types.
+- **Fix**: `VaubanContainer.requiredTypeOf(Parameter)` gives a parameterized parameter its parameterized type, and
+  any other its class, as before; both checks use it, and name the parameter by that type when it is unsatisfied
+  or ambiguous, `…Holder<java.lang.Integer>`. The observer call asks `getReference` with the type it found the bean
+  by; the disposer call finds the bean by the parameter's type as declared and asks with it. A parameter of a type
+  variable of the class, `T extends Gadget`, made `getBeans` throw, which `callDisposer` suppressed: it is an
+  injection point of a type variable, a definition error the start reports since fix round 2 of BUG-20261117-16
+  (CDI 4.1, 5.2.3; fix round 1 looked it up by its erased class, which the specification does not allow).
+- **Verification**: the test green (`vauban-b16-dev.log`, "Dev run 5"). Fix round 1: the messages
+  (`AssignabilityRulesReproductionTest#anUnsatisfiedObserverParameterIsNamedByItsParameterizedType`,
+  `DisposerMatchingTest#undescribedParameterizedParameter`) red on 3ce0b832 (`vauban-b16-red.log`, "Red run 8").
+  Fix round 2: the ambiguous messages (`#anAmbiguousObserverParameterIsNamedByItsParameterizedType`,
+  `#anAmbiguousDisposerParameterIsNamedByItsParameterizedType`) red on the main code of 904a8b94 ("Red run 12"),
+  and the type variable under BUG-20261117-16. Whole build and TCKs under BUG-20261117-16.
+- **Found by**: the work on BUG-20261117-16, listing what each caller of `BeanResolver` does under the strict rule;
+  the type variable and the messages by the review of its fix round 1.
+
+## BUG-20261117-24 — The resolution of an injection point reads a bean's type variable otherwise than `getBeans`
+
+- **Date**: 2026-11-17
+- **Status**: FIXED on `fix/raw-type-assignability`
+- **Module**: `vauban-core` (`AssignabilityRules.wildcardAdmits`, `actualTypeAdmits`, `isRawEquivalentArgument`)
+- **Symptom**: for a bean type with a type variable among its type arguments, the resolution of an injection point,
+  at build and at start, answered otherwise than `BeanManager.getBeans` and CDI 4.1, 5.2.4:
+  - `GenericDao<T> implements Dao<T>` did not satisfy `@Inject Dao<? extends Integer>`: the upper bound of `T`,
+    `Object`, is assignable from the wildcard's (rule db), which the resolution did not check, and a type variable
+    with no bound failed against any upper bound of a wildcard, `? extends Object` included;
+  - `Sorted<T extends Comparable<T>> implements Holder<T>` did not satisfy `@Inject Holder<Integer>` (rule e);
+  - the same bean satisfied a raw `@Inject Holder`, which `getBeans(Holder.class)` does not list: a type variable
+    bounded by a parameterized type counted as unbounded (rule a).
+  A bean class itself was named raw (BUG-20261117-16), so these showed through the types above it only. Typed with
+  its type variables, the class itself meets them: the CDI TCK's
+  `ParameterizedTypesInjectionToParameterizedWithWildcardTest` injects `Dao<? extends Integer, ?>` into a bean of
+  `Dao<T1, T2>`.
+- **Repro**: `AssignabilityRulesReproductionTest#aBeanTypeVariableSatisfiesAWildcardWhoseUpperBoundIsBelowItsOwn`,
+  `#aBeanTypeVariableWithAParameterizedBoundSatisfiesAnActualTypeWithinIt` and
+  `#aBeanTypeVariableWithAParameterizedBoundDoesNotSatisfyTheRawType` in `vauban-core`, each checking `getBeans` too,
+  and the cases of `AssignabilityRulesEdgeCasesTest` marked BUG-20261117-24. Red on the main code of 154c46fc
+  (`vauban-b16-red.log`, "Red run 1b"); the first two and six edge cases still red on the strict rule alone of
+  BUG-20261117-16 ("Red run 2", base e727c02c), whose predicate fixed the third.
+- **Cause**: `wildcardAdmits` checked a bound of the type variable assignable to the wildcard's upper bound only, and
+  fell through to `isAssignable(T, upper)`, always false, for a type variable with no bound (the index leaves out the
+  implicit `Object`). `actualTypeAdmits` asked `isAssignable(Integer, Comparable<T>)`, which compared the class names.
+  `isRawEquivalentArgument` refused a class bound only.
+- **Fix**: `wildcardAdmitsTypeVariable` checks the upper bound of the type variable assignable to or from the
+  wildcard's upper bound, and assignable from its lower bound; `upperBounds` gives a type variable with no bound
+  `Object`, and a type variable bound its own bounds, as Weld's `getUppermostTypeVariableBounds` does.
+  `isAssignableToBound` takes a class within a parameterized bound, and a parameterized type within a class bound, by
+  their classes, as `getBeans`'s `isTypeAssignableTo` did. `isObjectOrUnboundedTypeVariable` (BUG-20261117-16)
+  counts any bound but `Object` a bound, since fix round 1 of BUG-20261117-16. One case of
+  `AssignabilityRulesEdgeCasesTest`
+  asserted the old answer: `List<T>` against `List<? extends Number>`, now assignable (rule db).
+- **Verification**: the tests above green with the fix (`vauban-b16-dev.log`, "Dev run 1"), and the whole build and
+  the TCKs under BUG-20261117-16.
+- **Found by**: the work on BUG-20261117-16, which needed them before typing a generic bean class with its type
+  variables.
+
 ## BUG-20261117-23 — The processor in a layer above vauban-core's cannot use the packages exported to it alone
 
 - **Date**: 2026-11-17
@@ -79,9 +263,10 @@ suspected cause, status. Updated on every investigation.
 - **Symptom**: `@Produces Outer<String>.Inner<Integer> inner()`, where `Outer<O>` declares
   `class Inner<I> implements Holder<O>`, all compiled by the same compilation: the producer's descriptor, which the
   resolution of an injection point and an extension's `BeanInfo.types()` read, holds the raw `Holder`, at build, at
-  start and frozen. `Bean.getTypes()`, read from the producer method, holds `Holder<String>`. A raw bean type satisfies
-  an injection point of any parameterization (BUG-20261117-16): `@Inject Holder<String>` resolves to it, and so does
-  `@Inject Holder<Integer>`.
+  start and frozen. `Bean.getTypes()`, read from the producer method, holds `Holder<String>`. A raw bean type satisfied
+  an injection point of any parameterization: `@Inject Holder<String>` resolved to it, and so did
+  `@Inject Holder<Integer>`. Since BUG-20261117-16 neither does, and `@Inject Holder<String>` is unsatisfied at build
+  and at start, where `getBeans` finds the producer.
 - **Repro**: `VetoedInterceptorCompileTimeTest#aProducerOfAnInnerClassOfAGenericClassHasTheTypesAboveIt` in
   `vauban-processor`, disabled; red when enabled: the extension sees the raw `Holder` in the processor, at start and
   frozen, and `Bean.getTypes()` has `Holder<String>` (`vauban-b03-red.log`, "Fix round 3 red run 18", on the round 3
@@ -105,7 +290,7 @@ suspected cause, status. Updated on every investigation.
   - `@Produces Outer<String>.Inner<Integer>`, with `Inner<I> implements Holder<List<? extends O>>`:
     `Bean.getTypes()` resolves `Holder<List<? extends String>>` and drops it, as a type with a wildcard type argument
     should be. The descriptor, without the enclosing type, has the raw `Holder`, at build, at start and frozen, which
-    satisfies an injection point of any `Holder<X>` (BUG-20261117-16).
+    satisfied an injection point of any `Holder<X>` until BUG-20261117-16, and now satisfies `Holder<Object>` only.
 - **Fix** (not done): carry the enclosing type in the index's parameterized type, read by the indexer and the
   processor, and given to the compiler and to reflection; a change of the index's model, beyond this pull request.
 - **Found by**: the review of fix round 3 of BUG-20261117-14 (M-2).
@@ -133,7 +318,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-19 — The descriptor of a `@Typed` producer names its types raw
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED on `fix/raw-type-assignability`
 - **Module**: `vauban-core` (`BeanDiscovery.computeProducerTypesWithTyped`)
 - **Symptom**: `@Produces @Typed(Repo.class) Box<String> strings()` and `@Produces @Typed(Repo.class) Box<Integer>
   integers()`, where `Box<T> implements Repo<T>`: an `@Inject Repo<String>` is ambiguous at build (`Ambiguous
@@ -142,11 +327,19 @@ suspected cause, status. Updated on every investigation.
   `Repo`.
 - **Repro**: `VetoedInterceptorCompileTimeTest#anInjectionPointResolvesToTheTypedProducerOfItsParameterization` in
   `vauban-processor`, disabled; red when enabled, at build (`vauban-b03-red.log`, "Fix round 3 red run 18", on the
-  round 3 tree).
-- **Cause** (by reading): `computeProducerTypesWithTyped` gives the class each `@Typed` value names, raw, and
-  `Object`, without the type arguments the produced type gives it. A raw bean type satisfies an injection point of
-  any parameterization (BUG-20261117-16), so both producers do. A bean class's `@Typed` takes the parameterized form
+  round 3 tree). Enabled: ambiguous at build on the main code of 154c46fc (`vauban-b16-red.log`, "Red run 4"), and
+  unsatisfied at start under the strict rule of BUG-20261117-16 ("Red run 3", base 492688ae), where a single such
+  producer no longer satisfied `@Inject Repo<String>` either: the strict rule made this bug a regression.
+- **Cause** (confirmed): `computeProducerTypesWithTyped` gives the class each `@Typed` value names, raw, and
+  `Object`, without the type arguments the produced type gives it. A raw bean type satisfied an injection point of
+  any parameterization (BUG-20261117-16), so both producers did. A bean class's `@Typed` takes the parameterized form
   (`typedBeanTypes`), and `ManagedBean.getTypes()` does for both.
+- **Fix**: `computeProducerTypesWithTyped` takes each named class from the types of the produced type
+  (`computeProducerTypes`), in its parameterized form when they hold one, as `typedBeanTypes` does for a bean class;
+  both go through `typedForms`. Fixed with BUG-20261117-16: small, in the same code, and the strict rule would
+  otherwise have broken `@Inject Repo<String>` on a single `@Typed(Repo.class)` producer of `Box<String>`.
+- **Verification**: the test above green (`vauban-b16-dev.log`, "Dev run 3"); whole build and TCKs under
+  BUG-20261117-16.
 - **Found by**: the review of fix round 3 of BUG-20261117-14 (U1).
 
 ## BUG-20261117-18 — The client proxy of a normal-scoped producer of a parameterized type is not one of that type
@@ -233,17 +426,104 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-16 — A raw bean type satisfies an injection point of any parameterization
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (`AssignabilityRules.isAssignableToParameterized`)
+- **Status**: FIXED on `fix/raw-type-assignability`
+- **Module**: `vauban-core` (`AssignabilityRules.isAssignableToParameterized`, `VaubanBeanManager.typesMatch`,
+  `BeanDiscovery.computeBeanTypes`)
 - **Symptom**: a producer of a raw `Foo`, `@Produces Foo foo()` with `Foo<T>` generic, satisfies an `@Inject
   Foo<Integer>`: the container starts. `BeanManager.getBeans` of `Foo<Integer>` returns no bean.
 - **Repro**: `AssignabilityRulesReproductionTest#aRawBeanTypeDoesNotSatisfyAnotherParameterization` in `vauban-core`,
   disabled; when enabled, `getBeans` is empty and the container starts (`vauban-b03-red.log`, "Fix round 2 red run
   7").
-- **Cause** (by reading): the resolution of an injection point (`BeanResolver` → `AssignabilityRules.beanTypeMatches`
+- **Cause** (confirmed): the resolution of an injection point (`BeanResolver` → `AssignabilityRules.beanTypeMatches`
   → `isAssignableToParameterized`) takes a raw bean type for any parameterization of its class. CDI 4.1, 5.2.4 allows
-  it only when each type argument of the required type is `Object` or an unbounded type variable, as
-  `VaubanBeanManager.getBeans` does.
+  it only when each type argument of the required type is `Object` or an unbounded type variable. `getBeans` took a
+  wildcard as well.
+- **Fix**: one rule for the resolution, at build and at start, and for `getBeans`: "A raw bean type is considered
+  assignable to a parameterized required type if the raw types are identical and all type parameters of the required
+  type are either unbounded type variables or java.lang.Object" (CDI 4.1, 5.2.4), and a parameterized bean type to a
+  raw required type on the same condition on its own arguments. A type variable is unbounded when it declares no
+  bound but `Object`, as Weld's `isUnboundedTypeVariable`: `T extends U` is bounded, `U` unbounded or not, a
+  variable declared with a bound being bounded (JLS 4.4). The first round took it for unbounded; the review of fix
+  round 1 reversed it.
+  - **One rule set** (fix round 1): `BeanManager.getBeans`, `getReference` and `isMatchingBean` call
+    `AssignabilityRules.beanTypeMatches`, the rules of the resolution of an injection point at build and at start,
+    through `VaubanBeanManager.typesMatch`, which converts the reflected types to the index model
+    (`TypeInfoUtils.fromReflectType`, now finite on `T extends Comparable<T>`) and, for the container, keeps the
+    conversions. `getBeans` kept a copy of its own that read the declared bounds of a type variable where the
+    resolution read the uppermost ones: `Chained<U extends Number, T extends U> implements Holder<T>` passed the
+    validation for `@Inject Holder<Integer>`, then the injection, which reads `getBeans` and falls back on
+    `select(Holder.class)`, threw `UnsatisfiedResolutionException`. The copy is gone; the reflective helpers left
+    serve the type arguments of an event only (`eventTypesMatch`, CDI 4.1, 10.3.1).
+  - **The rules, as Weld's `BeanTypeAssignabilityRules`**: the bound checks, rule e and the wildcard rules, read the
+    uppermost bounds (`getUppermostTypeVariableBounds`); rule f too, with `Object` for no bound on either side, so a
+    synthetic bean's `(T extends java.lang.Object)` meets `T`; rule c takes the wildcard's bounds as Java does, a
+    `List<String>` within `? extends List`; rule b compares a parameterized argument by these same rules; a required
+    type that is neither a class, a parameterized type nor an array, and an array of a type variable, match nothing
+    but themselves. Settled with it, from the review: `T extends Number & Comparable<T>` against `? extends
+    Serializable`, which `getBeans` refused bound by bound and the resolver and Weld take; `boundsCovered` against a
+    synthetic `(T extends java.lang.Object)`; and `rawBeanTypeMatchesParameterized`, which compared the classes by
+    identity, removed.
+  - **Fix round 2**: an observer's parameter besides the event parameter, and a disposer's besides the disposed one, of
+    a type variable is a definition error (CDI 4.1, 5.2.3; TCK audit, disposer methods h and
+    `legal_injection_point_types` c), as the parameter of an `@Inject` method already was: `IndexClassValidator`, at
+    build and at start, and `ReflectionValidator` report `Injection point has type variable type T:
+    vi.types.WidgetFactory.dispose disposer param 1`, for a class that may be a bean, neither abstract nor vetoed. A
+    bean that inherits the observer of a class that is none gives the type variable its class: the CDI TCK's
+    `MemberLevelInheritanceTest` (`Foo extends Bar<String, Qux>`, `Bar` vetoed), which a first cut refused. Fix round 1
+    looked a disposer's up by its erased class, which `DisposerInvoker` no longer does. The rules read a class the index
+    does not hold through the container's class loader, not the caller's context loader, which a thread of the
+    application may set to a loader that does not see the deployment: `getBeans` then found no bean, where the
+    reflective rules compared the classes. Only the bean types of the deployment are kept converted; a caller's type is
+    converted at each call. The rules of a type variable in the event matching are gone: `isMatchingEvent` refuses a
+    type variable before they could run.
+    Fix round 2b: a producer method's parameter too, `… producer param 0` ("Red run 15", base 0151202a).
+    Fix round 3: `getReference`, on the path of every injection, matches a bean of the container through the
+    conversions `getBeans` keeps, and a `Bean` its caller makes as before, kept nowhere ("Red run 16", base
+    a3d8c032).
+  - **Wildcards**: a raw `Foo` satisfies neither `Foo<?>` nor `Foo<? extends X>`. A wildcard is neither an unbounded
+    type variable nor `Object`; Weld 5.1 refuses it too; the CDI TCK's `RawBeanTypeParameterizedRequiredTypeTest`
+    (audit 5.2.4, `assignable_parameters`) has no wildcard case. `getBeans`, which took it, no longer does
+    (`TypesMatchCharacterizationTest#rawBeanType`). The array exception stays: `Class[]` satisfies `Class<?>[]`
+    (VAU-BCE-004, MicroProfile Config through Ravel).
+  - **A generic bean class** is typed with its own type variables, `Repo<T>` for `class Repo<T>`, as
+    `Bean.getTypes()` has it: in the descriptor at start and at build (`computeBeanTypes`), with `@Typed`
+    (`typedBeanTypes`), and in what an extension sees. Raw, it satisfied `@Inject Repo<String>` through the old rule
+    only; with its type variable it does by rule e. That needed the type-variable rules of BUG-20261117-24, or the CDI
+    TCK's `Dao<? extends Integer, ?>` on a `Dao<T1, T2>` bean would have failed. A `@Typed` producer needed
+    BUG-20261117-19, and an observer's or a disposer's parameter BUG-20261117-25.
+  - **Where the bean types travel**: the bean types of a class or a producer are not frozen: the descriptor is
+    rebuilt at start from the index, whose type parameters the class file gives, and `_VaubanComponents` and
+    `vauban-beans.list` hold no bean types. A synthetic bean's types go through `ObservedTypeNotation`, which writes a
+    type variable `(T extends java.lang.Object)` and reads it back with an explicit `Object` bound, which the rule
+    takes for no bound.
+- **What changes for an application**: `@Inject Foo<Integer>` on a producer of a raw `Foo` fails the build when `Foo`
+  is a class (`ERROR: [Vauban] Unsatisfied dependency: field Reader.injected of type
+  ParameterizedType[rawType=vi.types.Foo, typeArguments=[ClassType[name=java.lang.Integer]]] with qualifiers
+  [...]`), warns at build and fails the start when
+  it is an interface (`CDI deployment validation failed:` and the same line, a `DeploymentException`), at start and
+  from the frozen record alike. A raw `@Inject Repo` no longer resolves to a bean of `Repo<T extends Number>` (rule
+  a, as `getBeans` and Weld), nor does `VaubanContainer.select(Repo.class)`, as `getBeans(Repo.class)` already did
+  not: a bounded generic `@Dependent` Cassini resource or provider fails at request time with `Not managed by Vauban`
+  (`VaubanBeanProvider.getBean`). A producer of `Outer<String>.Inner<Integer>` injected as `Holder<String>`
+  resolved through the old rule and is unsatisfied until BUG-20261117-21 is fixed. Docs: `whats-new.adoc`,
+  `migration.adoc` (Upgrading).
+- **Verification**: red on the main code of 154c46fc with the tests of 95e240cf (`vauban-b16-red.log`, "Red run 1b":
+  core 25 failures and 2 errors, processor 6 failures); on the strict rule alone, base e727c02c, the bean-class tests
+  stay red ("Red run 2": test 2a `aBeanOfAGenericClassIsInjectableAsAParameterizationOfIt…`, which the old rule kept
+  green on the base, test 2b and `Counter<Integer>`); the raw `@Inject Counter` test red on the base ("Red run 4").
+  Green with the fix (`vauban-b16-dev.log`, "Dev run 1" to "Dev run 5"). Fix round 1: red on 3ce0b832 with the
+  tests of a2acfa60 ("Red run 8": `Chained` in core and through the processor's start, `T extends U` bounded, two
+  bounds against `? extends Serializable`, six edge cases). Fix round 2: red on b42eb9a6 ("Red run 10": the
+  type-variable parameters in core, in both validators and through the processor; "Red run 11": `getBeans` from a
+  thread whose context loader sees no deployment class), on the main code of 904a8b94 ("Red run 12":
+  `isMatchingBean` took a raw `Counter` for `Counter<T extends Number>`), and on the first cut of the round ("Red run
+  13": the TCK's vetoed `Bar`, abstract or vetoed classes in both validators). Green: the full build
+  (`vauban-b16-build.log`, "Full build, fix round 4") and the TCKs (`vauban-b16-tck.log`, "TCKs, fix round 3";
+  fix round 4 changed tests only).
+- **Consumers**: no shipping consumer relies on the lenient rule. The parameterized injection points found are
+  Cervantes' `@Claim ClaimValue<String>` and Dirac's `Gauge<Long>` (tests only), both satisfied by parameterized bean
+  types. Mansart, Noether, Cassini, the Vidocq runtime extensions, Cyrano, Ravel, Kerckhoffs, Foy and Grimm do not
+  rely on it. The external TCKs cannot be judged from the sources: the consumer jobs show them.
 - **Found by**: the review of BUG-20261117-14 (fix round 2).
 
 ## BUG-20261117-15 — The processor generates the client proxy of a class or an interface above a producer's type
@@ -388,7 +668,10 @@ suspected cause, status. Updated on every investigation.
   parameterization, at build as at start (BUG-20261117-16, OPEN); the client proxy of a normal-scoped producer of a
   parameterized type is not one of that type (BUG-20261117-18, OPEN); the descriptor of a `@Typed` producer names its
   types raw (BUG-20261117-19, OPEN); the descriptor of a producer of an inner class of a generic class has the raw
-  types above it, where `Bean.getTypes()` has them parameterized (BUG-20261117-21, OPEN).
+  types above it, where `Bean.getTypes()` has them parameterized (BUG-20261117-21, OPEN). Since BUG-20261117-16 the
+  descriptor types a generic bean class with its type variables, `Ranked<T extends Number & Comparable<T>>`, as
+  `Bean.getTypes()` does, a raw bean type satisfies the parameterizations CDI allows only, and BUG-20261117-19 is
+  fixed with it.
 - **Mansart**: the class Mansart's processor generates for a repository, `<Repository>Impl`
   (`mansart-data-processor`, `RepositoryWriter.java:152`), is a `@Singleton` that `implements` the application's
   repository interface (`RepositoryWriter.java:228` and `:232`), which the application compiles and which extends
@@ -797,7 +1080,7 @@ suspected cause, status. Updated on every investigation.
   risk (BUG-20261117-15, fixed with this). Those types carry their type arguments, as at start: an injection point of
   `Repo<String>` that two beans reach through such interfaces, one a `Repo<String>` and the other a `Repo<Integer>`,
   resolves at build; raw, they made it ambiguous there (BUG-20261117-14, fixed with this, which also changes the start;
-  the cases still left are BUG-20261117-16 and -18).
+  the cases still left are BUG-20261117-16, fixed since, and -18).
 - **Bricks**: a source-level audit of the workspace checkouts (`b03-audit.py`, its output in `vauban-b03-probe.log`)
   finds seven beans that gain types: Heisenberg's `DiracFtMetricsRecorder` and `OtelFtMetricsRecorder` gain
   `FtMetricsRecorder` through `DelegatingFtMetricsRecorder`, which only two `@Any Instance<FtMetricsRecorder>` fields

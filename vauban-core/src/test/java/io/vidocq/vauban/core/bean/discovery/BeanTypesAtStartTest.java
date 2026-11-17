@@ -130,6 +130,11 @@ class BeanTypesAtStartTest {
     public static class Ranked<T extends Number> implements Holder<T> {
     }
 
+    @Dependent
+    @Typed(TypedRanked.class)
+    public static class TypedRanked<T extends Number> implements Holder<T> {
+    }
+
     public interface Wild extends Holder<List<? extends Number>> {
     }
 
@@ -394,13 +399,24 @@ class BeanTypesAtStartTest {
         assertEquals(Set.of(), beans, "Bean.getTypes()");
     }
 
+    /**
+     * A bean keeps the types its own type variables are in, its class's among them: the bean types of a managed bean
+     * include the bean class (CDI 4.1, 3.1.2), with its type parameters, {@code Ranked<T extends Number>}, in the
+     * descriptor as in {@code Bean.getTypes()}, and so does a {@code @Typed} that names the class. The descriptor
+     * named the class raw, {@code Ranked}, which satisfied an injection point of any parameterization of it, of
+     * {@code Ranked<Integer>} among them, only through the rule BUG-20261117-16 removes.
+     */
     @Test
-    @DisplayName("a bean keeps the types its own type variables are in")
+    @DisplayName("a bean keeps the types its own type variables are in, its class's among them")
     void aBeanKeepsTheTypesItsOwnTypeVariablesAreIn() {
-        var holderOfT = parameterized(Holder.class, new TypeInfo.TypeVariable("T", List.of(cls(NUMBER))));
+        var t = new TypeInfo.TypeVariable("T", List.of(cls(NUMBER)));
+        var ranked = Set.of(parameterized(Ranked.class, t), parameterized(Holder.class, t), cls(OBJECT));
+        var typedRanked = Set.of(parameterized(TypedRanked.class, t), cls(OBJECT));
 
-        assertEquals(Set.of(cls(Ranked.class), holderOfT, cls(OBJECT)), descriptorTypes(Ranked.class));
-        assertTrue(containerTypes(Ranked.class).contains(holderOfT), () -> containerTypes(Ranked.class).toString());
+        assertAll(() -> assertEquals(ranked, descriptorTypes(Ranked.class), "descriptor of Ranked"),
+                () -> assertEquals(ranked, containerTypes(Ranked.class), "Bean.getTypes() of Ranked"),
+                () -> assertEquals(typedRanked, descriptorTypes(TypedRanked.class), "descriptor of TypedRanked"),
+                () -> assertEquals(typedRanked, containerTypes(TypedRanked.class), "Bean.getTypes() of TypedRanked"));
     }
 
     @Test
@@ -512,7 +528,8 @@ class BeanTypesAtStartTest {
         assertAll(
                 () -> assertEquals(names, descriptorTypes(LegacyNames.class), "descriptor of LegacyNames"),
                 () -> assertEquals(names, containerTypes(LegacyNames.class), "Bean.getTypes() of LegacyNames"),
-                () -> assertEquals(with(aboveArrayList, cls(Legacy.class)), descriptorTypes(Legacy.class),
+                () -> assertEquals(with(aboveArrayList, parameterized(Legacy.class,
+                        new TypeInfo.TypeVariable("E", List.of()))), descriptorTypes(Legacy.class),
                         "descriptor of Legacy"),
                 () -> assertEquals(with(aboveArrayList, parameterized(Legacy.class,
                         new TypeInfo.TypeVariable("E", List.of()))), containerTypes(Legacy.class),
@@ -542,7 +559,7 @@ class BeanTypesAtStartTest {
         var aboveRawEyrie = Set.of(cls(Perch.class), cls(Holder.class), cls(OBJECT));
 
         assertAll(
-                () -> assertEquals(Set.of(cls(Eyrie.class), parameterized(Perch.class, p), cls(OBJECT)),
+                () -> assertEquals(Set.of(parameterized(Eyrie.class, p), parameterized(Perch.class, p), cls(OBJECT)),
                         descriptorTypes(Eyrie.class), "descriptor of Eyrie"),
                 () -> assertEquals(Set.of(parameterized(Eyrie.class, p), parameterized(Perch.class, p), cls(OBJECT)),
                         containerTypes(Eyrie.class), "Bean.getTypes() of Eyrie"),
@@ -550,8 +567,8 @@ class BeanTypesAtStartTest {
                         .computeProducerTypes(parameterized(Eyrie.class, f)), "descriptor of a producer of Eyrie<F>"),
                 () -> assertEquals(producedEyrie, producerTypes(EyrieFactory.class),
                         "Bean.getTypes() of a producer of Eyrie<F>"),
-                () -> assertEquals(with(aboveRawEyrie, cls(RawEyrie.class)), descriptorTypes(RawEyrie.class),
-                        "descriptor of RawEyrie"),
+                () -> assertEquals(with(aboveRawEyrie, parameterized(RawEyrie.class, p)),
+                        descriptorTypes(RawEyrie.class), "descriptor of RawEyrie"),
                 () -> assertEquals(with(aboveRawEyrie, parameterized(RawEyrie.class, p)),
                         containerTypes(RawEyrie.class), "Bean.getTypes() of RawEyrie"));
     }

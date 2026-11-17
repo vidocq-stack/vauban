@@ -25,6 +25,8 @@ import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -66,6 +68,39 @@ class VaubanInvokerLookupTest {
     public static class Worker {
         public String work(Part part) {
             return "worked with " + part.name();
+        }
+    }
+
+    public interface Holder<H> {
+    }
+
+    @Dependent
+    public static class TextHolder implements Holder<String> {
+    }
+
+    @Dependent
+    public static class HolderReader {
+        public String read(Holder<String> holder) {
+            return holder.getClass().getSimpleName();
+        }
+    }
+
+    /**
+     * An argument lookup of a {@code Holder<String>} parameter resolves {@code Holder<String>}, which the bean of
+     * {@code TextHolder implements Holder<String>} satisfies. The lookup resolves the erased class, {@code Holder}, a
+     * raw required type that a parameterized bean type of another argument than {@code Object} does not satisfy (CDI
+     * 4.1, 5.2.4; BUG-20261117-27).
+     */
+    @Test
+    @Disabled("BUG-20261117-27: an argument lookup resolves the erased class of its parameter")
+    @DisplayName("an argument lookup of a parameterized type resolves that type")
+    void anArgumentLookupOfAParameterizedTypeResolvesThatType() throws Exception {
+        try (var _ = VaubanContainer.builder().addBeanClass(TextHolder.class).addBeanClass(HolderReader.class)
+                .build()) {
+            var read = new VaubanInvoker(HolderReader.class.getMethod("read", Holder.class), HolderReader.class, true,
+                    Set.of(0));
+
+            assertEquals("TextHolder", read.invoke(null, new Object[] {null}));
         }
     }
 

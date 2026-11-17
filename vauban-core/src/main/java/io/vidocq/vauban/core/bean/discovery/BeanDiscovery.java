@@ -725,11 +725,26 @@ public final class BeanDiscovery {
             return typedBeanTypes(classInfo, typedClassNames(typedAnn.get()));
         }
         var types = new LinkedHashSet<TypeInfo>();
+        types.add(beanClassType(classInfo));
         collectBeanTypes(classInfo.name(), types);
         types.addAll(parameterizedSupertypes(classInfo.name()));
         dropRawFormsOfParameterizedTypes(types);
         types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
         return legalBeanTypes(types, ownTypeVariables(classInfo));
+    }
+
+    /**
+     * The bean class as a bean type: with its type parameters, {@code Repo<T>} for {@code class Repo<T>}, when it
+     * declares any (CDI 4.1, 3.1.2), as {@code Bean.getTypes()} has it, and raw otherwise. The descriptor named a
+     * generic class raw, which satisfied an injection point of {@code Repo<String>} only through a rule CDI does not
+     * have (BUG-20261117-16). The type parameters come from the index, the class file's {@code Signature} or the
+     * compiler's {@code TypeElement}, with their bounds.
+     */
+    private static TypeInfo beanClassType(ClassInfo classInfo) {
+        var parameters = classInfo.typeParameters();
+        return parameters.isEmpty() ? new TypeInfo.ClassType(classInfo.name())
+                : new TypeInfo.ParameterizedType(classInfo.name(),
+                        parameters.stream().map(BeanDiscovery::asReflected).toList());
     }
 
     /**
@@ -871,19 +886,30 @@ public final class BeanDiscovery {
 
     /**
      * The bean types {@code @Typed} leaves a managed bean: each named type, in its parameterized form
-     * when the class has such a supertype, plus {@code Object}, the legal ones only.
+     * when the class is generic or has such a supertype, plus {@code Object}, the legal ones only.
      */
     private static Set<TypeInfo> typedBeanTypes(ClassInfo classInfo, List<DotName> restrictedRawTypes) {
-        var allParamTypes = parameterizedSupertypes(classInfo.name());
+        var allParamTypes = new ArrayList<TypeInfo>();
+        allParamTypes.add(beanClassType(classInfo));
+        allParamTypes.addAll(parameterizedSupertypes(classInfo.name()));
+        return legalBeanTypes(typedForms(allParamTypes, restrictedRawTypes), ownTypeVariables(classInfo));
+    }
+
+    /**
+     * The types a {@code @Typed} that names {@code restrictedRawTypes} leaves among {@code types}, and {@code Object}:
+     * each named class in its parameterized form when {@code types} holds one, raw otherwise. A raw form satisfies
+     * no injection point of another parameterization than by {@code Object} (BUG-20261117-16).
+     */
+    private static Set<TypeInfo> typedForms(Collection<TypeInfo> types, List<DotName> restrictedRawTypes) {
         var restrictedTypes = new LinkedHashSet<TypeInfo>();
         for (var rawName : restrictedRawTypes) {
-            restrictedTypes.add(allParamTypes.stream()
+            restrictedTypes.add(types.stream()
                     .filter(t -> t instanceof TypeInfo.ParameterizedType(var rawType, _) && rawType.equals(rawName))
                     .findFirst()
                     .orElseGet(() -> new TypeInfo.ClassType(rawName)));
         }
         restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
-        return legalBeanTypes(restrictedTypes, ownTypeVariables(classInfo));
+        return restrictedTypes;
     }
 
     /** The class names a {@code @Typed} annotation lists, in declaration order. */
@@ -1137,12 +1163,10 @@ public final class BeanDiscovery {
                 .filter(a -> a.name().equals(TYPED))
                 .findFirst();
         if (typedAnn.isPresent()) {
-            var restrictedTypes = new LinkedHashSet<TypeInfo>();
-            for (var className : typedClassNames(typedAnn.get())) {
-                restrictedTypes.add(new TypeInfo.ClassType(className));
-            }
-            restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
-            return restrictedTypes;
+            // The parameterized forms the produced type gives, as Bean.getTypes() has them: Repo<String> for a
+            // @Typed(Repo.class) producer of Box<String>, where Box<T> implements Repo<T>. They were raw, and once
+            // a raw type satisfied no other parameterization, nothing satisfied @Inject Repo<String> (BUG-20261117-19)
+            return typedForms(computeProducerTypes(producerType), typedClassNames(typedAnn.get()));
         }
         return computeProducerTypes(producerType);
     }

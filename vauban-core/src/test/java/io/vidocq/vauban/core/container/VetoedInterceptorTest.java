@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.container;
 
 import io.vidocq.vauban.core.container.vetoed.PackageVetoedBean;
 import io.vidocq.vauban.core.container.vetoed.PackageVetoedOverseer;
+import io.vidocq.vauban.core.container.vetoed.PackageVetoedTypeVariableObserver;
 import io.vidocq.vauban.core.extensions.FrozenExtensions;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.Dependent;
@@ -55,6 +56,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,13 +75,13 @@ class VetoedInterceptorTest {
     /** The vetoed package, which only its {@code package-info} class says is vetoed. */
     private static final String VETOED_PACKAGE = PackageVetoedOverseer.class.getPackageName();
 
-    /** The types of the vetoed package. */
+    /** The types of the vetoed package, every one of them. */
     private static final List<String> VETOED_PACKAGE_TYPES = List.of(PackageVetoedOverseer.class.getName(),
-            PackageVetoedBean.class.getName());
+            PackageVetoedBean.class.getName(), PackageVetoedTypeVariableObserver.class.getName());
 
     /** The classes of the vetoed package, its {@code package-info} among them. */
-    private static final List<String> VETOED_PACKAGE_CLASSES = List.of(VETOED_PACKAGE + ".package-info",
-            VETOED_PACKAGE_TYPES.get(0), VETOED_PACKAGE_TYPES.get(1));
+    private static final List<String> VETOED_PACKAGE_CLASSES = Stream.concat(
+            Stream.of(VETOED_PACKAGE + ".package-info"), VETOED_PACKAGE_TYPES.stream()).toList();
 
     private static final String BEANS_XML = "META-INF/beans.xml";
     private static final String BEANS_LIST = "META-INF/vauban-beans.list";

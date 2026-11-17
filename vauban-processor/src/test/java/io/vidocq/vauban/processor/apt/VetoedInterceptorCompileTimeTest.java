@@ -36,6 +36,8 @@ import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
 import jakarta.enterprise.inject.spi.Bean;
+import jakarta.enterprise.inject.spi.DefinitionException;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.inject.spi.PassivationCapable;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.types.Type;
@@ -44,6 +46,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -121,6 +125,21 @@ class VetoedInterceptorCompileTimeTest {
     private static final String TEXTS_IMPL = "TextsImpl";
     private static final String HOLDER = "Holder";
     private static final String HOLDER_SOURCE = "public interface Holder<T> {\n}";
+    /** What the build adds to an unsatisfied injection point it leaves to the container. */
+    private static final String DEFERRED = " — the required type is not declared by this compilation unit; resolution"
+            + " deferred to the runtime container.";
+    /** How the container starts the message of a deployment it refuses. */
+    private static final String VALIDATION_FAILED = "CDI deployment validation failed:\n  - ";
+    /** {@code vi.types.FooFactory}, a {@code @Dependent} bean that produces a raw {@code Foo}. */
+    private static final String RAW_FOO_FACTORY = DEPENDENT + """
+            @SuppressWarnings("rawtypes")
+            public class FooFactory {
+                @jakarta.enterprise.inject.Produces
+                Foo foo() {
+                    return new Foo() {
+                    };
+                }
+            }""";
     /** {@code vi.types.Outer<O>}, whose inner class {@code Inner<I>} is a {@code Holder<O>}. */
     private static final String GENERIC_OUTER_SOURCE = """
             public class Outer<O> {
@@ -837,14 +856,15 @@ class VetoedInterceptorCompileTimeTest {
      * {@code Pair<List<? extends Number>, List<? super Integer>>}, nor its raw class, and no type variable a supertype
      * the class uses raw declares, as the {@code B} of {@code Holder<B>} above {@code RawUser implements Base}, but the
      * raw {@code Holder}, as Java erases the types above a raw type (JLS 4.8). The container's {@code Bean.getTypes()}
-     * has them too; it differs in one place: the type of a generic bean class itself, named raw in the descriptor,
-     * {@code Ranked}, and with its type variables by {@code Bean.getTypes()}.
+     * has them too, the type of a generic bean class itself with its type variables, {@code Ranked<T extends Number &
+     * Comparable<T>>}, which the descriptor named raw until BUG-20261117-16.
      */
     @Test
     @DisplayName("the processor's bean types equal the container's for every shape of type argument")
     void theProcessorsBeanTypesEqualTheContainersForEveryShapeOfTypeArgument() throws Exception {
-        var ranked = "vi.types.Ranked: java.lang.Object, vi.types.Holder<T extends java.lang.Number &"
-                + " java.lang.Comparable<T>>, ";
+        var rankedVariable = "<T extends java.lang.Number & java.lang.Comparable<T>>";
+        var ranked = "vi.types.Ranked: java.lang.Object, vi.types.Holder" + rankedVariable + ", vi.types.Ranked"
+                + rankedVariable;
         var unchanged = List.of(
                 "vi.types.Library: java.lang.Object, vi.types.BookShelf<java.lang.String>,"
                         + " vi.types.Holder<java.util.List<java.lang.String>>, vi.types.Library,"
@@ -865,9 +885,313 @@ class VetoedInterceptorCompileTimeTest {
         var seen = seenThreeWays(withEveryShapeOfTypeArgument(), BeanTypeRecorder.class, BeanTypeRecorder.SEEN,
                 container);
 
-        assertAll(() -> seen.assertEachIs(sortedConcat(factory, unchanged, List.of(ranked + "vi.types.Ranked"))),
-                () -> container.assertEachIs(sortedConcat(factory, unchanged, List.of(ranked
-                        + "vi.types.Ranked<T extends java.lang.Number & java.lang.Comparable<T>>"))));
+        var expected = sortedConcat(factory, unchanged, List.of(ranked));
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(expected));
+    }
+
+    /**
+     * A raw bean type is assignable to a parameterized required type only "if the raw types are identical and all type
+     * parameters of the required type are either unbounded type variables or java.lang.Object" (CDI 4.1, 5.2.4): a
+     * producer of a raw {@code Foo}, where {@code Foo<T>}, satisfies no {@code @Inject Foo<Integer>}. The build and
+     * the start resolved that injection point to it, as they took a raw bean type for any parameterization of its
+     * class, while {@code BeanManager.getBeans} returned no bean (BUG-20261117-16). The start and the freeze now refuse
+     * it with the same message. The build refuses it when {@code Foo} is a class, and leaves it to the container with
+     * a warning when it is an interface, which a bean of another archive may implement, as for any unsatisfied
+     * injection point of an interface.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"class", "interface"})
+    @DisplayName("a producer of a raw type satisfies no other parameterization, at build, at start and frozen")
+    void aProducerOfARawTypeSatisfiesNoOtherParameterizationAtBuildAtStartAndFrozen(String kind) throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Foo", "public " + kind + " Foo<T> {\n}");
+        putType(sources, "FooFactory", RAW_FOO_FACTORY);
+        sources.put(READER_SOURCE, reader("Foo<Integer>"));
+
+        assertUnsatisfiedThreeWays(sources, "ParameterizedType[rawType=vi.types.Foo,"
+                + " typeArguments=[ClassType[name=java.lang.Integer]]]", "interface".equals(kind));
+    }
+
+    /**
+     * A producer of a raw {@code Foo} satisfies {@code @Inject Foo<Object>}, at build, at start and frozen: each type
+     * argument of the required type is {@code Object} (CDI 4.1, 5.2.4). Its bean types hold the raw {@code Foo}.
+     */
+    @Test
+    @DisplayName("a producer of a raw type satisfies its parameterization by Object, at build, at start and frozen")
+    void aProducerOfARawTypeSatisfiesItsParameterizationByObjectAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Foo", "public interface Foo<T> {\n}");
+        putType(sources, "FooFactory", RAW_FOO_FACTORY);
+        sources.put(READER_SOURCE, reader("Foo<Object>"));
+        var got = new ArrayList<String>();
+
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, resolvedInto(got));
+
+        assertAll(() -> seen.assertEachIs(List.of("producer of vi.types.FooFactory: java.lang.Object, vi.types.Foo",
+                        "vi.types.FooFactory: java.lang.Object, vi.types.FooFactory", READER_TYPES)),
+                () -> assertEquals(List.of(TYPES + "FooFactory$1", TYPES + "FooFactory$1"), got,
+                        "the bean the injection point resolves to, at start, run and frozen"));
+    }
+
+    /**
+     * A {@code @Dependent} bean of the class {@code Repo<T>} satisfies {@code @Inject Repo<String>}, at build, at start
+     * and frozen: its bean type {@code Repo<T>} is assignable to it by the rule on a type variable (CDI 4.1, 5.2.4).
+     * The descriptor named the class raw, {@code Repo}, which satisfied it only through the rule BUG-20261117-16
+     * removes: the strict rule alone made such a bean unsatisfied.
+     */
+    @Test
+    @DisplayName("a bean of a generic class is injectable as a parameterization of it, at build, at start and frozen")
+    void aBeanOfAGenericClassIsInjectableAsAParameterizationOfItAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Repo", DEPENDENT + "public class Repo<T> {\n}");
+        sources.put(READER_SOURCE, reader(REPO_OF_STRING));
+        var got = new ArrayList<String>();
+
+        seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, resolvedInto(got));
+
+        assertEquals(List.of(TYPES + "Repo", TYPES + "Repo"), got,
+                "the bean the injection point resolves to, at start, run and frozen");
+    }
+
+    /**
+     * The bean types of a managed bean include the bean class (CDI 4.1, 3.1.2), with its type parameters: the bean of
+     * {@code Repo<T>} has the bean type {@code Repo<T>}, that of {@code Sorted<T extends Number & Comparable<T>>} the
+     * type with its bounds, and a {@code @Typed} that names a generic class gives it too, in the processor, at start
+     * and frozen, as in {@code Bean.getTypes()}. The descriptor named each class raw (BUG-20261117-16).
+     */
+    @Test
+    @DisplayName("a bean of a generic class has its class with its type variables as a bean type")
+    void aBeanOfAGenericClassHasItsClassWithItsTypeVariablesAsABeanType() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, HOLDER, HOLDER_SOURCE);
+        putType(sources, "Repo", DEPENDENT + "public class Repo<T> {\n}");
+        putType(sources, "Sorted", DEPENDENT + "public class Sorted<T extends Number & Comparable<T>> {\n}");
+        putType(sources, "TypedRepo", DEPENDENT + """
+                @jakarta.enterprise.inject.Typed(TypedRepo.class)
+                public class TypedRepo<T> implements Holder<T> {
+                }""");
+        var container = new ContainerTypes();
+
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, container);
+
+        var expected = List.of("vi.types.Repo: java.lang.Object, vi.types.Repo<T>",
+                "vi.types.Sorted: java.lang.Object, vi.types.Sorted<T extends java.lang.Number &"
+                        + " java.lang.Comparable<T>>",
+                "vi.types.TypedRepo: java.lang.Object, vi.types.TypedRepo<T>");
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(expected));
+    }
+
+    /**
+     * A bean of {@code Counter<T extends Number>} satisfies {@code @Inject Counter<Integer>}, at build, at start and
+     * frozen: {@code Integer} is assignable to the upper bound of {@code T} (CDI 4.1, 5.2.4). Java refuses
+     * {@code Counter<String>} in source; the bean's {@code Shelf<T>}, its superclass, says what the rule does with a
+     * type outside the bound.
+     */
+    @Test
+    @DisplayName("a bean of a bounded generic class is injectable within its bound, at build, at start and frozen")
+    void aBeanOfABoundedGenericClassIsInjectableWithinItsBoundAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withACounter();
+        sources.put(READER_SOURCE, reader("Counter<Integer>"));
+        var got = new ArrayList<String>();
+
+        seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, resolvedInto(got));
+
+        assertEquals(List.of(TYPES + "Counter", TYPES + "Counter"), got,
+                "the bean the injection point resolves to, at start, run and frozen");
+    }
+
+    /**
+     * A bean of {@code Chained<U extends Number, T extends U> implements Holder<T>} satisfies {@code @Inject
+     * Holder<Integer>} at build, at start and frozen, and the container injects it: {@code Integer} is assignable to
+     * the uppermost bound of {@code T}, {@code Number} (CDI 4.1, 5.2.4, rule e). The validation read that bound and
+     * passed; {@code BeanManager.getBeans}, which the injection reads at run time, read {@code U} and found no bean
+     * (BUG-20261117-16).
+     */
+    @Test
+    @DisplayName("a bean whose type variable is bounded by another is injectable within the uppermost bound")
+    void aBeanWhoseTypeVariableIsBoundedByAnotherIsInjectableWithinTheUppermostBound() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Holder", "public interface Holder<H> {\n}");
+        putType(sources, "Chained", DEPENDENT
+                + "public class Chained<U extends Number, T extends U> implements Holder<T> {\n}");
+        sources.put(READER_SOURCE, reader("Holder<Integer>"));
+        var got = new ArrayList<String>();
+
+        seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, resolvedInto(got));
+
+        assertEquals(List.of(TYPES + "Chained", TYPES + "Chained"), got,
+                "the bean the injection point resolves to, at start, run and frozen");
+    }
+
+    /**
+     * A bean of {@code Counter<T extends Number> extends Shelf<T>} does not satisfy {@code @Inject Shelf<String>}, at
+     * build, at start and frozen: {@code String} is not assignable to the upper bound of {@code T} (CDI 4.1, 5.2.4).
+     */
+    @Test
+    @DisplayName("a bean of a bounded generic class satisfies no type outside its bound, at build, at start and frozen")
+    void aBeanOfABoundedGenericClassSatisfiesNoTypeOutsideItsBoundAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withACounter();
+        sources.put(READER_SOURCE, reader("Shelf<String>"));
+
+        assertUnsatisfiedThreeWays(sources, "ParameterizedType[rawType=vi.types.Shelf,"
+                + " typeArguments=[ClassType[name=java.lang.String]]]", false);
+    }
+
+    /**
+     * A parameterized bean type is assignable to a raw required type only if each of its type arguments is
+     * {@code Object} or an unbounded type variable (CDI 4.1, 5.2.4): a bean of {@code Counter<T extends Number>}, whose
+     * bean type is {@code Counter<T extends Number>}, does not satisfy {@code @Inject Counter}, at build, at start and
+     * frozen. The descriptor named the class raw, and the raw {@code Counter} satisfied it, while
+     * {@code BeanManager.getBeans} of {@code Counter} found no bean (BUG-20261117-16).
+     */
+    @Test
+    @DisplayName("a bean of a bounded generic class does not satisfy its raw type, at build, at start and frozen")
+    void aBeanOfABoundedGenericClassDoesNotSatisfyItsRawTypeAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withACounter();
+        sources.put(READER_SOURCE, reader("Counter").replace("    @jakarta.inject.Inject",
+                "    @SuppressWarnings(\"rawtypes\")\n    @jakarta.inject.Inject"));
+
+        assertUnsatisfiedThreeWays(sources, "ClassType[name=vi.types.Counter]", false);
+    }
+
+    /**
+     * An observer's parameter besides the event parameter, a disposer's besides the disposed one and a producer
+     * method's are injection points, and an injection point of a type variable is a definition error (CDI 4.1,
+     * 5.2.3). The processor warns, as of every definition error; the start refuses the deployment with its
+     * extensions run, and the build's freeze refuses to freeze it, so no frozen start comes after. The start looked
+     * the disposer's {@code T extends Gadget} up by its erased class, and checked none of them (BUG-20261117-16, fix
+     * round 2).
+     */
+    @Test
+    @DisplayName("a type-variable parameter of an observer or a disposer is a definition error, at build and at start")
+    void aParameterOfATypeVariableIsADefinitionErrorAtBuildAndAtStart() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Gadget", DEPENDENT + "public class Gadget {\n}");
+        putType(sources, "Widget", "public class Widget {\n}");
+        putType(sources, "WidgetFactory", DEPENDENT + """
+                public class WidgetFactory<T extends Gadget> {
+                    @jakarta.enterprise.inject.Produces
+                    Widget widget() {
+                        return new Widget();
+                    }
+
+                    void dispose(@jakarta.enterprise.inject.Disposes Widget widget, T gadget) {
+                    }
+                }""");
+        putType(sources, "GadgetListener", DEPENDENT + """
+                public class GadgetListener<T extends Gadget> {
+                    void on(@jakarta.enterprise.event.Observes String event, T gadget) {
+                    }
+                }""");
+        putType(sources, "Sprocket", "public class Sprocket {\n}");
+        putType(sources, "SprocketFactory", DEPENDENT + """
+                public class SprocketFactory<T extends Gadget> {
+                    @jakarta.enterprise.inject.Produces
+                    Sprocket sprocket(T gadget) {
+                        return new Sprocket();
+                    }
+                }""");
+        var errors = List.of(
+                "Injection point has type variable type T: vi.types.WidgetFactory.dispose disposer param 1",
+                "Injection point has type variable type T: vi.types.GadgetListener.on observer param 1",
+                "Injection point has type variable type T: vi.types.SprocketFactory.sprocket producer param 0");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        for (var error : errors) {
+            assertTrue(built.messages().contains("WARNING: [Vauban] " + error
+                    + " — the container rejects this deployment at start."), () -> String.join("\n", built.messages()));
+        }
+        var unvalidated = ProcessorCompiler.compile(workDir.resolve("unvalidated"), sources,
+                List.of("-Avauban.validation=false"));
+        assertTrue(unvalidated.success(), () -> "compilation failed: " + unvalidated.messages());
+        registerExtension(unvalidated, BeanTypeRecorder.class);
+        String run;
+        String frozen;
+        try (var loader = loader(unvalidated)) {
+            run = assertThrows(DefinitionException.class,
+                    VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "the container starts")
+                    .getMessage();
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(unvalidated.classes());
+            assertFalse(outcome.frozen(), "the build froze a deployment with a definition error");
+            frozen = outcome.reason();
+        }
+        for (var error : errors) {
+            assertAll(() -> assertTrue(run.contains("\n  - " + error), run),
+                    () -> assertTrue(frozen.contains("\n  - " + error), frozen));
+        }
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, with the class {@code Shelf<S>} and the bean
+     * {@code Counter<T extends Number> extends Shelf<T>}.
+     */
+    private static Map<String, String> withACounter() {
+        var sources = withAVetoedPackage();
+        putType(sources, "Shelf", "public class Shelf<S> {\n}");
+        putType(sources, "Counter", DEPENDENT + "public class Counter<T extends Number> extends Shelf<T> {\n}");
+        return sources;
+    }
+
+    /**
+     * Checks that the injection point of {@code vi.types.Reader} in {@code sources}, of the type {@code requiredType}
+     * names, is unsatisfied with the same message at build, at start and frozen. The build fails, or, when
+     * {@code deferred}, warns and leaves it to the container. The start throws, with the extensions run and with the
+     * record the freeze wrote, which holds no validation: the start validates the deployment.
+     */
+    private void assertUnsatisfiedThreeWays(Map<String, String> sources, String requiredType, boolean deferred)
+            throws Exception {
+        var messages = unsatisfiedReader(requiredType);
+        var atBuild = messages.stream()
+                .map(message -> deferred ? "WARNING: [Vauban] " + message + DEFERRED : "ERROR: [Vauban] " + message)
+                .toList();
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        var unvalidated = ProcessorCompiler.compile(workDir.resolve("unvalidated"), sources,
+                List.of("-Avauban.validation=false"));
+
+        assertTrue(unvalidated.success(), () -> "compilation failed: " + unvalidated.messages());
+        assertEquals(deferred, built.success(), () -> String.join("\n", built.messages()));
+        assertTrue(built.messages().stream().anyMatch(atBuild::contains), () -> String.join("\n", built.messages()));
+        registerExtension(unvalidated, BeanTypeRecorder.class);
+        var atStart = messages.stream().map(message -> VALIDATION_FAILED + message + "\n").toList();
+        String run;
+        try (var loader = loader(unvalidated)) {
+            run = assertThrows(DeploymentException.class,
+                    VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "the container starts")
+                    .getMessage();
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(unvalidated.classes());
+            assertTrue(outcome.frozen(), outcome.reason());
+        }
+        BeanTypeRecorder.SEEN.clear();
+        String frozen;
+        try (var loader = loader(unvalidated)) {
+            frozen = assertThrows(DeploymentException.class,
+                    VaubanContainer.builder().classLoader(loader).scanClasspath()::build,
+                    "the container starts frozen").getMessage();
+        }
+        var seenAtStart = List.copyOf(BeanTypeRecorder.SEEN);
+        assertAll(() -> assertTrue(atStart.contains(run), run),
+                () -> assertTrue(atStart.contains(frozen), frozen),
+                () -> assertEquals(List.of(), seenAtStart, "a frozen extension does not run at start"));
+    }
+
+    /**
+     * What the build and the container say of an unsatisfied {@code vi.types.Reader.injected} of {@code type}, its
+     * two qualifiers in each order: the set that holds them has no order of its own.
+     */
+    private static List<String> unsatisfiedReader(String type) {
+        var any = "QualifierInstance[annotationName=jakarta.enterprise.inject.Any, members={}]";
+        var defaultQualifier = "QualifierInstance[annotationName=jakarta.enterprise.inject.Default, members={}]";
+        var prefix = "Unsatisfied dependency: field Reader.injected of type " + type + " with qualifiers [";
+        return List.of(prefix + any + ", " + defaultQualifier + "]", prefix + defaultQualifier + ", " + any + "]");
+    }
+
+    /** Adds to {@code got} the class of the bean {@code vi.types.Reader} got, in each container it is given. */
+    private static StartedCheck resolvedInto(List<String> got) {
+        return (container, loader) -> got.add(String.valueOf(hello(container, loader.loadClass(TYPES + "Reader"))));
     }
 
     /**
@@ -1097,13 +1421,10 @@ class VetoedInterceptorCompileTimeTest {
 
         var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, container);
 
-        assertAll(() -> seen.assertEachIs(sortedConcat(factory, List.of(
-                        "vi.types.Eyrie: java.lang.Object, vi.types.Eyrie, vi.types.Perch<P>",
-                        "vi.types.RawEyrie: java.lang.Object, vi.types.Holder, vi.types.Perch, vi.types.RawEyrie"))),
-                () -> container.assertEachIs(sortedConcat(factory, List.of(
-                        "vi.types.Eyrie: java.lang.Object, vi.types.Eyrie<P>, vi.types.Perch<P>",
-                        "vi.types.RawEyrie: java.lang.Object, vi.types.Holder, vi.types.Perch,"
-                                + " vi.types.RawEyrie<P>"))));
+        var expected = sortedConcat(factory, List.of(
+                "vi.types.Eyrie: java.lang.Object, vi.types.Eyrie<P>, vi.types.Perch<P>",
+                "vi.types.RawEyrie: java.lang.Object, vi.types.Holder, vi.types.Perch, vi.types.RawEyrie<P>"));
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(expected));
     }
 
     /**
@@ -1128,10 +1449,9 @@ class VetoedInterceptorCompileTimeTest {
 
         var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, container);
 
-        assertAll(() -> seen.assertEachIs(sortedConcat(others, RAW_SUPERTYPE_BEANS,
-                        List.of("vi.types.Legacy: " + ABOVE_ARRAY_LIST + "vi.types.Legacy"))),
-                () -> container.assertEachIs(sortedConcat(others, RAW_SUPERTYPE_BEANS,
-                        List.of("vi.types.Legacy: " + ABOVE_ARRAY_LIST + "vi.types.Legacy<E>"))));
+        var expected = sortedConcat(others, RAW_SUPERTYPE_BEANS,
+                List.of("vi.types.Legacy: " + ABOVE_ARRAY_LIST + "vi.types.Legacy<E>"));
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(expected));
     }
 
     /**
@@ -1196,11 +1516,10 @@ class VetoedInterceptorCompileTimeTest {
      * Two producers of {@code Box}es, {@code @Typed(Repo.class)}, of {@code Box<String>} and of {@code Box<Integer>}:
      * an injection point of {@code Repo<String>} resolves to the first, at build, at start and frozen, as
      * {@code Bean.getTypes()} says, which holds {@code Repo<String>} and {@code Repo<Integer>}. The descriptor of a
-     * {@code @Typed} producer names its types raw, {@code Repo} for both, and the injection point is ambiguous
-     * (BUG-20261117-19).
+     * {@code @Typed} producer named its types raw, {@code Repo} for both: the injection point was ambiguous, and
+     * unsatisfied once a raw bean type satisfied no other parameterization (BUG-20261117-19, BUG-20261117-16).
      */
     @Test
-    @Disabled("BUG-20261117-19: the descriptor of a @Typed producer names its types raw")
     @DisplayName("an injection point resolves to the @Typed producer of its parameterization")
     void anInjectionPointResolvesToTheTypedProducerOfItsParameterization() throws Exception {
         var sources = withABoxProducer();
@@ -1254,17 +1573,23 @@ class VetoedInterceptorCompileTimeTest {
         return sources;
     }
 
-    /** {@link #withAVetoedPackage()}, with {@code vi.types.Box<T> implements Repo<T>} and its producer, of {@code Box<String>}. */
+    /**
+     * {@link #withAVetoedPackage()}, with {@code vi.types.Box<T> implements Repo<T>} and its producer, of
+     * {@code Box<String>}.
+     */
     private static Map<String, String> withABoxProducer() {
         var sources = withAVetoedPackage();
         putType(sources, "Repo", "public interface Repo<T> {\n}");
         putType(sources, "Box", "public class Box<T> implements Repo<T> {\n}");
-        putType(sources, "BoxFactory", DEPENDENT + "public class BoxFactory {\n    @jakarta.enterprise.inject.Produces\n"
+        putType(sources, "BoxFactory", DEPENDENT + "public class BoxFactory {\n"
+                + "    @jakarta.enterprise.inject.Produces\n"
                 + "    Box<String> box() {\n        return new Box<>();\n    }\n}");
         return sources;
     }
 
-    /** Adds {@code ArrayShelf<S> implements Holder<S[]>} and the bean {@code ArrayLibrary extends ArrayShelf<String>}. */
+    /**
+     * Adds {@code ArrayShelf<S> implements Holder<S[]>} and the bean {@code ArrayLibrary extends ArrayShelf<String>}.
+     */
     private static void withAnArrayLibrary(Map<String, String> sources) {
         putType(sources, "ArrayShelf", "public abstract class ArrayShelf<S> implements Holder<S[]> {\n}");
         putType(sources, "ArrayLibrary", DEPENDENT + "public class ArrayLibrary extends ArrayShelf<String> {\n}");
@@ -1329,7 +1654,8 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /** A type variable with its bounds but {@code Object}, or its name alone when met again inside them. */
-    private static String variableName(java.lang.reflect.TypeVariable<?> variable, Set<java.lang.reflect.Type> visiting) {
+    private static String variableName(java.lang.reflect.TypeVariable<?> variable,
+                                       Set<java.lang.reflect.Type> visiting) {
         if (!visiting.add(variable)) {
             return variable.getName();
         }

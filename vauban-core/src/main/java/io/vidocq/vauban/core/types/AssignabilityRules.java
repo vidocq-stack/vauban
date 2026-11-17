@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * CDI 4.1 type assignability rules (Section 2.4).
@@ -44,9 +45,22 @@ public final class AssignabilityRules {
     private static final String JAVA_LANG_OBJECT = "java.lang.Object";
 
     private final VaubanIndex index;
+    /** Where a class the index does not hold is read from, or {@code null} for the caller's context loader. */
+    private final ClassLoader loader;
 
+    /** The rules over {@code index}, a class outside it read through the caller's context loader. */
     public AssignabilityRules(VaubanIndex index) {
+        this(index, null);
+    }
+
+    /**
+     * The rules over {@code index}, a class outside it read through {@code loader}: a container's, whose
+     * {@code BeanManager.getBeans} runs on threads whose context loader may not see the deployment
+     * (BUG-20261117-16).
+     */
+    public AssignabilityRules(VaubanIndex index, ClassLoader loader) {
         this.index = Objects.requireNonNull(index);
+        this.loader = loader;
     }
 
     /**
@@ -149,21 +163,27 @@ public final class AssignabilityRules {
         };
     }
 
-    /** Every argument is {@code java.lang.Object}, or a type variable with no class bound but {@code java.lang.Object}. */
+    /**
+     * Every argument is {@code java.lang.Object} or an unbounded type variable: what lets a raw type and a
+     * parameterized type of the same class match, whichever is the bean's (CDI 4.1, 5.2.4).
+     */
     private static boolean rawEquivalentArguments(List<TypeInfo> arguments) {
-        return arguments.stream().allMatch(AssignabilityRules::isRawEquivalentArgument);
+        return arguments.stream().allMatch(AssignabilityRules::isObjectOrUnboundedTypeVariable);
     }
 
-    private static boolean isRawEquivalentArgument(TypeInfo argument) {
+    /**
+     * {@code java.lang.Object}, or a type variable that declares no bound but {@code java.lang.Object}: {@code T},
+     * {@code T extends Object}, and {@code (T extends java.lang.Object)} as a synthetic bean's type reads back. Any
+     * other bound bounds it, a type variable too: {@code T extends U} is bounded, {@code U} unbounded or not, as Java
+     * has it (JLS 4.4) and Weld's {@code isUnboundedTypeVariable}. A wildcard is neither. {@code BeanManager.getBeans}
+     * calls these same rules (BUG-20261117-16).
+     */
+    private static boolean isObjectOrUnboundedTypeVariable(TypeInfo argument) {
         return switch (argument) {
-            case TypeVariable(_, var bounds) -> bounds.stream().noneMatch(AssignabilityRules::isClassOtherThanObject);
+            case TypeVariable(_, var bounds) -> bounds.stream().allMatch(AssignabilityRules::isObjectClass);
             case ClassType _ -> isObjectClass(argument);
             default -> false;
         };
-    }
-
-    private static boolean isClassOtherThanObject(TypeInfo type) {
-        return type instanceof ClassType && !isObjectClass(type);
     }
 
     /**
@@ -190,10 +210,11 @@ public final class AssignabilityRules {
         return switch (beanType) {
             case ParameterizedType(var rawType, var typeArguments) -> rawType.equals(required.rawType())
                     && typeArgumentsAssignable(typeArguments, required.typeArguments());
-            // CDI spec 4.1 Section 2.4.1: A raw bean type is assignable to a parameterized required type if they have identical raw types.
-            // This case specifically applies when the bean itself IS a raw type (no type parameters in declaration).
-            // However, most beans in these tests ARE parameterized, so they fall into the ParameterizedType case above.
-            case ClassType(var beanName) -> beanName.equals(required.rawType());
+            // CDI 4.1, 5.2.4: "A raw bean type is considered assignable to a parameterized required type if the raw
+            // types are identical and all type parameters of the required type are either unbounded type variables
+            // or java.lang.Object." A raw Foo satisfies Foo<Object>, not Foo<Integer> nor Foo<?> (BUG-20261117-16).
+            case ClassType(var beanName) -> beanName.equals(required.rawType())
+                    && rawEquivalentArguments(required.typeArguments());
             default -> false;
         };
     }
@@ -227,11 +248,8 @@ public final class AssignabilityRules {
 
     /** A required wildcard argument with these bounds admits the bean's argument. */
     private boolean wildcardAdmits(TypeInfo beanArg, TypeInfo upperBound, TypeInfo lowerBound) {
-        if (beanArg instanceof TypeVariable(_, var beanBounds) && !beanBounds.isEmpty()) {
-            // Bean TV with bounds: lower bound must be assignable to ALL bounds,
-            // and at least one bound must be assignable to upper bound
-            return (lowerBound == null || beanBounds.stream().allMatch(beanBound -> isAssignable(lowerBound, beanBound)))
-                    && (upperBound == null || beanBounds.stream().anyMatch(beanBound -> isAssignable(beanBound, upperBound)));
+        if (beanArg instanceof TypeVariable(_, var beanBounds)) {
+            return wildcardAdmitsTypeVariable(upperBounds(beanBounds), upperBound, lowerBound);
         }
 
         TypeInfo effectiveBeanArg = beanArg;
@@ -240,14 +258,64 @@ public final class AssignabilityRules {
                     : new ClassType(DotName.of(JAVA_LANG_OBJECT));
         }
 
-        return (lowerBound == null || isAssignable(lowerBound, effectiveBeanArg))
-                && (upperBound == null || isAssignable(effectiveBeanArg, upperBound));
+        // Rule c, the bounds as Java sees them: a List<String> is within ? extends List (BUG-20261117-16).
+        return (lowerBound == null || isAssignableToBound(lowerBound, effectiveBeanArg))
+                && (upperBound == null || isAssignableToBound(effectiveBeanArg, upperBound));
     }
 
-    /** Each bound of the bean TV must be covered by at least one bound of the required TV. */
+    /**
+     * CDI 4.1, 5.2.4, rules da, db and dc: "the upper bound of the type variable is assignable to or assignable from
+     * the upper bound, if any, of the wildcard and assignable from the lower bound, if any, of the wildcard". The
+     * resolution of an injection point checked the "assignable to" half only, and a type variable with no bound
+     * against no bound at all, where {@code BeanManager.getBeans} checks both, with {@code Object} for no bound
+     * (BUG-20261117-24).
+     */
+    private boolean wildcardAdmitsTypeVariable(List<TypeInfo> bounds, TypeInfo upperBound, TypeInfo lowerBound) {
+        var lowerAdmitted = lowerBound == null
+                || bounds.stream().allMatch(bound -> isAssignableToBound(lowerBound, bound));
+        return lowerAdmitted && (upperBound == null
+                || bounds.stream().anyMatch(bound -> isAssignable(bound, upperBound))
+                || bounds.stream().allMatch(bound -> isAssignableToBound(upperBound, bound)));
+    }
+
+    /**
+     * The upper bounds of a type variable, those of a type variable among them in its place, and {@code Object} when it
+     * declares none: the index leaves the implicit {@code Object} out.
+     */
+    private static List<TypeInfo> upperBounds(List<TypeInfo> bounds) {
+        var upper = bounds.stream()
+                .flatMap(bound -> bound instanceof TypeVariable(_, var nested)
+                        ? upperBounds(nested).stream() : Stream.of(bound))
+                .toList();
+        return upper.isEmpty() ? List.of(new ClassType(DotName.of(JAVA_LANG_OBJECT))) : upper;
+    }
+
+    /**
+     * {@code type} is assignable to {@code bound}, the upper bound of a type variable, a class against a parameterized
+     * type by their classes, as {@code BeanManager.getBeans} and the Java compiler see them: {@code Integer} is within
+     * {@code T extends Comparable<T>}. The resolution of an injection point compared the names of {@code Integer} and
+     * {@code Comparable} (BUG-20261117-24).
+     */
+    private boolean isAssignableToBound(TypeInfo type, TypeInfo bound) {
+        return switch (bound) {
+            case ParameterizedType(var rawType, _) when type instanceof ClassType(var name) ->
+                    isSubtypeOf(name, rawType);
+            case ClassType(var name) when type instanceof ParameterizedType(var rawType, _) ->
+                    isSubtypeOf(rawType, name);
+            default -> isAssignable(type, bound);
+        };
+    }
+
+    /**
+     * Rule f, "the upper bound of the required type parameter is assignable to the upper bound, if any, of the bean
+     * type parameter": each uppermost bound of the bean's type variable is assignable from one of the required one's,
+     * as Weld's {@code boundsMatch}. Uppermost, with {@code Object} for no bound: {@code (T extends
+     * java.lang.Object)}, as a synthetic bean's type reads back, against {@code T} (BUG-20261117-16).
+     */
     private boolean boundsCovered(List<TypeInfo> beanBounds, List<TypeInfo> requiredBounds) {
-        return beanBounds.stream().allMatch(beanBound ->
-                requiredBounds.stream().anyMatch(reqBound -> isAssignable(reqBound, beanBound)));
+        var required = upperBounds(requiredBounds);
+        return upperBounds(beanBounds).stream().allMatch(beanBound ->
+                required.stream().anyMatch(reqBound -> isAssignableToBound(reqBound, beanBound)));
     }
 
     /** A required actual type argument admits the bean's argument. */
@@ -255,9 +323,14 @@ public final class AssignabilityRules {
         return switch (beanArg) {
             // CDI spec rule (e): bean arg is a type variable, required arg is an actual type
             // The actual type must be assignable to all bounds of the bean type variable
-            case TypeVariable(_, var bounds) -> bounds.stream().allMatch(bound -> isAssignable(requiredArg, bound));
+            case TypeVariable(_, var bounds) ->
+                    upperBounds(bounds).stream().allMatch(bound -> isAssignableToBound(requiredArg, bound));
             // Bean wildcard vs required concrete: check bounds
             case WildcardType(var upperBound, _) -> upperBound != null && isAssignable(upperBound, requiredArg);
+            // Rule b: "actual types with identical raw type, and, if the type is parameterized, the bean type parameter
+            // is assignable to the required type parameter according to these rules" (BUG-20261117-16).
+            case ParameterizedType _ when requiredArg instanceof ParameterizedType required ->
+                    isAssignableToParameterized(beanArg, required);
             default -> beanArg.equals(requiredArg);
         };
     }
@@ -304,7 +377,9 @@ public final class AssignabilityRules {
                 && required instanceof ClassType(var requiredName)) {
             return rawType.equals(requiredName) && allArgumentsUnbounded(typeArguments);
         }
-        return isAssignable(bean, required);
+        // An array of a type variable, T[], is no legal required type: it matches no other element type, which its
+        // bounds would admit (BeanManager.getBeans, BUG-20261117-16)
+        return !(required instanceof TypeVariable) && isAssignable(bean, required);
     }
 
     private static String primitiveName(TypeInfo type) {
@@ -319,15 +394,15 @@ public final class AssignabilityRules {
         return arguments.stream().allMatch(AssignabilityRules::isUnbounded);
     }
 
+    /**
+     * {@link #isObjectOrUnboundedTypeVariable}, or a wildcard with no bound but {@code Object}: an array element
+     * takes {@code Class[]} for {@code Class<?>[]}, which MicroProfile Config injects (VAU-BCE-004). A raw bean type
+     * outside an array satisfies no wildcard argument.
+     */
     private static boolean isUnbounded(TypeInfo argument) {
-        return switch (argument) {
-            case WildcardType(var upperBound, var lowerBound) -> lowerBound == null
-                    && (upperBound == null || isObjectClass(upperBound));
-            case ClassType _ -> isObjectClass(argument);
-            case TypeVariable(_, var bounds) -> bounds.isEmpty()
-                    || bounds.stream().allMatch(AssignabilityRules::isObjectClass);
-            default -> false;
-        };
+        return argument instanceof WildcardType(var upperBound, var lowerBound)
+                ? lowerBound == null && (upperBound == null || isObjectClass(upperBound))
+                : isObjectOrUnboundedTypeVariable(argument);
     }
 
     private static boolean isObjectClass(TypeInfo type) {
@@ -361,7 +436,7 @@ public final class AssignabilityRules {
         if (classInfo.isEmpty()) {
             // Fallback to reflection if not in index (e.g. JDK classes like java.lang.Integer)
             try {
-                var clazz = DeploymentClasses.load(current.value());
+                var clazz = DeploymentClasses.load(current.value(), loader);
                 var superClass = clazz.getSuperclass();
                 if (superClass != null && isSubtypeOfRecursive(DotName.of(superClass.getName()), target, visited)) {
                     return true;

@@ -717,7 +717,9 @@ public final class EventDispatcher {
         if (beans.isEmpty()) {
             return container.resolveParameter(param.getType(), method.getGenericParameterTypes()[index]);
         }
-        return bm.getReference(bm.resolve(beans), param.getType(), ctx);
+        // The type the bean was found by, Counter<Integer>: the erased Counter is no bean type of a bean of
+        // Counter<T extends Number>, nor Holder of a bean of Holder<String> (BUG-20261117-25)
+        return bm.getReference(bm.resolve(beans), resolvedParamType, ctx);
     }
 
     /** An event being delivered, with what an {@link jakarta.enterprise.inject.spi.EventMetadata} parameter tells of it. */

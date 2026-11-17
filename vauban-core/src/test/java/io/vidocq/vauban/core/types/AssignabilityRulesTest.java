@@ -224,14 +224,39 @@ class AssignabilityRulesTest {
     @DisplayName("raw types and arrays")
     class RawAndArrayTypes {
 
+        /**
+         * CDI 4.1, 5.2.4: "A raw bean type is considered assignable to a parameterized required type if the raw types
+         * are identical and all type parameters of the required type are either unbounded type variables or
+         * java.lang.Object." A raw {@code List} is no {@code List<String>}, nor a {@code List<?>}: a wildcard is
+         * neither (BUG-20261117-16).
+         */
         @Test
-        @DisplayName("raw List is assignable to List<String> (allowed by CDI)")
-        void rawToParameterized() {
+        @DisplayName("a raw type is assignable to its parameterizations by Object or unbounded type variables only")
+        void aRawTypeIsAssignableToItsParameterizationsByObjectOrUnboundedTypeVariablesOnly() {
             var rawList = new ClassType(DotName.of("java.util.List"));
-            var listString = new ParameterizedType(
-                    DotName.of("java.util.List"),
-                    List.of(new ClassType(DotName.of("java.lang.String"))));
-            assertTrue(rules.isAssignable(rawList, listString));
+            var string = new ClassType(DotName.of("java.lang.String"));
+            var object = new ClassType(DotName.of("java.lang.Object"));
+            var number = new ClassType(DotName.of("java.lang.Number"));
+            assertAll(
+                    () -> assertFalse(rules.isAssignable(rawList, listOf(string)), "List<String>"),
+                    () -> assertFalse(rules.beanTypeMatches(rawList, listOf(string)), "List<String>, resolved"),
+                    () -> assertTrue(rules.isAssignable(rawList, listOf(object)), "List<Object>"),
+                    () -> assertTrue(rules.beanTypeMatches(rawList, listOf(object)), "List<Object>, resolved"),
+                    () -> assertTrue(rules.isAssignable(rawList, listOf(new TypeVariable("T", List.of()))),
+                            "List<T>"),
+                    () -> assertTrue(rules.isAssignable(rawList, listOf(new TypeVariable("T", List.of(object)))),
+                            "List<T extends Object>"),
+                    () -> assertFalse(rules.isAssignable(rawList, listOf(new TypeVariable("T", List.of(number)))),
+                            "List<T extends Number>"),
+                    () -> assertFalse(rules.isAssignable(rawList, listOf(new WildcardType(null, null))), "List<?>"),
+                    () -> assertFalse(rules.isAssignable(rawList, listOf(new WildcardType(object, null))),
+                            "List<? extends Object>"),
+                    () -> assertFalse(rules.isAssignable(new ClassType(DotName.of("java.util.Collection")),
+                            listOf(object)), "a raw Collection to List<Object>"));
+        }
+
+        private ParameterizedType listOf(TypeInfo argument) {
+            return new ParameterizedType(DotName.of("java.util.List"), List.of(argument));
         }
 
         @Test

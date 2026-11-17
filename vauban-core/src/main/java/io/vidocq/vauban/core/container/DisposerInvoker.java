@@ -142,7 +142,7 @@ final class DisposerInvoker {
         // qualifier (vauban#89).
         var described = describedParameter(disposer, pi);
         var ip = described != null ? described : new InjectionPointInfo(
-                new TypeInfo.ClassType(DotName.of(paramType.getName())),
+                VaubanContainer.requiredTypeOf(param),
                 java.util.Set.of(new QualifierInstance(
                         DotName.of("jakarta.enterprise.inject.Default"),
                         java.util.Map.of()),
@@ -155,11 +155,13 @@ final class DisposerInvoker {
         if (result.status() == BeanResolver.ResolutionResult.Status.UNSATISFIED) {
             throw new jakarta.enterprise.inject.spi.DeploymentException(
                     DISPOSER_METHOD + disposer.declaringClass().simpleName() + "." + disposer.methodName()
-                            + "(): unsatisfied dependency for parameter of type " + paramType.getName());
+                            + "(): unsatisfied dependency for parameter of type "
+                            + param.getParameterizedType().getTypeName());
         } else if (result.status() == BeanResolver.ResolutionResult.Status.AMBIGUOUS) {
             throw new jakarta.enterprise.inject.spi.DeploymentException(
                     DISPOSER_METHOD + disposer.declaringClass().simpleName() + "." + disposer.methodName()
-                            + "(): ambiguous dependency for parameter of type " + paramType.getName());
+                            + "(): ambiguous dependency for parameter of type "
+                            + param.getParameterizedType().getTypeName());
         }
     }
 
@@ -460,9 +462,13 @@ final class DisposerInvoker {
         if (paramType == Instance.class) {
             return instanceArgument(method, i, qualifiers);
         }
-        var beans = bm.getBeans(paramType, qualifiers);
+        // Its type as declared, Counter<Integer>: the erased Counter is no bean type of a bean of
+        // Counter<T extends Number>, and the disposer was not called (BUG-20261117-25). A type variable is a
+        // definition error the start reports (BUG-20261117-16)
+        var requiredType = method.getGenericParameterTypes()[i];
+        var beans = bm.getBeans(requiredType, qualifiers);
         var bean = beans.isEmpty() ? null : bm.resolve(beans);
-        return bean != null ? bm.getReference(bean, paramType, ctx) : container.select(paramType);
+        return bean != null ? bm.getReference(bean, requiredType, ctx) : container.select(paramType);
     }
 
     private Object instanceArgument(Method method, int i, Annotation[] qualifiers) {

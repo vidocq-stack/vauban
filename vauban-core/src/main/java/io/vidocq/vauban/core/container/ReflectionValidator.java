@@ -278,6 +278,11 @@ final class ReflectionValidator {
             }
             if (producer) {
                 validateAllParameters(method, clazz.getName() + "." + method.getName() + " producer param", errors);
+                var paramTypes = method.getGenericParameterTypes();
+                for (int i = 0; i < paramTypes.length; i++) {
+                    validateNoTypeVariable(clazz, paramTypes[i],
+                            clazz.getName() + "." + method.getName() + " producer param " + i, errors);
+                }
             }
         }
     }
@@ -317,6 +322,8 @@ final class ReflectionValidator {
             if (!isObserves(params[i])) {
                 validateNoRawParameterized(paramTypes[i], rawTypes[i],
                         clazz.getName() + "." + method.getName() + " observer param", errors);
+                validateNoTypeVariable(clazz, paramTypes[i],
+                        clazz.getName() + "." + method.getName() + " observer param " + i, errors);
             }
         }
     }
@@ -329,12 +336,39 @@ final class ReflectionValidator {
             if (!isDisposes(params[i])) {
                 validateNoRawParameterized(paramTypes[i], rawTypes[i],
                         clazz.getName() + "." + method.getName() + " disposer param", errors);
+                validateNoTypeVariable(clazz, paramTypes[i],
+                        clazz.getName() + "." + method.getName() + " disposer param " + i, errors);
             }
             if (rawTypes[i] == jakarta.enterprise.inject.spi.InjectionPoint.class) {
                 errors.add("Disposer method " + clazz.getName() + "." + method.getName()
                         + " must not have InjectionPoint parameter");
             }
         }
+    }
+
+    /**
+     * An injection point of a type variable is a definition error (CDI 4.1, 5.2.3): an observer's parameter besides
+     * the event parameter, a disposer's besides the disposed one or a producer method's, of a class that
+     * {@link #mayBeABean may be a bean}. A subclass that inherits the observer of a class that is none gives the type
+     * variable its class (BUG-20261117-16).
+     */
+    private static void validateNoTypeVariable(Class<?> clazz, Type type, String location, List<String> errors) {
+        if (type instanceof TypeVariable<?> variable && mayBeABean(clazz)) {
+            errors.add("Injection point has type variable type " + variable.getName() + ": " + location);
+        }
+    }
+
+    /**
+     * Neither abstract nor vetoed, nor in a vetoed package: a class whose own observers the container may call, as
+     * {@code IndexClassValidator} judges it from the index.
+     */
+    private static boolean mayBeABean(Class<?> clazz) {
+        if (Modifier.isAbstract(clazz.getModifiers())
+                || clazz.isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class)) {
+            return false;
+        }
+        // A class has a package, the unnamed one included: only an array or a primitive type has none
+        return !clazz.getPackage().isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class);
     }
 
     private static void validateAllParameters(Method method, String location, List<String> errors) {

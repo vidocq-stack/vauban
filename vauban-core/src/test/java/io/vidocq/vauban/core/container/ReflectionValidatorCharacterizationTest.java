@@ -332,6 +332,8 @@ class ReflectionValidatorCharacterizationTest {
         assertEquals(sorted(
                 "Producer " + name + ".typeVariable has type variable return type",
                 "Producer method " + name + ".typeVariable has TypeVariable return type and non-@Dependent scope",
+                // Its parameter T value is an injection point of a type variable (BUG-20261117-16)
+                "Injection point has type variable type T: " + name + ".typeVariable producer param 0",
                 "Producer " + name + ".wildcard has parameterized type with wildcard argument",
                 "Producer method " + name + ".wildcard has wildcard type parameter in return type",
                 "Producer method " + name + ".twoScopes has multiple scope annotations",

@@ -25,7 +25,9 @@ import io.vidocq.vauban.indexer.model.TypeInfo.*;
 
 import java.lang.reflect.*;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class TypeInfoUtils {
 
@@ -33,14 +35,23 @@ public final class TypeInfoUtils {
         // static utility: no instances
     }
 
+    /**
+     * {@code type} in the index model, with its conventions: the implicit {@code Object} bound of a type variable left
+     * out, and a type variable met again while its own bounds are converted ({@code T} in
+     * {@code T extends Comparable<T>}) given no bound, so that the model stays finite, as the index records it.
+     */
     public static TypeInfo fromReflectType(Type type) {
+        return fromReflectType(type, new HashSet<>());
+    }
+
+    private static TypeInfo fromReflectType(Type type, Set<java.lang.reflect.TypeVariable<?>> converting) {
         return switch (type) {
             case null -> null;
             case Class<?> c -> fromClass(c);
-            case java.lang.reflect.ParameterizedType pt -> fromParameterizedType(pt);
-            case java.lang.reflect.WildcardType wt -> fromWildcardType(wt);
-            case java.lang.reflect.GenericArrayType gat -> fromGenericArrayType(gat);
-            case java.lang.reflect.TypeVariable<?> tv -> fromTypeVariable(tv);
+            case java.lang.reflect.ParameterizedType pt -> fromParameterizedType(pt, converting);
+            case java.lang.reflect.WildcardType wt -> fromWildcardType(wt, converting);
+            case java.lang.reflect.GenericArrayType gat -> fromGenericArrayType(gat, converting);
+            case java.lang.reflect.TypeVariable<?> tv -> fromTypeVariable(tv, converting);
             default -> new ClassType(DotName.of(type.getTypeName()));
         };
     }
@@ -72,41 +83,49 @@ public final class TypeInfoUtils {
         return new ClassType(DotName.of(c.getName()));
     }
 
-    private static TypeInfo fromParameterizedType(java.lang.reflect.ParameterizedType pt) {
+    private static TypeInfo fromParameterizedType(java.lang.reflect.ParameterizedType pt,
+            Set<java.lang.reflect.TypeVariable<?>> converting) {
         Class<?> raw = (Class<?>) pt.getRawType();
         List<TypeInfo> args = Arrays.stream(pt.getActualTypeArguments())
-                .map(TypeInfoUtils::fromReflectType)
+                .map(argument -> fromReflectType(argument, converting))
                 .toList();
         return new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(DotName.of(raw.getName()), args);
     }
 
-    private static TypeInfo fromWildcardType(java.lang.reflect.WildcardType wt) {
+    private static TypeInfo fromWildcardType(java.lang.reflect.WildcardType wt,
+            Set<java.lang.reflect.TypeVariable<?>> converting) {
         TypeInfo upper = null;
         if (wt.getUpperBounds().length > 0 && wt.getUpperBounds()[0] != Object.class) {
-            upper = fromReflectType(wt.getUpperBounds()[0]);
+            upper = fromReflectType(wt.getUpperBounds()[0], converting);
         }
         TypeInfo lower = null;
         if (wt.getLowerBounds().length > 0) {
-            lower = fromReflectType(wt.getLowerBounds()[0]);
+            lower = fromReflectType(wt.getLowerBounds()[0], converting);
         }
         return new io.vidocq.vauban.indexer.model.TypeInfo.WildcardType(upper, lower);
     }
 
-    private static TypeInfo fromGenericArrayType(java.lang.reflect.GenericArrayType gat) {
+    private static TypeInfo fromGenericArrayType(java.lang.reflect.GenericArrayType gat,
+            Set<java.lang.reflect.TypeVariable<?>> converting) {
         int dims = 1;
         Type comp = gat.getGenericComponentType();
         while (comp instanceof java.lang.reflect.GenericArrayType inner) {
             dims++;
             comp = inner.getGenericComponentType();
         }
-        return new ArrayType(fromReflectType(comp), dims);
+        return new ArrayType(fromReflectType(comp, converting), dims);
     }
 
-    private static TypeInfo fromTypeVariable(java.lang.reflect.TypeVariable<?> tv) {
+    private static TypeInfo fromTypeVariable(java.lang.reflect.TypeVariable<?> tv,
+            Set<java.lang.reflect.TypeVariable<?>> converting) {
+        if (!converting.add(tv)) {
+            return new io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(tv.getName(), List.of());
+        }
         List<TypeInfo> bounds = Arrays.stream(tv.getBounds())
                 .filter(b -> b != Object.class)
-                .map(TypeInfoUtils::fromReflectType)
+                .map(bound -> fromReflectType(bound, converting))
                 .toList();
+        converting.remove(tv);
         return new io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(tv.getName(), bounds);
     }
 }
