@@ -153,6 +153,8 @@ class ReflectionValidatorCharacterizationTest {
         }
     }
 
+    /** A bean: the injection points of a type variable are checked on a bean only (BUG-20261117-30). */
+    @Dependent
     static class ProducerMethods<T> {
         @Produces
         @ApplicationScoped
@@ -340,7 +342,9 @@ class ReflectionValidatorCharacterizationTest {
                 "Producer " + name + ".typeVariableArray has array type with type variable component",
                 "Producer " + name + ".wildcardArray has array of parameterized type with wildcard",
                 "Producer method " + name + ".wildcardArray has wildcard type parameter in return type",
-                "Initializer method " + name + ".genericInitializer cannot declare type parameters"),
+                "Initializer method " + name + ".genericInitializer cannot declare type parameters",
+                // Its parameter U value is an injection point of a type variable (BUG-20261117-30)
+                "Injection point has type variable type U: " + name + ".genericInitializer initializer param 0"),
                 errorsOf(ProducerMethods.class));
     }
 

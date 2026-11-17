@@ -154,6 +154,53 @@ class IndexClassValidatorTest {
         void on(@Observes String event, T value) { /* no behaviour needed */ }
     }
 
+    @Dependent
+    public static class TypeVariableInitializerParameter<T> {
+        @Inject void set(T value) { /* no behaviour needed */ }
+    }
+
+    @Dependent
+    public static class TypeVariableConstructorParameter<T> {
+        @Inject TypeVariableConstructorParameter(T value) { /* no behaviour needed */ }
+    }
+
+    @jakarta.enterprise.inject.Vetoed
+    public static class VetoedTypeVariableInitializerParameter<T> {
+        @Inject void set(T value) { /* no behaviour needed */ }
+    }
+
+    public abstract static class AbstractTypeVariableInitializerParameter<T> {
+        @Inject void set(T value) { /* no behaviour needed */ }
+    }
+
+    /**
+     * No bean-defining annotation: no bean in the annotated discovery mode, so no injection point nor observer of its
+     * own; a subclass inherits them (BUG-20261117-30, review round 1).
+     */
+    public static class NoBeanTypeVariableInitializerParameter<T> {
+        @Inject void set(T value) { /* no behaviour needed */ }
+    }
+
+    public static class NoBeanTypeVariableObserverParameter<T> {
+        void on(@Observes String event, T value) { /* no behaviour needed */ }
+    }
+
+    /** Leaves the initializer it inherits from a vetoed class a type variable (BUG-20261117-30). */
+    @Dependent
+    public static class GenericInitializerOfVetoed<T> extends VetoedTypeVariableInitializerParameter<T> {}
+
+    @Dependent
+    public static class TextInitializerOfVetoed extends VetoedTypeVariableInitializerParameter<String> {}
+
+    @Dependent
+    public static class TextInitializerOfNoBean extends NoBeanTypeVariableInitializerParameter<String> {}
+
+    /** Overrides the initializer it would inherit, without {@code @Inject}: no initializer. */
+    @Dependent
+    public static class OverridingInitializerOfVetoed<T> extends VetoedTypeVariableInitializerParameter<T> {
+        @Override void set(T value) { /* no behaviour needed */ }
+    }
+
     /** Its superclass is not in the index: the index cannot tell which annotations it inherits. */
     @Dependent
     public static class OutsideTheIndex extends java.util.AbstractList<String> {
@@ -168,7 +215,12 @@ class IndexClassValidatorTest {
             TypeVariableObserverParameter.class, TypeVariableDisposerParameter.class,
             TypeVariableProducerParameter.class, VetoedTypeVariableProducerParameter.class,
             VetoedTypeVariableObserverParameter.class, AbstractTypeVariableObserverParameter.class,
-            OutsideTheIndex.class, PackageVetoedTypeVariableObserver.class, MarkedTypeVariableObserver.class);
+            OutsideTheIndex.class, PackageVetoedTypeVariableObserver.class, MarkedTypeVariableObserver.class,
+            TypeVariableInitializerParameter.class, TypeVariableConstructorParameter.class,
+            VetoedTypeVariableInitializerParameter.class, AbstractTypeVariableInitializerParameter.class,
+            NoBeanTypeVariableInitializerParameter.class, NoBeanTypeVariableObserverParameter.class,
+            GenericInitializerOfVetoed.class, TextInitializerOfVetoed.class, TextInitializerOfNoBean.class,
+            OverridingInitializerOfVetoed.class);
 
     /**
      * The {@code package-info} classes the index reads whether a package is vetoed from: one {@code @Vetoed}, one
@@ -207,7 +259,9 @@ class IndexClassValidatorTest {
             PublicField.class, NotASupertype.class, DisposerWithInjectionPoint.class, StereotypeWithName.class,
             ConflictingScopes.class, GenericScoped.class, NamedWithoutValue.class,
             TypeVariableObserverParameter.class, TypeVariableDisposerParameter.class,
-            TypeVariableProducerParameter.class, MarkedTypeVariableObserver.class})
+            TypeVariableProducerParameter.class, MarkedTypeVariableObserver.class,
+            TypeVariableInitializerParameter.class, TypeVariableConstructorParameter.class,
+            GenericInitializerOfVetoed.class})
     @DisplayName("the index reports what reflection reports")
     void sameErrorsAsReflection(Class<?> beanClass) {
         var index = index();
@@ -250,20 +304,62 @@ class IndexClassValidatorTest {
     }
 
     /**
-     * A class that is no bean, vetoed, in a vetoed package or abstract, has no observer of its own: a subclass inherits
-     * its observer and gives the type variable a class, as the CDI TCK's {@code inheritance.generics.Bar} and
-     * {@code Foo}.
+     * An initializer's and a bean constructor's parameters are injection points, and one of a type variable is a
+     * definition error (CDI 4.1, 5.2.3), at build as at start. The start checked them on every class of the index,
+     * a bean or not, and the build on none (BUG-20261117-30).
+     */
+    @Test
+    @DisplayName("an initializer's or a bean constructor's parameter of a type variable is a definition error")
+    void typeVariableInitializerAndConstructorParameters() {
+        var index = index();
+        var validator = validator(index);
+
+        assertEquals(List.of("Injection point has type variable type T: "
+                        + TypeVariableInitializerParameter.class.getName() + ".set initializer param 0"),
+                validator.validate(index.getClassByName(DotName.of(TypeVariableInitializerParameter.class.getName()))
+                        .orElseThrow()).orElseThrow());
+        assertEquals(List.of("Injection point has type variable type T: "
+                        + TypeVariableConstructorParameter.class.getName() + " constructor param 0"),
+                validator.validate(index.getClassByName(DotName.of(TypeVariableConstructorParameter.class.getName()))
+                        .orElseThrow()).orElseThrow());
+    }
+
+    /**
+     * A class that is no bean, vetoed, in a vetoed package or abstract, has no observer or initializer of its own: a
+     * subclass inherits it and gives the type variable a class, as the CDI TCK's {@code inheritance.generics.Bar} and
+     * {@code Foo} (BUG-20261117-16, BUG-20261117-30).
      */
     @ParameterizedTest
     @ValueSource(classes = {VetoedTypeVariableObserverParameter.class, AbstractTypeVariableObserverParameter.class,
-            VetoedTypeVariableProducerParameter.class, PackageVetoedTypeVariableObserver.class})
-    @DisplayName("an observer's parameter of a type variable in a class that is no bean is no error")
+            VetoedTypeVariableProducerParameter.class, PackageVetoedTypeVariableObserver.class,
+            VetoedTypeVariableInitializerParameter.class, AbstractTypeVariableInitializerParameter.class,
+            NoBeanTypeVariableInitializerParameter.class, NoBeanTypeVariableObserverParameter.class,
+            TextInitializerOfVetoed.class, TextInitializerOfNoBean.class, OverridingInitializerOfVetoed.class})
+    @DisplayName("an injection point of a type variable in a class that is no bean, or given a class, is no error")
     void typeVariableParametersOfAClassThatIsNoBean(Class<?> beanClass) {
         var index = index();
 
         assertEquals(List.of(), validator(index).validate(index.getClassByName(DotName.of(beanClass.getName()))
                 .orElseThrow()).orElseThrow(), "from the index");
         assertEquals(List.of(), ReflectionValidator.validateWithReflection(List.of(beanClass)), "by reflection");
+    }
+
+    /**
+     * A bean that inherits an initializer from a class that is no bean, here a vetoed one, and leaves its parameter a
+     * type variable of its own has an injection point of a type variable (CDI 4.1, 5.2.3): it started and failed to
+     * call the initializer at the first lookup (BUG-20261117-30, review round 1).
+     */
+    @Test
+    @DisplayName("an inherited initializer's parameter the bean class leaves a type variable is a definition error")
+    void inheritedInitializerLeftATypeVariable() {
+        var index = index();
+        var expected = List.of("Injection point has type variable type T: "
+                + GenericInitializerOfVetoed.class.getName() + ".set initializer param 0");
+
+        assertEquals(expected, validator(index).validate(index.getClassByName(
+                DotName.of(GenericInitializerOfVetoed.class.getName())).orElseThrow()).orElseThrow(), "from the index");
+        assertEquals(expected, ReflectionValidator.validateWithReflection(List.of(GenericInitializerOfVetoed.class)),
+                "by reflection");
     }
 
     @Test

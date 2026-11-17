@@ -1039,8 +1039,8 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-30 — The start refuses an inherited initializer's parameter of a type variable
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (`ClassValidator.validateInjectionParameters`)
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`)
+- **Module**: `vauban-core` (`ClassValidator.validateInjectionParameters`, `IndexClassValidator`, `ReflectionValidator`)
 - **Symptom**: `AbstractGadgetSetter<T>`, abstract, declares `@Inject void set(T gadget)`, and the bean
   `GadgetSetterOfAbstract extends AbstractGadgetSetter<Gadget>` inherits it with `T` given a class; so does
   `GadgetSetterOfVetoed` from the `@Vetoed` `VetoedGadgetSetter<T>`. The start refuses the deployment:
@@ -1052,11 +1052,49 @@ suspected cause, status. Updated on every investigation.
 - **Repro**: `AssignabilityRulesReproductionTest#anInheritedInitializersParameterOfATypeVariableItsBeanClassGivesAClassIsLegal`
   in `vauban-core`, disabled; red when enabled, on a3d8c032, fix round 2b of BUG-20261117-16 (`vauban-b16-red.log`,
   "Red run 16").
-- **Cause** (by reading): `ClassValidator.validateInjectionParameters` checks the parameters of every `@Inject`
-  method of every class in the index, a bean or not. The fix needs the "may be a bean" scope of
-  BUG-20261117-16 (neither abstract, nor `@Vetoed`, nor in a vetoed package); the injection already resolves `T`
-  by the bean class (`BeanInjector.injectSingleMethod`, `ManagedBean.resolveType`), not checked by a run. The same
-  scope serves BUG-20261117-29.
+- **Cause** (proved): `ClassValidator.validateInjectionParameters` checked the parameters of every `@Inject` method
+  and constructor of every class in the index, a bean or not, for a bare type variable. The red run shows the start
+  refusing `AbstractGadgetSetter.set` and `VetoedGadgetSetter.set`; the processor's `IndexClassValidator` and the
+  start's `ReflectionValidator`, which have the "may be a bean" scope of BUG-20261117-16, checked no initializer or
+  constructor parameter for one, so the build did not warn of `GadgetSetter<T>`'s own `@Inject void set(T)`.
+- **Fix**: the check moves out of `ClassValidator` into the rules of a class that may be a bean (neither abstract nor
+  `@Vetoed`, nor in a vetoed package), in `IndexClassValidator` (the processor, and the start when the index has the
+  generic members) and `ReflectionValidator` (the start otherwise), beside the observer, disposer and producer checks:
+  `Injection point has type variable type T: <class>.<method> initializer param <i>`, or
+  `<class> constructor param <i>` for a bean constructor. The injection already resolved `T` by the bean class.
+- **Who sees the change**: a bean that inherits an initializer of a type variable from an abstract or vetoed class
+  now starts; the build now warns of a bean's own initializer or constructor of a type variable, and the start's
+  message names the variable and the parameter. A generic initializer, `@Inject <U> void init(U u)`, gets the message
+  for its `U` beside `cannot declare type parameters`.
+- **Review round 1** (2026-11-18): two gaps. (1) The "may be a bean" scope did not require a bean-defining
+  annotation: a concrete `SetterBase<T>` without one, no bean under annotated discovery, with `@Inject void set(T)`,
+  was refused at start when the bean `SetterSub extends SetterBase<Gadget>` inherits it, and the build said nothing.
+  (2) An initializer a bean inherits and leaves a type variable of its own, `GenericSetterOfVetoed<T> extends
+  VetoedSetter<T>`, was not checked (`getDeclaredMethods` only): the container started, then failed with "Failed to
+  call initializer method: set" at the first lookup. Fix: `mayBeABean` requires a bean-defining annotation or a bean
+  descriptor, as bean discovery decides, in `IndexClassValidator` and `ReflectionValidator`; the start validates
+  again, after the extensions ran, the managed beans whose class has no bean-defining annotation
+  (`VaubanContainerBuilder.descriptorBeanErrors`), and the processor treats every managed bean descriptor's class as
+  a bean (`IndexClassValidator.withBeanClasses`). Both validators walk the superclasses that are no bean for the
+  initializers a bean inherits, read through the bean class's type arguments (an initializer a class below
+  overrides is none), and the processor's validator describes a superclass it did not index, a vetoed one, from the
+  compiler's elements. The message prefix is one constant, `IndexClassValidator.TYPE_VARIABLE_INJECTION_POINT`.
+  Verification: `stack-l3-red.log`, "BUG-20261117-30 review round 1 red: tests only, main code of 'type-variable
+  initializer check on beans'": `TypeVariableInjectionPointTest` 2 failures (the legal deployment refused, the
+  inherited type variable started), `IndexClassValidatorTest` 4 failures, the processor's
+  `anInheritedInitializersParameterLeftATypeVariableIsADefinitionErrorAtBuildAtStartAndFrozen` not warned; the
+  extension-made bean and the processor's legal inherited initializer were green before too, and guard the new rule.
+  Green: `stack-l3-green.log`, "BUG-20261117-30 review round 1 fix, run 2" (vauban-core 1633 tests, 17 skipped;
+  vauban-processor 385, 16 skipped), then the whole reactor (`stack-l3-r1-b30-full.log`).
+- **Verification**: red on the stack base, "fix(core): a class outside the index is described", with the tests alone (`stack-l3-red.log`, "BUG-20261117-30 red":
+  `AssignabilityRulesReproductionTest#anInheritedInitializersParameterOfATypeVariableItsBeanClassGivesAClassIsLegal`
+  refused, `IndexClassValidatorTest#typeVariableInitializerAndConstructorParameters` and two `sameErrorsAsReflection`
+  cases empty; "BUG-20261117-30 red: vauban-processor":
+  `VetoedInterceptorCompileTimeTest#anInitializersParameterOfATypeVariableIsADefinitionErrorOnAClassThatMayBeABean`
+  not warned). Green: `stack-l3-green.log`, "BUG-20261117-30
+  fix, round 2" (vauban-core 1623 tests, 17 skipped; vauban-processor 383, 16 skipped), and the whole reactor,
+  `stack-l3-b30-full.log`. The processor test of the inherited initializer, at build, at start and frozen, was green
+  on the base too: a scanned class path does not index the abstract class.
 - **Found by**: the review of fix round 2b of BUG-20261117-16.
 
 ## BUG-20261117-29 — An `@Inject` field of a type variable is not a definition error

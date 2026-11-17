@@ -831,11 +831,15 @@ public class VaubanProcessor extends AbstractProcessor {
         if (!validationEnabled()) {
             return;
         }
-        // An annotation type the index does not hold (jakarta.*, say) is read from the compiler's elements.
+        // An annotation type the index does not hold (jakarta.*, say) is read from the compiler's elements. A managed
+        // bean an extension made one, without a bean-defining annotation, is a bean, as at start (BUG-20261117-30).
+        var managed = beans.stream().filter(bean -> bean.kind() == BeanDescriptor.BeanKind.MANAGED)
+                .map(BeanDescriptor::beanClass).collect(java.util.stream.Collectors.toUnmodifiableSet());
         var validator = io.vidocq.vauban.core.bean.validation.IndexClassValidator.forCompilerElements(index,
                 name -> java.util.Optional.ofNullable(
                                 TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), name.value()))
-                        .map(scanner::scan));
+                        .map(scanner::scan))
+                .withBeanClasses(managed::contains);
         for (var beanClass : beans.stream().map(BeanDescriptor::beanClass).distinct().toList()) {
             var errors = index.getClassByName(beanClass).flatMap(validator::validate).orElse(List.of());
             for (var error : errors) {

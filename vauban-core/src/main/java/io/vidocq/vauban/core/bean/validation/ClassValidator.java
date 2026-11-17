@@ -382,7 +382,12 @@ public final class ClassValidator {
         }
     }
 
-    /** {@code @Named} without a value and type variables on the parameters of an {@code @Inject} method. */
+    /**
+     * {@code @Named} without a value on the parameters of an {@code @Inject} method. A parameter of a type variable is
+     * checked by the definition rules of a class that may be a bean ({@code IndexClassValidator}), not here on every
+     * class of the index: an abstract or vetoed class's initializer is inherited by a subclass that gives the type
+     * variable a class (BUG-20261117-30).
+     */
     private static void validateInjectionParameters(MethodInfo method, String location, List<String> errors) {
         if (!hasAnn(method.annotations(), INJECT)) {
             return;
@@ -396,13 +401,6 @@ public final class ClassValidator {
         for (var param : params) {
             if (hasNamedWithoutValue(param)) {
                 errors.add(namedMessage + location);
-            }
-        }
-
-        // Type variable injection point
-        for (var param : params) {
-            if (param.type() instanceof TypeInfo.TypeVariable) {
-                errors.add("Injection point has type variable type: " + location);
             }
         }
     }

@@ -75,6 +75,9 @@ public final class IndexClassValidator {
     private static final String PRODUCER = "Producer ";
     private static final String PRODUCER_METHOD = "Producer method ";
     private static final String BEAN = "Bean ";
+    private static final String INITIALIZER_PARAM = " initializer param ";
+    /** The start of the definition error of an injection point of a type variable (CDI 4.1, 5.2.3). */
+    public static final String TYPE_VARIABLE_INJECTION_POINT = "Injection point has type variable type ";
 
     /** The index cannot decide: the class is validated by reflection. */
     private static final class Undecidable extends RuntimeException {
@@ -86,6 +89,10 @@ public final class IndexClassValidator {
     private final VaubanIndex index;
     private final AnnotationTypes types;
     private final boolean compilerElements;
+    /** Describes a class the index does not hold, a superclass the processor did not index, or returns empty. */
+    private final Function<DotName, Optional<ClassInfo>> outside;
+    /** The classes known to be beans without a bean-defining annotation: a bean descriptor names them. */
+    private final Predicate<DotName> beanClasses;
 
     /**
      * @param loader                   loads an annotation type the index does not hold, or returns {@code null}
@@ -93,24 +100,41 @@ public final class IndexClassValidator {
      */
     public IndexClassValidator(VaubanIndex index, Function<String, Class<?>> loader,
             Predicate<DotName> customInterceptorBinding) {
-        this(index, new AnnotationTypes(index, loader, customInterceptorBinding), false);
+        this(index, new AnnotationTypes(index, loader, customInterceptorBinding), false, name -> Optional.empty(),
+                name -> false);
     }
 
-    private IndexClassValidator(VaubanIndex index, AnnotationTypes types, boolean compilerElements) {
+    private IndexClassValidator(VaubanIndex index, AnnotationTypes types, boolean compilerElements,
+            Function<DotName, Optional<ClassInfo>> outside, Predicate<DotName> beanClasses) {
         this.index = index;
         this.types = types;
         this.compilerElements = compilerElements;
+        this.outside = outside;
+        this.beanClasses = beanClasses;
+    }
+
+    /**
+     * This validator, for which a class {@code beanClasses} accepts is a bean whether it has a bean-defining
+     * annotation or not: a bean descriptor names it, as an extension made it one.
+     */
+    public IndexClassValidator withBeanClasses(Predicate<DotName> beanClasses) {
+        return new IndexClassValidator(index, types, compilerElements, outside, beanClasses);
     }
 
     /**
      * For the processor: its index is built from the compiler's elements, whose member types are the generic ones
-     * the source declares, so it validates them at build. An annotation type the index does not hold is described
-     * by {@code describer}, from the compiler's elements too: nothing is loaded.
+     * the source declares, so it validates them at build. An annotation type or a superclass the index does not hold,
+     * a vetoed one say, is described by {@code describer}, from the compiler's elements too: nothing is loaded.
      */
     public static IndexClassValidator forCompilerElements(VaubanIndex index,
             Function<DotName, Optional<ClassInfo>> describer) {
         return new IndexClassValidator(index, new AnnotationTypes(index, describer, name -> null, name -> false),
-                true);
+                true, describer, name -> false);
+    }
+
+    /** The class {@code name}, from the index or {@link #outside}; undecidable when neither describes it. */
+    private ClassInfo superClass(DotName name) {
+        return index.getClassByName(name).or(() -> outside.apply(name)).orElseThrow(Undecidable::new);
     }
 
     /** The definition errors of {@code classInfo}, or empty when the index cannot decide them. */
@@ -153,7 +177,7 @@ public final class IndexClassValidator {
         var byType = new LinkedHashMap<DotName, AnnotationInfo>();
         var superName = classInfo.superName();
         if (superName != null && !superName.equals(OBJECT)) {
-            var superClass = index.getClassByName(superName).orElseThrow(Undecidable::new);
+            var superClass = superClass(superName);
             for (var annotation : annotations(superClass)) {
                 if (types.meta(annotation.name()).map(AnnotationTypes.Meta::inherited).orElse(false)) {
                     byType.put(annotation.name(), annotation);
@@ -340,6 +364,8 @@ public final class IndexClassValidator {
                 var parameters = method.parameters();
                 for (int i = 0; i < parameters.size(); i++) {
                     validateNoRawParameterized(parameters.get(i).type(), location + " param " + i, errors);
+                    validateNoTypeVariable(bean, parameters.get(i).type(), location + INITIALIZER_PARAM + i,
+                            errors);
                 }
             }
             if (method.parameters().stream().anyMatch(IndexClassValidator::isObserves)) {
@@ -373,6 +399,94 @@ public final class IndexClassValidator {
                 }
             }
         }
+        if (bean) {
+            validateInheritedInjectionPoints(classInfo, errors);
+        }
+    }
+
+    /**
+     * The initializers a class that may be a bean inherits from superclasses that are none, read as the class gives
+     * their type variables: {@code Sub extends VetoedSetter<Gadget>} gives {@code @Inject void set(T t)} a class, and
+     * {@code Sub<T> extends VetoedSetter<T>} leaves it a type variable, a definition error (CDI 4.1, 5.2.3;
+     * BUG-20261117-30). An initializer a class below overrides is none. A superclass that may be a bean reports its
+     * own initializers.
+     */
+    private void validateInheritedInjectionPoints(ClassInfo classInfo, List<String> errors) {
+        Map<String, TypeInfo> given = Map.of();
+        var overridden = overridable(classInfo);
+        var generic = classInfo.genericSuperclass();
+        var superName = classInfo.superName();
+        boolean own = true;
+        while (superName != null && !superName.equals(OBJECT)) {
+            var superClass = superClass(superName);
+            given = typeArguments(superClass, generic, given, own);
+            own = false;
+            if (!mayBeABean(superClass)) {
+                for (var method : methods(superClass)) {
+                    if (!has(method.annotations(), INJECT) || method.isStatic()
+                            || !method.isPrivate() && overridden.contains(signature(method))) {
+                        continue;
+                    }
+                    var parameters = method.parameters();
+                    for (int i = 0; i < parameters.size(); i++) {
+                        reportLeftTypeVariable(parameters.get(i).type(), given,
+                                classInfo.name().value() + "." + method.name() + INITIALIZER_PARAM + i, errors);
+                    }
+                }
+            }
+            overridden.addAll(overridable(superClass));
+            generic = superClass.genericSuperclass();
+            superName = superClass.superName();
+        }
+    }
+
+    /** Reports {@code type}, a type variable of a superclass the class leaves a type variable, at {@code location}. */
+    private static void reportLeftTypeVariable(TypeInfo type, Map<String, TypeInfo> given, String location,
+            List<String> errors) {
+        if (type instanceof TypeInfo.TypeVariable(var name, _)
+                && given.get(name) instanceof TypeInfo.TypeVariable(var left, _)) {
+            errors.add(TYPE_VARIABLE_INJECTION_POINT + left + ": " + location);
+        }
+    }
+
+    /** The name and arity of the methods of {@code classInfo} a subclass method may override. */
+    private static Set<String> overridable(ClassInfo classInfo) {
+        var signatures = new HashSet<String>();
+        for (var method : methods(classInfo)) {
+            if (!method.isPrivate() && !method.isStatic() && !method.isSynthetic()) {
+                signatures.add(signature(method));
+            }
+        }
+        return signatures;
+    }
+
+    private static String signature(MethodInfo method) {
+        return method.name() + "/" + method.parameters().size();
+    }
+
+    /**
+     * What {@code superClass}'s type variables are, by name, as the class below it gives them in {@code generic}, its
+     * generic superclass: a type variable of the class below read through {@code below}, what that class's own
+     * variables are, or kept as it is when the class below is the one validated ({@code own}). A raw superclass has
+     * its type variables erased: none is given.
+     */
+    private static Map<String, TypeInfo> typeArguments(ClassInfo superClass, TypeInfo generic,
+            Map<String, TypeInfo> below, boolean own) {
+        if (!(generic instanceof TypeInfo.ParameterizedType(_, var arguments))
+                || arguments.size() != superClass.typeParameters().size()) {
+            return Map.of();
+        }
+        var given = new HashMap<String, TypeInfo>();
+        for (int i = 0; i < arguments.size(); i++) {
+            var argument = arguments.get(i);
+            if (argument instanceof TypeInfo.TypeVariable(var name, _) && !own) {
+                argument = below.get(name);
+            }
+            if (argument != null) {
+                given.put(superClass.typeParameters().get(i).name(), argument);
+            }
+        }
+        return given;
     }
 
     private void validateProducerMethod(MethodInfo method, String location, List<String> errors) {
@@ -400,12 +514,14 @@ public final class IndexClassValidator {
     }
 
     private void validateConstructors(ClassInfo classInfo, List<String> errors) {
+        var bean = mayBeABean(classInfo);
         for (var ctor : constructors(classInfo).toList()) {
             if (!has(ctor.annotations(), INJECT)) continue;
             var parameters = ctor.parameters();
             for (int i = 0; i < parameters.size(); i++) {
-                validateNoRawParameterized(parameters.get(i).type(),
-                        classInfo.name().value() + " constructor param " + i, errors);
+                var location = classInfo.name().value() + " constructor param " + i;
+                validateNoRawParameterized(parameters.get(i).type(), location, errors);
+                validateNoTypeVariable(bean, parameters.get(i).type(), location, errors);
             }
         }
     }
@@ -501,20 +617,28 @@ public final class IndexClassValidator {
 
     /**
      * As reflection judged it: an injection point of a type variable is a definition error (CDI 4.1, 5.2.3), here an
-     * observer's parameter besides the event parameter, a disposer's besides the disposed one or a producer method's,
-     * of a class that {@link #mayBeABean may be a bean}. A subclass that inherits the observer of a class that is none
-     * gives the type variable its class, as the CDI TCK's {@code MemberLevelInheritanceTest} has it
-     * (BUG-20261117-16).
+     * observer's parameter besides the event parameter, a disposer's besides the disposed one, a producer method's, an
+     * initializer's or a bean constructor's, of a class that {@link #mayBeABean may be a bean}. A subclass that
+     * inherits the observer or the initializer of a class that is none gives the type variable its class, as the CDI
+     * TCK's {@code MemberLevelInheritanceTest} has it (BUG-20261117-16, BUG-20261117-30).
      */
     private static void validateNoTypeVariable(boolean bean, TypeInfo type, String location, List<String> errors) {
         if (bean && type instanceof TypeInfo.TypeVariable(var name, _)) {
-            errors.add("Injection point has type variable type " + name + ": " + location);
+            errors.add(TYPE_VARIABLE_INJECTION_POINT + name + ": " + location);
         }
     }
 
-    /** Neither abstract nor vetoed, nor in a vetoed package: a class whose own observers the container may call. */
+    /**
+     * Neither abstract nor vetoed, nor in a vetoed package, and with a bean-defining annotation or named by a bean
+     * descriptor: a class whose own injection points and observers the container may use, as bean discovery decides.
+     * A concrete class without a bean-defining annotation is no bean in the annotated discovery mode: a subclass
+     * that inherits its members gives them their types (BUG-20261117-30, review round 1).
+     */
     private boolean mayBeABean(ClassInfo classInfo) {
         if (classInfo.isAbstract() || classInfo.hasAnnotation(VETOED)) {
+            return false;
+        }
+        if (!beanClasses.test(classInfo.name()) && !hasBeanDefiningAnnotation(classInfo, annotations(classInfo))) {
             return false;
         }
         var name = classInfo.name().value();

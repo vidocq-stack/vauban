@@ -135,15 +135,21 @@ class ClassValidatorDefinitionRulesTest {
                 errors::toString);
     }
 
+    /**
+     * An initializer's parameter of a type variable is checked by the rules of a class that may be a bean
+     * ({@code IndexClassValidator}, {@code ReflectionValidator}), not on every class of the index: an abstract or
+     * vetoed class's initializer is inherited by a subclass that gives the type variable a class (BUG-20261117-30).
+     */
     @Test
-    @DisplayName("an initializer parameter of a type variable type is a definition error")
+    @DisplayName("an initializer parameter of a type variable type is left to the rules of a class that may be a bean")
     void typeVariableInitializerParameter() {
         var initializer = method("init", List.of(ann("jakarta.inject.Inject")),
                 parameter(new TypeInfo.TypeVariable("T", List.of())));
 
         var errors = validate(type(BEAN, ClassInfo.ClassKind.CLASS, List.of(initializer), List.of(ann(DEPENDENT))));
 
-        assertTrue(errors.stream().anyMatch(e -> e.startsWith("Injection point has type variable type")), errors::toString);
+        assertTrue(errors.stream().noneMatch(e -> e.startsWith("Injection point has type variable type")),
+                errors::toString);
     }
 
     @Test

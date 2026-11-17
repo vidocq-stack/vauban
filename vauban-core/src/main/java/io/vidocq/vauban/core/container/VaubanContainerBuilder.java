@@ -1044,6 +1044,12 @@ public final class VaubanContainerBuilder {
                 interceptors = applyEnhancements(new Discovered(descriptors, observers, interceptors),
                         combinedEnhMods, managedBeans(index, discovery));
             }
+            // A bean an extension made one, without a bean-defining annotation, was validated as no bean above
+            var descriptorBeanErrors = descriptorBeanErrors(index, descriptors);
+            if (!descriptorBeanErrors.isEmpty()) {
+                throw new jakarta.enterprise.inject.spi.DefinitionException(
+                        failureMessage(DEFINITION_FAILED, descriptorBeanErrors));
+            }
 
             // Load synthetic beans/observers from APT-generated metadata (if BCE was processed at compile time)
             if (!bceProcessedSources.isEmpty()) {
@@ -1254,10 +1260,45 @@ public final class VaubanContainerBuilder {
      * (VAU-PERF-008), by reflection otherwise, as before.
      */
     private static List<String> definitionErrors(VaubanIndex index, List<Class<?>> beanClasses) {
+        return definitionErrors(index, beanClasses, Set.of());
+    }
+
+    /**
+     * The definition errors of the managed beans whose class has no bean-defining annotation, which a bean descriptor
+     * names: an extension made them beans, and {@link #validateClassDefinitions} validated them as no beans, before
+     * the extensions ran. Their injection points of a type variable are definition errors too (BUG-20261117-30).
+     */
+    private static List<String> descriptorBeanErrors(VaubanIndex index, List<BeanDescriptor> descriptors) {
+        var classes = new ArrayList<Class<?>>();
+        for (var descriptor : descriptors) {
+            if (descriptor.kind() != BeanDescriptor.BeanKind.MANAGED) continue;
+            try {
+                var beanClass = io.vidocq.vauban.core.loading.DeploymentClasses.load(descriptor.beanClass().value());
+                if (!ReflectionValidator.hasBeanDefiningAnnotation(beanClass) && !classes.contains(beanClass)) {
+                    classes.add(beanClass);
+                }
+            } catch (ClassNotFoundException | LinkageError _) {
+                // Not loadable here: the start of its bean reports it
+            }
+        }
+        if (classes.isEmpty()) {
+            return List.of();
+        }
+        return definitionErrors(index, classes, classes.stream().map(Class::getName).collect(
+                java.util.stream.Collectors.toUnmodifiableSet()));
+    }
+
+    /**
+     * The definition errors of {@code beanClasses}, for which a class named in {@code descriptorBeans} is a bean
+     * whether it has a bean-defining annotation or not.
+     */
+    private static List<String> definitionErrors(VaubanIndex index, List<Class<?>> beanClasses,
+            Set<String> descriptorBeans) {
         var validator = new io.vidocq.vauban.core.bean.validation.IndexClassValidator(index,
                 VaubanContainerBuilder::annotationTypeOrNull,
                 name -> VaubanBeanManager.customInterceptorBindingTypes().stream()
-                        .anyMatch(type -> type.getName().equals(name.value())));
+                        .anyMatch(type -> type.getName().equals(name.value())))
+                .withBeanClasses(name -> descriptorBeans.contains(name.value()));
         var errors = new java.util.ArrayList<String>();
         var reflected = new java.util.ArrayList<Class<?>>();
         for (var beanClass : beanClasses) {
@@ -1269,7 +1310,8 @@ public final class VaubanContainerBuilder {
                 reflected.add(beanClass);
             }
         }
-        errors.addAll(ReflectionValidator.validateWithReflection(reflected));
+        errors.addAll(ReflectionValidator.validateWithReflection(reflected,
+                clazz -> descriptorBeans.contains(clazz.getName())));
         return errors;
     }
 

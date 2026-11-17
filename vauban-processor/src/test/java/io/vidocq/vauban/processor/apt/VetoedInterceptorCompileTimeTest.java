@@ -1124,11 +1124,148 @@ class VetoedInterceptorCompileTimeTest {
                         return new Sprocket();
                     }
                 }""");
-        var errors = List.of(
+        assertDefinitionErrorsAtBuildAtStartAndFrozen(sources, List.of(
                 "Injection point has type variable type T: vi.types.WidgetFactory.dispose disposer param 1",
                 "Injection point has type variable type T: vi.types.GadgetListener.on observer param 1",
-                "Injection point has type variable type T: vi.types.SprocketFactory.sprocket producer param 0");
+                "Injection point has type variable type T: vi.types.SprocketFactory.sprocket producer param 0"));
+    }
 
+    /**
+     * An initializer's parameter is an injection point, and one of a type variable is a definition error (CDI 4.1,
+     * 5.2.3), on a class that may be a bean: {@code GadgetSetter<T extends Gadget>}. An initializer a bean inherits
+     * from an abstract class is checked as the bean class gives it, {@code T} as {@code Gadget}: no error. The start
+     * checked every class of the index, and refused {@code AbstractGadgetSetter}; the build checked none, and did
+     * not warn of {@code GadgetSetter} (BUG-20261117-30).
+     */
+    @Test
+    @DisplayName("an initializer's parameter of a type variable is a definition error on a class that may be a bean")
+    void anInitializersParameterOfATypeVariableIsADefinitionErrorOnAClassThatMayBeABean() throws Exception {
+        var sources = withAnInheritedGadgetSetter();
+        putType(sources, "GadgetSetter", DEPENDENT + """
+                public class GadgetSetter<T extends Gadget> {
+                    @jakarta.inject.Inject
+                    void set(T gadget) {
+                    }
+                }""");
+
+        var refused = assertDefinitionErrorsAtBuildAtStartAndFrozen(sources, List.of(
+                "Injection point has type variable type T: vi.types.GadgetSetter.set initializer param 0"));
+        assertFalse(refused.contains("AbstractGadgetSetter"), refused);
+    }
+
+    /**
+     * The initializer {@code GadgetSetterOfAbstract} inherits from {@code AbstractGadgetSetter<T>} is given a
+     * {@code Gadget}, at start and frozen; the build does not warn (BUG-20261117-30).
+     */
+    @Test
+    @DisplayName("an inherited initializer's parameter of a type variable is legal, at build, at start and frozen")
+    void anInheritedInitializersParameterOfATypeVariableIsLegalAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAnInheritedGadgetSetter();
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        assertTrue(built.messages().stream().noneMatch(m -> m.contains("type variable type")),
+                () -> String.join("\n", built.messages()));
+        var gets = (StartedCheck) (container, loader) -> assertEquals(TYPES + "Gadget",
+                hello(container, loader.loadClass(TYPES + "GadgetSetterOfAbstract")), "what the initializer got");
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, gets);
+        assertFalse(seen.start().isEmpty(), "the extension saw no bean");
+    }
+
+    /**
+     * A bean that inherits an initializer from a vetoed class and leaves its parameter a type variable of its own,
+     * {@code GenericSetterOfVetoed<T> extends VetoedSetter<T>}, has an injection point of a type variable (CDI 4.1,
+     * 5.2.3). It started, and failed to call the initializer at the first lookup (BUG-20261117-30, review round 1).
+     */
+    @Test
+    @DisplayName("an inherited initializer's parameter left a type variable is a definition error, build, start")
+    void anInheritedInitializersParameterLeftATypeVariableIsADefinitionErrorAtBuildAtStartAndFrozen()
+            throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Gadget", DEPENDENT + "public class Gadget {\n}");
+        putType(sources, "VetoedSetter", """
+                @jakarta.enterprise.inject.Vetoed
+                public class VetoedSetter<T> {
+                    @jakarta.inject.Inject
+                    void set(T gadget) {
+                    }
+                }""");
+        putType(sources, "GenericSetterOfVetoed", DEPENDENT
+                + "public class GenericSetterOfVetoed<T> extends VetoedSetter<T> {\n}");
+
+        assertDefinitionErrorsAtBuildAtStartAndFrozen(sources, List.of(
+                "Injection point has type variable type T: vi.types.GenericSetterOfVetoed.set initializer param 0"));
+    }
+
+    /**
+     * A concrete class without a bean-defining annotation is no bean in the annotated discovery mode: the initializer
+     * {@code PlainGadgetSetter<T>} declares is its bean subclass's, given a {@code Gadget}. The start refused it as an
+     * injection point of a type variable, where the build did not warn (BUG-20261117-30, review round 1).
+     */
+    @Test
+    @DisplayName("an initializer of a class without a bean-defining annotation is inherited, build, start, frozen")
+    void anInitializerOfAClassWithoutABeanDefiningAnnotationIsInheritedAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAnInheritedGadgetSetter();
+        sources.remove("vi/types/AbstractGadgetSetter" + JAVA);
+        sources.remove("vi/types/GadgetSetterOfAbstract" + JAVA);
+        putType(sources, "PlainGadgetSetter", """
+                public class PlainGadgetSetter<T> implements java.util.function.Supplier<Object> {
+                    private T gadget;
+                    @jakarta.inject.Inject
+                    void set(T gadget) {
+                        this.gadget = gadget;
+                    }
+                    @Override
+                    public Object get() {
+                        return gadget.getClass().getName();
+                    }
+                }""");
+        putType(sources, "GadgetSetterOfPlain", DEPENDENT
+                + "public class GadgetSetterOfPlain extends PlainGadgetSetter<Gadget> {\n}");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        assertTrue(built.messages().stream().noneMatch(m -> m.contains("type variable type")),
+                () -> String.join("\n", built.messages()));
+        var gets = (StartedCheck) (container, loader) -> assertEquals(TYPES + "Gadget",
+                hello(container, loader.loadClass(TYPES + "GadgetSetterOfPlain")), "what the initializer got");
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, gets);
+        assertFalse(seen.start().isEmpty(), "the extension saw no bean");
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, with the bean {@code Gadget}, the abstract {@code AbstractGadgetSetter<T>} and
+     * its bean {@code GadgetSetterOfAbstract extends AbstractGadgetSetter<Gadget>}, which supplies the class of what
+     * the inherited initializer got.
+     */
+    private static Map<String, String> withAnInheritedGadgetSetter() {
+        var sources = withAVetoedPackage();
+        putType(sources, "Gadget", DEPENDENT + "public class Gadget {\n}");
+        putType(sources, "AbstractGadgetSetter", """
+                public abstract class AbstractGadgetSetter<T> implements java.util.function.Supplier<Object> {
+                    private T gadget;
+                    @jakarta.inject.Inject
+                    void set(T gadget) {
+                        this.gadget = gadget;
+                    }
+                    @Override
+                    public Object get() {
+                        return gadget.getClass().getName();
+                    }
+                }""");
+        putType(sources, "GadgetSetterOfAbstract", DEPENDENT
+                + "public class GadgetSetterOfAbstract extends AbstractGadgetSetter<Gadget> {\n}");
+        return sources;
+    }
+
+    /**
+     * Compiles {@code sources}: the processor warns of each of {@code errors}, the start refuses the deployment with
+     * its extensions run, and the build's freeze refuses to freeze it, so no frozen start comes after.
+     *
+     * @return the message the start refused the deployment with
+     */
+    private String assertDefinitionErrorsAtBuildAtStartAndFrozen(Map<String, String> sources, List<String> errors)
+            throws Exception {
         var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
         assertTrue(built.success(), () -> String.join("\n", built.messages()));
         for (var error : errors) {
@@ -1154,6 +1291,7 @@ class VetoedInterceptorCompileTimeTest {
             assertAll(() -> assertTrue(run.contains("\n  - " + error), run),
                     () -> assertTrue(frozen.contains("\n  - " + error), frozen));
         }
+        return run;
     }
 
     /**

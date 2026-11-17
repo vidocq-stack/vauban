@@ -1026,11 +1026,10 @@ class AssignabilityRulesReproductionTest {
     /**
      * An initializer a bean inherits from a class that is no bean, abstract or vetoed, has its parameter of a type
      * variable resolved by the bean class, {@code T} as {@code Gadget}, as an inherited observer has. The start
-     * checks the parameters of every {@code @Inject} method of the index for a type variable, whatever the class
-     * ({@code ClassValidator.validateInjectionParameters}), and refuses the deployment (BUG-20261117-30).
+     * checked the parameters of every {@code @Inject} method of the index for a type variable, whatever the class
+     * ({@code ClassValidator.validateInjectionParameters}), and refused the deployment (BUG-20261117-30).
      */
     @Test
-    @Disabled("BUG-20261117-30: the start refuses an initializer of a type variable in a class that is no bean")
     @DisplayName("an inherited initializer's parameter of a type variable its bean class gives a class is legal")
     void anInheritedInitializersParameterOfATypeVariableItsBeanClassGivesAClassIsLegal() {
         var builder = VaubanContainer.builder().addBeanClass(Gadget.class).addBeanClass(AbstractGadgetSetter.class)

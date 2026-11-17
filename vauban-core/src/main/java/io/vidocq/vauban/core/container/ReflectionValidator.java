@@ -19,6 +19,8 @@
  */
 package io.vidocq.vauban.core.container;
 
+import io.vidocq.vauban.core.bean.validation.IndexClassValidator;
+
 import java.lang.annotation.Annotation;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
@@ -36,6 +38,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 final class ReflectionValidator {
 
@@ -44,10 +47,19 @@ final class ReflectionValidator {
     private static final String PRODUCER = "Producer ";
     private static final String PRODUCER_METHOD = "Producer method ";
     private static final String BEAN = "Bean ";
+    private static final String INITIALIZER_PARAM = " initializer param ";
 
     private ReflectionValidator() {}
 
     static List<String> validateWithReflection(List<Class<?>> beanClasses) {
+        return validateWithReflection(beanClasses, clazz -> false);
+    }
+
+    /**
+     * The definition errors of {@code beanClasses}, for which a class {@code descriptorBeans} accepts is a bean whether
+     * it has a bean-defining annotation or not: a bean descriptor names it, as an extension made it one.
+     */
+    static List<String> validateWithReflection(List<Class<?>> beanClasses, Predicate<Class<?>> descriptorBeans) {
         var errors = new ArrayList<String>();
         for (var clazz : beanClasses) {
             if (clazz.isInterface() || clazz.isAnnotation() || clazz.isEnum()) continue;
@@ -66,10 +78,14 @@ final class ReflectionValidator {
                 validateNamedOnParameters(clazz, errors);
                 validateNormalScopedPublicFields(clazz, errors);
                 validateTypedValues(clazz, errors);
+                boolean bean = mayBeABean(clazz, descriptorBeans);
                 validateInjectFields(clazz, errors);
-                validateMethods(clazz, errors);
+                validateMethods(clazz, bean, errors);
+                if (bean) {
+                    validateInheritedInjectionPoints(clazz, descriptorBeans, errors);
+                }
                 validateProducerFields(clazz, errors);
-                validateConstructors(clazz, errors);
+                validateConstructors(clazz, bean, errors);
                 validateStereotypePriorities(clazz, errors);
                 validateStereotypeScopes(clazz, errors);
                 validateInterceptorBindings(clazz, errors);
@@ -260,27 +276,27 @@ final class ReflectionValidator {
         }
     }
 
-    private static void validateMethods(Class<?> clazz, List<String> errors) {
+    private static void validateMethods(Class<?> clazz, boolean bean, List<String> errors) {
         for (var method : clazz.getDeclaredMethods()) {
             boolean producer = method.isAnnotationPresent(jakarta.enterprise.inject.Produces.class);
             if (producer) {
                 validateProducerMethod(clazz, method, errors);
             }
             if (method.isAnnotationPresent(jakarta.inject.Inject.class)) {
-                validateInitializerMethod(clazz, method, errors);
+                validateInitializerMethod(clazz, method, bean, errors);
             }
             var params = method.getParameters();
             if (Arrays.stream(params).anyMatch(ReflectionValidator::isObserves)) {
-                validateObserverParameters(clazz, method, params, errors);
+                validateObserverParameters(clazz, method, params, bean, errors);
             }
             if (Arrays.stream(params).anyMatch(ReflectionValidator::isDisposes)) {
-                validateDisposerParameters(clazz, method, params, errors);
+                validateDisposerParameters(clazz, method, params, bean, errors);
             }
             if (producer) {
                 validateAllParameters(method, clazz.getName() + "." + method.getName() + " producer param", errors);
                 var paramTypes = method.getGenericParameterTypes();
                 for (int i = 0; i < paramTypes.length; i++) {
-                    validateNoTypeVariable(clazz, paramTypes[i],
+                    validateNoTypeVariable(bean, paramTypes[i],
                             clazz.getName() + "." + method.getName() + " producer param " + i, errors);
                 }
             }
@@ -301,7 +317,7 @@ final class ReflectionValidator {
         }
     }
 
-    private static void validateInitializerMethod(Class<?> clazz, Method method, List<String> errors) {
+    private static void validateInitializerMethod(Class<?> clazz, Method method, boolean bean, List<String> errors) {
         if (method.getTypeParameters().length > 0 && !method.getName().equals("<init>")) {
             errors.add("Initializer method " + clazz.getName() + "." + method.getName()
                     + " cannot declare type parameters");
@@ -311,10 +327,12 @@ final class ReflectionValidator {
         for (int i = 0; i < paramTypes.length; i++) {
             validateNoRawParameterized(paramTypes[i], rawTypes[i],
                     clazz.getName() + "." + method.getName() + " param " + i, errors);
+            validateNoTypeVariable(bean, paramTypes[i],
+                    clazz.getName() + "." + method.getName() + INITIALIZER_PARAM + i, errors);
         }
     }
 
-    private static void validateObserverParameters(Class<?> clazz, Method method, Parameter[] params,
+    private static void validateObserverParameters(Class<?> clazz, Method method, Parameter[] params, boolean bean,
             List<String> errors) {
         var paramTypes = method.getGenericParameterTypes();
         var rawTypes = method.getParameterTypes();
@@ -322,13 +340,13 @@ final class ReflectionValidator {
             if (!isObserves(params[i])) {
                 validateNoRawParameterized(paramTypes[i], rawTypes[i],
                         clazz.getName() + "." + method.getName() + " observer param", errors);
-                validateNoTypeVariable(clazz, paramTypes[i],
+                validateNoTypeVariable(bean, paramTypes[i],
                         clazz.getName() + "." + method.getName() + " observer param " + i, errors);
             }
         }
     }
 
-    private static void validateDisposerParameters(Class<?> clazz, Method method, Parameter[] params,
+    private static void validateDisposerParameters(Class<?> clazz, Method method, Parameter[] params, boolean bean,
             List<String> errors) {
         var paramTypes = method.getGenericParameterTypes();
         var rawTypes = method.getParameterTypes();
@@ -336,7 +354,7 @@ final class ReflectionValidator {
             if (!isDisposes(params[i])) {
                 validateNoRawParameterized(paramTypes[i], rawTypes[i],
                         clazz.getName() + "." + method.getName() + " disposer param", errors);
-                validateNoTypeVariable(clazz, paramTypes[i],
+                validateNoTypeVariable(bean, paramTypes[i],
                         clazz.getName() + "." + method.getName() + " disposer param " + i, errors);
             }
             if (rawTypes[i] == jakarta.enterprise.inject.spi.InjectionPoint.class) {
@@ -348,23 +366,92 @@ final class ReflectionValidator {
 
     /**
      * An injection point of a type variable is a definition error (CDI 4.1, 5.2.3): an observer's parameter besides
-     * the event parameter, a disposer's besides the disposed one or a producer method's, of a class that
-     * {@link #mayBeABean may be a bean}. A subclass that inherits the observer of a class that is none gives the type
-     * variable its class (BUG-20261117-16).
+     * the event parameter, a disposer's besides the disposed one, a producer method's, an initializer's or a bean
+     * constructor's, of a class that {@link #mayBeABean may be a bean}. A subclass that inherits the observer or the
+     * initializer of a class that is none gives the type variable its class (BUG-20261117-16, BUG-20261117-30).
      */
-    private static void validateNoTypeVariable(Class<?> clazz, Type type, String location, List<String> errors) {
-        if (type instanceof TypeVariable<?> variable && mayBeABean(clazz)) {
-            errors.add("Injection point has type variable type " + variable.getName() + ": " + location);
+    private static void validateNoTypeVariable(boolean bean, Type type, String location, List<String> errors) {
+        if (bean && type instanceof TypeVariable<?> variable) {
+            errors.add(IndexClassValidator.TYPE_VARIABLE_INJECTION_POINT + variable.getName() + ": " + location);
         }
     }
 
     /**
-     * Neither abstract nor vetoed, nor in a vetoed package: a class whose own observers the container may call, as
-     * {@code IndexClassValidator} judges it from the index.
+     * The initializers a class that may be a bean inherits from superclasses that are none, read as the class gives
+     * their type variables, as {@code IndexClassValidator} reads them: a parameter the class leaves a type variable is
+     * an injection point of a type variable (CDI 4.1, 5.2.3; BUG-20261117-30). An initializer a class below overrides
+     * is none.
      */
-    private static boolean mayBeABean(Class<?> clazz) {
+    private static void validateInheritedInjectionPoints(Class<?> clazz, Predicate<Class<?>> descriptorBeans,
+            List<String> errors) {
+        var mapping = ManagedBean.buildTypeVariableMapping(clazz);
+        var overridden = overridable(clazz);
+        for (var type = clazz.getSuperclass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            if (!mayBeABean(type, descriptorBeans)) {
+                validateInheritedInitializers(clazz, type, mapping, overridden, errors);
+            }
+            overridden.addAll(overridable(type));
+        }
+    }
+
+    /** The initializers {@code clazz} inherits from {@code type}, a superclass that is no bean, that none overrides. */
+    private static void validateInheritedInitializers(Class<?> clazz, Class<?> type, Map<TypeVariable<?>, Type> mapping,
+            Set<String> overridden, List<String> errors) {
+        for (var method : type.getDeclaredMethods()) {
+            if (isInheritedInitializer(method, overridden)) {
+                var parameters = method.getGenericParameterTypes();
+                for (int i = 0; i < parameters.length; i++) {
+                    reportLeftTypeVariable(clazz, parameters[i], mapping,
+                            clazz.getName() + "." + method.getName() + INITIALIZER_PARAM + i, errors);
+                }
+            }
+        }
+    }
+
+    private static boolean isInheritedInitializer(Method method, Set<String> overridden) {
+        int modifiers = method.getModifiers();
+        return method.isAnnotationPresent(jakarta.inject.Inject.class) && !Modifier.isStatic(modifiers)
+                && (Modifier.isPrivate(modifiers) || !overridden.contains(signature(method)));
+    }
+
+    /**
+     * Reports {@code type}, a type variable of a superclass that {@code clazz} leaves one of its own type variables, at
+     * {@code location}. A raw superclass erases its type variables: the class gives it none.
+     */
+    private static void reportLeftTypeVariable(Class<?> clazz, Type type, Map<TypeVariable<?>, Type> mapping,
+            String location, List<String> errors) {
+        if (type instanceof TypeVariable<?>
+                && ManagedBean.resolveType(type, mapping) instanceof TypeVariable<?> left
+                && left.getGenericDeclaration() == clazz) {
+            errors.add(IndexClassValidator.TYPE_VARIABLE_INJECTION_POINT + left.getName() + ": " + location);
+        }
+    }
+
+    /** The name and arity of the methods of {@code clazz} a subclass method may override. */
+    private static Set<String> overridable(Class<?> clazz) {
+        var signatures = new HashSet<String>();
+        for (var method : clazz.getDeclaredMethods()) {
+            int modifiers = method.getModifiers();
+            if (!Modifier.isPrivate(modifiers) && !Modifier.isStatic(modifiers) && !method.isSynthetic()) {
+                signatures.add(signature(method));
+            }
+        }
+        return signatures;
+    }
+
+    private static String signature(Method method) {
+        return method.getName() + "/" + method.getParameterCount();
+    }
+
+    /**
+     * Neither abstract nor vetoed, nor in a vetoed package, and with a bean-defining annotation or named by a bean
+     * descriptor: a class whose own injection points and observers the container may use, as bean discovery and
+     * {@code IndexClassValidator} decide (BUG-20261117-30, review round 1).
+     */
+    private static boolean mayBeABean(Class<?> clazz, Predicate<Class<?>> descriptorBeans) {
         if (Modifier.isAbstract(clazz.getModifiers())
-                || clazz.isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class)) {
+                || clazz.isAnnotationPresent(jakarta.enterprise.inject.Vetoed.class)
+                || !descriptorBeans.test(clazz) && !hasBeanDefiningAnnotation(clazz)) {
             return false;
         }
         // A class has a package, the unnamed one included: only an array or a primitive type has none
@@ -404,14 +491,15 @@ final class ReflectionValidator {
         }
     }
 
-    private static void validateConstructors(Class<?> clazz, List<String> errors) {
+    private static void validateConstructors(Class<?> clazz, boolean bean, List<String> errors) {
         for (var ctor : clazz.getDeclaredConstructors()) {
             if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
                 var paramTypes = ctor.getGenericParameterTypes();
                 var rawTypes = ctor.getParameterTypes();
                 for (int i = 0; i < paramTypes.length; i++) {
-                    validateNoRawParameterized(paramTypes[i], rawTypes[i],
-                            clazz.getName() + " constructor param " + i, errors);
+                    var location = clazz.getName() + " constructor param " + i;
+                    validateNoRawParameterized(paramTypes[i], rawTypes[i], location, errors);
+                    validateNoTypeVariable(bean, paramTypes[i], location, errors);
                 }
             }
         }
