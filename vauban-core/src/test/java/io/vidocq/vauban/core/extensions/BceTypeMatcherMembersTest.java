@@ -340,17 +340,17 @@ class BceTypeMatcherMembersTest {
         Class<?>[] objects = {Object[].class};
         Class<?>[] number = {Number.class};
 
-        assertAll(() -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(integer, primitive, LOADER)),
-                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(primitiveInt, primitive, LOADER)),
-                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(primitiveInt, named, LOADER)),
-                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(stringArrays, strings, LOADER)),
-                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(intArrays, ints, LOADER)),
-                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(number, named, LOADER)),
-                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(serializable, primitive, LOADER)),
-                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(serializable, strings, LOADER)),
-                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(sequences, strings, LOADER)),
-                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(objects, ints, LOADER)),
-                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(sequences, primitive, LOADER)));
+        assertAll(() -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(integer, primitive)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(primitiveInt, primitive)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(primitiveInt, named)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(stringArrays, strings)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(intArrays, ints)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(number, named)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(serializable, primitive)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(serializable, strings)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(sequences, strings)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(objects, ints)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(sequences, primitive)));
     }
 
     @Test

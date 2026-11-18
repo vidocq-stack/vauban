@@ -5,6 +5,26 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-43 — At start, `@Registration` gives a `@Typed` bean for the supertypes of its types
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, lane L4)
+- **Module**: `vauban-core` (`BceTypeMatcher.matchesRegistrationTypes`)
+- **Symptom**: a `@Registration(types = java.util.EventListener.class)` method with a `BeanInfo` parameter is called,
+  at start and when the build freezes the extensions, for a bean `@Typed(Talker.class)` whose `Talker` extends
+  `EventListener`. Its bean types are `Talker` and `Object` only; the processor does not call it.
+- **Repro**: `VetoedInterceptorCompileTimeTest#registrationGivesATypedBeanForItsTypesOnlyFromTheProcessorAtStartAndFrozen`.
+- **Cause** (proved): `matchesRegistrationTypes` read a class or parameterized bean type as `matchesTypes` does: it
+  loaded the class the type names and asked whether it is a subtype of an expected type. The bean types already hold
+  every supertype a bean has; a `@Typed` bean has fewer. The processor cannot load the classes it compiles and matched
+  the name only.
+- **Fix**: a class or parameterized bean type matches an expected type of the same name, without loading anything,
+  in the three places. `@Enhancement`, which matches classes and their subtypes, keeps `matchesTypes`.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-43-red.log`, "Red run 1" (`[vi.Narrow, vi.Wide]` at start and frozen). Green,
+  `stack-l4-43-dev.log`, "Dev run 1" (vauban-core, vauban-processor, vauban-maven-plugin).
+- **Found by**: the L4 review.
+
 ## BUG-20261118-37 — An invoker the processor described is called through reflection at start
 
 - **Date**: 2026-11-18

@@ -308,13 +308,15 @@ final class BceTypeMatcher {
 
     /**
      * Whether a bean of a {@code @Registration} method matches: its bean types contain one of {@code types}. A class or
-     * parameterized type is read as {@link #matchesTypes(Class[], BeanDescriptor, ClassLoader)} reads it. The bean
+     * parameterized type matches the class it names, by name, and no supertype: the bean types already hold those the
+     * bean has, and a {@code @Typed} bean has no other. Loading the class and asking whether it is a subtype gave a
+     * {@code @Typed} bean for the supertypes of its types at start (BUG-20261118-43). The bean
      * types of a producer of a primitive or an array type are that type and {@code Object} (CDI 4.1, 2.2.1): a
      * primitive type, or a class type named after one as the container reads it by reflection, matches its primitive
      * class and its wrapper, an array its own array class; {@code Object} is matched as a bean type of its own. A
      * producer of {@code int} or {@code String[]} matched no type but {@code Object} (BUG-20261117-11).
      */
-    static boolean matchesRegistrationTypes(Class<?>[] types, BeanDescriptor bean, ClassLoader classLoader) {
+    static boolean matchesRegistrationTypes(Class<?>[] types, BeanDescriptor bean) {
         for (var beanType : bean.types()) {
             boolean matches = switch (asPrimitives(beanType)) {
                 case TypeInfo.PrimitiveType(var kind) -> List.of(types).contains(primitiveOf(kind))
@@ -323,8 +325,8 @@ final class BceTypeMatcher {
                     var name = BeanDiscovery.erasedName(array);
                     yield Stream.of(types).anyMatch(type -> type.isArray() && type.getTypeName().equals(name));
                 }
-                default -> rawTypeName(beanType).filter(name -> loadsAsSubtypeOfAny(types, name, classLoader))
-                        .isPresent();
+                default -> rawTypeName(beanType)
+                        .filter(name -> Stream.of(types).anyMatch(type -> type.getName().equals(name))).isPresent();
             };
             if (matches) {
                 return true;

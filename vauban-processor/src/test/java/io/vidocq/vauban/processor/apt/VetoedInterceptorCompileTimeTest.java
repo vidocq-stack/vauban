@@ -2344,6 +2344,51 @@ class VetoedInterceptorCompileTimeTest {
                 SERIALIZABLE + LOGGER, "strings producer of java.lang.String[]"));
     }
 
+    /** Records the beans {@code @Registration} gives it as a {@code java.util.EventListener}. */
+    public static class ListenerRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = java.util.EventListener.class)
+        public void listeners(BeanInfo bean) {
+            SEEN.add(bean.declaringClass().name());
+        }
+    }
+
+    /**
+     * CDI 4.1 calls a {@code @Registration} method for each bean whose bean types contain one of its types. The bean
+     * types of a {@code @Typed} bean are those it names and {@code Object}: {@code vi.Narrow} is a {@code vi.Talker}
+     * only, not the {@code EventListener} {@code vi.Talker} extends. The container matched a bean type by loading its
+     * class and asking whether it is a subtype, and gave it (BUG-20261118-43).
+     */
+    @Test
+    @DisplayName("@Registration does not give a @Typed bean as a supertype of its types, everywhere")
+    void registrationGivesATypedBeanForItsTypesOnlyFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Talker.java", """
+                package vi;
+                public interface Talker extends java.util.EventListener {
+                }
+                """);
+        sources.put("vi/Narrow.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                @jakarta.enterprise.inject.Typed(Talker.class)
+                public class Narrow implements Talker {
+                }
+                """);
+        sources.put("vi/Wide.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Wide implements Talker {
+                }
+                """);
+
+        var seen = seenThreeWays(sources, ListenerRecorder.class, ListenerRecorder.SEEN);
+
+        seen.assertEachIs(List.of("vi.Wide"));
+    }
+
     /** Records the method, the event parameter, the bean and the qualifiers of each observer of {@code vi.Hearer}. */
     public static class ObserverDescriber implements BuildCompatibleExtension {
 
