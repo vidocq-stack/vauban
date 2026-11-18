@@ -22,20 +22,28 @@ package io.vidocq.vauban.core.extensions;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
+import jakarta.enterprise.inject.Any;
+import jakarta.enterprise.inject.UnsatisfiedResolutionException;
+import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.enterprise.inject.spi.CDI;
 import jakarta.enterprise.invoke.Invoker;
+import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.container.InstanceImpl;
+import io.vidocq.vauban.core.container.ManagedBean;
 import io.vidocq.vauban.core.container.VaubanInjectionPoint;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @SuppressWarnings({"unchecked", "java:S3011", "java:S3776"}) // CDI spec requires reflective access
 public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo {
@@ -111,7 +119,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         List<Runnable> cleanups = new ArrayList<>();
 
         try {
-            var target = instanceLookup ? lookupBean(cdi, beanClass, cleanups) : instance;
+            var target = instanceLookup ? lookupTarget(cdi.getBeanManager(), cleanups) : instance;
             var callArguments = trimToParameterCount(lookupArguments(cdi.getBeanManager(), arguments, cleanups));
 
             if (!isStatic && target == null) {
@@ -127,14 +135,61 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         }
     }
 
-    /** A contextual reference of {@code type}; a {@code @Dependent} instance is destroyed once the call is over. */
-    private static Object lookupBean(CDI<Object> cdi, Class<?> type, List<Runnable> cleanups) {
-        var beanHandle = cdi.select(type).getHandle();
-        var value = beanHandle.get();
-        if (beanHandle.getBean() != null && beanHandle.getBean().getScope() == Dependent.class) {
-            cleanups.add(beanHandle::destroy);
+    /**
+     * A contextual reference for the target bean, of the bean type that declares the target method (CDI 4.1,
+     * "Configuring lookups"): the managed bean of {@link #beanClass}, whatever its qualifiers, and found among the
+     * beans of {@code Object} when a {@code @Typed} leaves its class out of its bean types. It selected the class
+     * with {@code @Default}, which missed a bean with a qualifier, and one whose class is no bean type of its
+     * (BUG-20261117-38). The creational context of a {@code @Dependent} target is released once the call is over,
+     * which destroys it; that of any other is left alone, so a {@code @Singleton} the lookup creates keeps its
+     * {@code @Dependent} objects.
+     */
+    private Object lookupTarget(BeanManager beanManager, List<Runnable> cleanups) {
+        var bean = targetBeanAmong(beanManager, beanManager.getBeans(beanClass, Any.Literal.INSTANCE));
+        if (bean == null) {
+            bean = targetBeanAmong(beanManager, beanManager.getBeans(Object.class, Any.Literal.INSTANCE));
         }
-        return value;
+        if (bean == null) {
+            throw new UnsatisfiedResolutionException("No bean of class " + beanClass.getName()
+                    + " for the invoker of " + method.getName());
+        }
+        var context = beanManager.createCreationalContext(bean);
+        if (bean.getScope() == Dependent.class) {
+            cleanups.add(context::release);
+        }
+        return beanManager.getReference(bean, declaringBeanType(bean), context);
+    }
+
+    /** The target bean among {@code beans}, or {@code null} when none of them is. */
+    private Bean<?> targetBeanAmong(BeanManager beanManager, Set<Bean<?>> beans) {
+        Set<Bean<?>> candidates = beans.stream().filter(this::isTargetBean).collect(Collectors.toSet());
+        return beanManager.resolve(candidates);
+    }
+
+    /**
+     * Whether {@code bean} is the managed bean of {@link #beanClass}, not a producer its class declares. The class is
+     * compared by name, as the types of {@code getBeans} are: a deployment of several loaders may hold it twice.
+     */
+    @SuppressWarnings("java:S1872")
+    private boolean isTargetBean(Bean<?> bean) {
+        return bean.getBeanClass().getName().equals(beanClass.getName())
+                && (!(bean instanceof ManagedBean<?> managed)
+                    || managed.descriptor().kind() == BeanDescriptor.BeanKind.MANAGED);
+    }
+
+    /**
+     * The bean type of {@code bean} that declares the target method, as the bean has it, {@code Base<String>} say,
+     * or {@code Object}, a bean type of every bean, when a {@code @Typed} left that type out.
+     */
+    private Type declaringBeanType(Bean<?> bean) {
+        var declaring = method.getDeclaringClass();
+        for (var type : bean.getTypes()) {
+            if (type == declaring || (type instanceof ParameterizedType parameterized
+                    && parameterized.getRawType() == declaring)) {
+                return type;
+            }
+        }
+        return Object.class;
     }
 
     /**

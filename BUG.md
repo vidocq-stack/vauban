@@ -1613,21 +1613,33 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-38 — An invoker's instance lookup misses a target bean that has a qualifier
 
 - **Date**: 2026-11-17
-- **Status**: OPEN; a fix is parked on the branch `fix/invoker-instance-lookup` (cc0cec19, on 35035df4), not
-  merged: it releases the target's creational context after every call, which destroys the `@Dependent` objects of
-  a `@Singleton` target the lookup created (the review of BUG-20261117-27); fix that before it goes anywhere
-- **Module**: `vauban-core` (`VaubanInvoker.lookupBean`)
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`), from the parked branch
+  `fix/invoker-instance-lookup` (cc0cec19), with its review's defect fixed
+- **Module**: `vauban-core` (`VaubanInvoker.lookupTarget`)
 - **Symptom**: an invoker of `FastWorker.work()` with `withInstanceLookup()`, for a bean `@Dependent @Fast class
   FastWorker`: the call throws `UnsatisfiedResolutionException: No bean found for type: …FastWorker`. The same for a
   bean whose `@Typed` leaves its class out of its bean types.
 - **Repro**: `VaubanInvokerLookupTest#anInstanceLookupFindsATargetBeanThatHasAQualifier` and
-  `#anInstanceLookupFindsATargetBeanWhoseClassTypedLeavesOut` in `vauban-core`, disabled; red when enabled, on the
-  main code of 131fb3e6 (`vauban-b27-red.log`, "Red run 1" for the first, "Red run 2b" for both).
-- **Cause**: `lookupBean` calls `cdi.select(beanClass)`, which requires `@Default` and the class as a bean type.
-  CDI 4.1, "Configuring lookups", asks for a contextual reference for the target bean and the bean type that declares
-  the target method.
+  `#anInstanceLookupFindsATargetBeanWhoseClassTypedLeavesOut` in `vauban-core`; with the parked branch's
+  `#anInstanceLookupFindsTheManagedBeanNotAProducer`,
+  `#anInstanceLookupOfAMethodAGenericSuperclassDeclaresFindsTheTargetBean` and
+  `#anInstanceLookupOfAClassThatIsNoBeanIsUnsatisfied`, green before and after, which keep what the fix must not
+  break.
+- **Cause** (proved): `lookupBean` called `cdi.select(beanClass)`, which requires `@Default` and the class as a bean
+  type. CDI 4.1, "Configuring lookups", asks for a contextual reference for the target bean and the bean type that
+  declares the target method.
+- **Fix**: `lookupTarget` takes the managed bean of the target class among the beans of that class with `@Any`, or
+  among those of `Object` when `@Typed` leaves the class out, not a producer the class declares, and asks
+  `getReference` for the bean type that declares the method, as the bean has it (`HolderService<String>`), or
+  `Object`. The parked fix released the creational context after every call, which destroyed the `@Dependent`
+  objects of a `@Singleton` target the lookup created: the context is released for a `@Dependent` target only, as
+  `VaubanInvokerLookupTest#aSingletonTargetTheLookupCreatesKeepsItsDependents` requires.
+- **CDI Lite TCK**: `invokers.lookup.InstanceLookupTest` and `InstanceLookupDependentTest` look a `@Default` target up,
+  and passed before; none has a qualified or `@Typed` target.
+- **Verification**: red on ed64b4f6, BUG-20261117-48 (`stack-l3b-red.log`, "BUG-20261117-38 red, on ed64b4f6": both
+  repros, `UnsatisfiedResolution`). Green: `stack-l3b-green.log`, "BUG-20261117-38 fix: the target bean by its class,
+  any qualifier, its declaring bean type" (33 invoker tests) and "BUG-20261117-38 fix: vauban-core, all tests".
 - **Found by**: the work on BUG-20261117-27, testing that the qualifiers still apply.
-
 ## BUG-20261117-37 — At start, `ClassInfo.modifiers()` gives the class file's flags
 
 - **Date**: 2026-11-17

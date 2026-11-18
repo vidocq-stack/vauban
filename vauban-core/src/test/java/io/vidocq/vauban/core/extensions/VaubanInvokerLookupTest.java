@@ -241,6 +241,42 @@ class VaubanInvokerLookupTest {
         }
     }
 
+    /** Declares the method its bean subclass inherits, which the bean has as a {@code HolderService<String>}. */
+    public abstract static class HolderService<T> {
+        public String describe() {
+            return "described by " + getClass().getSimpleName();
+        }
+    }
+
+    @Dependent
+    public static class TextHolderService extends HolderService<String> {
+    }
+
+    /** A bean whose class declares a producer of that class. */
+    @Dependent
+    public static class SelfProducer {
+        String origin = "class bean";
+
+        public String origin() {
+            return origin;
+        }
+
+        @Produces
+        @Fast
+        SelfProducer copy() {
+            var copy = new SelfProducer();
+            copy.origin = "produced";
+            return copy;
+        }
+    }
+
+    /** Not a bean: no bean defining annotation, and no deployment adds it. */
+    public static class NoBean {
+        public String work() {
+            return "no bean";
+        }
+    }
+
     /** A {@code @Singleton}, created by the first lookup that asks for it, with a {@code @Dependent} it keeps. */
     @Singleton
     public static class PartKeeper {
@@ -498,11 +534,10 @@ class VaubanInvokerLookupTest {
 
     /**
      * An instance lookup obtains a contextual reference for the target bean (CDI 4.1, "Configuring lookups"), which
-     * may have a qualifier and no {@code @Default}: the bean of {@code @Fast FastWorker}. The lookup requires
-     * {@code @Default} (BUG-20261117-38, fixed on the parked branch {@code fix/invoker-instance-lookup}).
+     * may have a qualifier and no {@code @Default}: the bean of {@code @Fast FastWorker}. The lookup required
+     * {@code @Default} (BUG-20261117-38).
      */
     @Test
-    @Disabled("BUG-20261117-38")
     @DisplayName("an instance lookup finds a target bean that has a qualifier and no @Default")
     void anInstanceLookupFindsATargetBeanThatHasAQualifier() throws Exception {
         try (var _ = VaubanContainer.builder().addBeanClass(FastWorker.class).build()) {
@@ -531,10 +566,9 @@ class VaubanInvokerLookupTest {
 
     /**
      * An instance lookup finds the target bean when {@code @Typed} leaves its class out of its bean types. The lookup
-     * requires the class as a bean type (BUG-20261117-38).
+     * required the class as a bean type (BUG-20261117-38).
      */
     @Test
-    @Disabled("BUG-20261117-38")
     @DisplayName("an instance lookup finds a target bean whose class @Typed leaves out")
     void anInstanceLookupFindsATargetBeanWhoseClassTypedLeavesOut() throws Exception {
         try (var _ = VaubanContainer.builder().addBeanClass(TypedDescriber.class).build()) {
@@ -542,6 +576,47 @@ class VaubanInvokerLookupTest {
                     Set.of());
 
             assertEquals("typed", describe.invoke(null, new Object[0]));
+        }
+    }
+
+    /**
+     * An instance lookup finds the managed bean of the target class, not a producer that class declares: the target
+     * bean is the bean the invoker was built for (BUG-20261117-38).
+     */
+    @Test
+    @DisplayName("an instance lookup finds the managed bean, not a producer its class declares")
+    void anInstanceLookupFindsTheManagedBeanNotAProducer() throws Exception {
+        try (var _ = VaubanContainer.builder().addBeanClass(SelfProducer.class).build()) {
+            var origin = new VaubanInvoker(SelfProducer.class.getMethod("origin"), SelfProducer.class, true, Set.of());
+
+            assertEquals("class bean", origin.invoke(null, new Object[0]));
+        }
+    }
+
+    /**
+     * An instance lookup of a method a generic superclass declares obtains a reference for the bean type that
+     * declares it, as the bean has it, {@code HolderService<String>} (BUG-20261117-38).
+     */
+    @Test
+    @DisplayName("an instance lookup of a method a generic superclass declares finds the target bean")
+    void anInstanceLookupOfAMethodAGenericSuperclassDeclaresFindsTheTargetBean() throws Exception {
+        try (var _ = VaubanContainer.builder().addBeanClass(TextHolderService.class).build()) {
+            var describe = new VaubanInvoker(HolderService.class.getMethod("describe"), TextHolderService.class, true,
+                    Set.of());
+
+            assertEquals("described by TextHolderService", describe.invoke(null, new Object[0]));
+        }
+    }
+
+    /** An instance lookup of a class that is no bean throws the {@code UnsatisfiedResolutionException} of a lookup. */
+    @Test
+    @DisplayName("an instance lookup of a class that is no bean is unsatisfied")
+    void anInstanceLookupOfAClassThatIsNoBeanIsUnsatisfied() throws Exception {
+        try (var _ = VaubanContainer.builder().addBeanClass(Part.class).build()) {
+            var work = new VaubanInvoker(NoBean.class.getMethod("work"), NoBean.class, true, Set.of());
+            var arguments = new Object[0];
+
+            assertThrows(UnsatisfiedResolutionException.class, () -> work.invoke(null, arguments));
         }
     }
 
