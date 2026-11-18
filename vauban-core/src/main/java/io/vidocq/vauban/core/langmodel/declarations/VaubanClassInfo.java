@@ -31,6 +31,7 @@ import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
 
 import java.lang.annotation.Annotation;
+import java.lang.classfile.ClassFile;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -232,10 +233,24 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
         return indexClass().accessFlags();
     }
 
+    /**
+     * Whether the language model shows a member whose class file flags are {@code accessFlags}: not one the compiler
+     * emits that the source declares neither explicitly nor implicitly (JLS 13.1), a bridge method, the body of a
+     * lambda, an enum's {@code $values()}, an outer instance's {@code this$0}. The compiler's model has none of them,
+     * and neither has the processor (BUG-20261117-43). The index keeps them, for the generators that read it.
+     */
+    private static boolean shown(int accessFlags) {
+        return (accessFlags & (ClassFile.ACC_SYNTHETIC | ClassFile.ACC_BRIDGE)) == 0;
+    }
+
+    private static boolean isShownMethod(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        return !method.isConstructor() && !method.isStaticInitializer() && shown(method.accessFlags());
+    }
+
     @Override
     public Collection<jakarta.enterprise.lang.model.declarations.MethodInfo> constructors() {
         return indexClass().methods().stream()
-                .filter(io.vidocq.vauban.indexer.model.MethodInfo::isConstructor)
+                .filter(m -> m.isConstructor() && shown(m.accessFlags()))
                 .map(m -> (jakarta.enterprise.lang.model.declarations.MethodInfo) new VaubanMethodInfo(m, this, lookup))
                 .toList();
     }
@@ -245,7 +260,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
         var result = new java.util.ArrayList<jakarta.enterprise.lang.model.declarations.MethodInfo>();
         // Methods declared directly on this class
         for (var m : indexClass().methods()) {
-            if (!m.isConstructor() && !m.isStaticInitializer()) {
+            if (isShownMethod(m)) {
                 result.add(new VaubanMethodInfo(m, this, lookup));
             }
         }
@@ -257,7 +272,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
                 var ifaceClass = ifaceClassOpt.get();
                 var ifaceInfo = new VaubanClassInfo(ifaceClass, lookup);
                 for (var m : ifaceClass.methods()) {
-                    if (!m.isConstructor() && !m.isStaticInitializer()) {
+                    if (isShownMethod(m)) {
                         result.add(new VaubanMethodInfo(m, ifaceInfo, lookup));
                     }
                 }
@@ -269,6 +284,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
     @Override
     public Collection<jakarta.enterprise.lang.model.declarations.FieldInfo> fields() {
         return indexClass().fields().stream()
+                .filter(f -> shown(f.accessFlags()))
                 .map(f -> (jakarta.enterprise.lang.model.declarations.FieldInfo) new VaubanFieldInfo(f, this, lookup))
                 .toList();
     }

@@ -1689,7 +1689,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-43 — At start and frozen, the language model shows the synthetic methods of a class file
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED
 - **Module**: `vauban-indexer` (`scanner.ClassFileScanner`), `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
 - **Symptom**: for a class with a lambda and a bridge method, `ClassInfo.methods()` gives `[get]` in the processor and
   `[get, get, lambda$get$0]` at start and frozen: the bridge `Object get()` the compiler adds for
@@ -1723,9 +1723,16 @@ suspected cause, status. Updated on every investigation.
 - **Cause**: `ClassFileScanner` (~72) records every method of the class file, `ACC_SYNTHETIC` and `ACC_BRIDGE` ones
   included, and `VaubanClassInfo.methods()` shows them all; `ElementScanner` reads the compiler's elements, which have
   none.
-- **Fix idea**: leave the synthetic methods out of what the language model shows, from the index's `accessFlags`,
-  rather than out of the index, whose methods other generators read. The synthetic leading parameters of an enum's
-  constructor are the same family (the probe's group 10).
+- **Cause, proved**: red on 8a2d7033 with the `@Disabled` lifted (`stack-l2d-red.log`, "RED BUG-20261117-43 on
+  8a2d7033"): `[get, get, lambda$get$0]` at start and frozen for `Teller` and `Counter`, `[get]` in the processor.
+- **Fix**: `VaubanClassInfo` leaves out of `methods()`, `fields()` and `constructors()` the members whose class file
+  flags carry `ACC_SYNTHETIC` or `ACC_BRIDGE`: a bridge method, a lambda's body, an enum's `$values()` and `$VALUES`,
+  an inner class's `this$0`. The index keeps them: the generators that read it (client proxies, subclasses, the
+  bridge calls) need them. The processor's index has none, so the three ways agree. The synthetic leading parameters
+  of an enum's constructor were fixed apart (BUG-20261117-58).
+- **Verification**: the repro, green (`stack-l2d-dev43.log`, "BUG-43 fix: processor repro"); core 1733 (12 skipped),
+  processor 434 (16 skipped), maven-plugin 172 (`stack-l2d-dev43.log`, "BUG-43 fix: core, processor, maven-plugin
+  tests").
 - **Found by**: the review of BUG-20261117-31.
 
 ## BUG-20261117-42 — The language model shows no inherited members and no `@Inherited` annotations

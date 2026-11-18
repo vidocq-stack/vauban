@@ -3834,7 +3834,6 @@ class VetoedInterceptorCompileTimeTest {
      * {@code lambda$get$0} (BUG-20261117-43).
      */
     @Test
-    @Disabled("BUG-20261117-43: at start and frozen, the language model shows the synthetic methods of a class file")
     @DisplayName("an extension sees the same methods of a class with a lambda and a bridge, in the processor, at"
             + " start and frozen")
     void anExtensionSeesNoSyntheticMethodInTheProcessorAtStartAndFrozen() throws Exception {
