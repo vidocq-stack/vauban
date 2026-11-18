@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.langmodel.declarations;
 
 import io.vidocq.vauban.core.langmodel.IndexLookup;
+import io.vidocq.vauban.core.langmodel.RepeatableAnnotations;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
 import io.vidocq.vauban.core.langmodel.types.TypeParameterScope;
@@ -298,8 +299,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        var ann = annotation(annotationType);
-        return ann != null ? List.of(ann) : List.of();
+        return RepeatableAnnotations.of(annotations(), annotationType);
     }
 
     @Override

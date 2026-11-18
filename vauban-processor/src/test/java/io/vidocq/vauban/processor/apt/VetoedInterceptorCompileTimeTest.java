@@ -22,6 +22,8 @@ package io.vidocq.vauban.processor.apt;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import io.vidocq.vauban.processor.VaubanProcessor;
 import io.vidocq.vauban.processor.apt.binding.Traced;
+import io.vidocq.vauban.processor.apt.repeatable.Mark;
+import io.vidocq.vauban.processor.apt.repeatable.Tag;
 import io.vidocq.vauban.processor.apt.scanned.ScannedBean;
 import io.vidocq.vauban.processor.apt.vetoed.ScannedQuietBean;
 import jakarta.enterprise.context.Dependent;
@@ -62,6 +64,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -3668,6 +3671,91 @@ class VetoedInterceptorCompileTimeTest {
 
         var seen = seenThreeWays(withAnnotationDefaults(), AnnotationMemberRecorder.class,
                 AnnotationMemberRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /** The class whose repeated annotations {@link RepeatableRecorder} reads (BUG-20261117-56). */
+    private static final String TAGGED = TYPES + "Tagged";
+
+    /**
+     * Records, in {@code @Synthesis}, the values of the {@link Tag} each declaration of {@link #TAGGED} shows through
+     * {@code repeatableAnnotation}, and of the {@link Mark} its field {@code marks} shows on its type argument
+     * (BUG-20261117-56).
+     */
+    public static class RepeatableRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(TAGGED);
+        }
+
+        @Synthesis
+        public void repeated(Types types) {
+            var tagged = types.ofClass(TAGGED).declaration();
+            SEEN.add("class " + tags(tagged.repeatableAnnotation(Tag.class)));
+            for (var method : tagged.methods()) {
+                SEEN.add("method " + method.name() + " " + tags(method.repeatableAnnotation(Tag.class)));
+                method.parameters().forEach(parameter -> SEEN.add("parameter of " + method.name() + " "
+                        + tags(parameter.repeatableAnnotation(Tag.class))));
+            }
+            for (var field : tagged.fields()) {
+                SEEN.add("field " + field.name() + " " + tags(field.repeatableAnnotation(Tag.class)));
+            }
+            var marked = tagged.fields().stream().filter(field -> field.name().equals("marks")).findFirst()
+                    .orElseThrow().type().asParameterizedType().typeArguments().getFirst();
+            SEEN.add("type argument " + tags(marked.repeatableAnnotation(Mark.class)));
+        }
+    }
+
+    /** The {@code value} of each annotation, sorted. */
+    private static List<String> tags(Collection<AnnotationInfo> annotations) {
+        return annotations.stream().map(annotation -> annotation.value().asString()).sorted().toList();
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, with {@code vi.types.Tagged}, which repeats {@link Tag} on itself, a method, a
+     * parameter and a field, writes it once on a method and both repeated and in its container on another, and
+     * repeats {@link Mark} on a type argument.
+     */
+    private static Map<String, String> withRepeatedAnnotations() {
+        var sources = withAVetoedPackage();
+        putType(sources, "Tagged", """
+                import %1$s;
+                import %2$s;
+                @Tag("a") @Tag("b")
+                public class Tagged {
+                    @Tag("f") @Tag("g")
+                    public String field;
+                    public java.util.List<@Mark("1") @Mark("2") String> marks;
+                    @Tag("m") @Tag("n")
+                    public void run(@Tag("p") @Tag("q") String value) {
+                    }
+                    @Tag("single")
+                    public void single() {
+                    }
+                    @Tag("x") @Tag.List({@Tag("y"), @Tag("z")})
+                    public void mixed() {
+                    }
+                }""".formatted(Tag.class.getName(), Mark.class.getName()));
+        return sources;
+    }
+
+    /**
+     * {@code repeatableAnnotation} gives the annotations of the type written on the declaration, those its container
+     * holds when it is repeated, and both when both are written, as {@code getAnnotationsByType} does, on a class, a
+     * method, a parameter, a field and a type use, in the processor, at start and frozen. It gave the annotation when
+     * written once, and nothing when repeated (BUG-20261117-56).
+     */
+    @Test
+    @DisplayName("an extension sees the repeated annotations in their container in the processor, at start and frozen")
+    void anExtensionSeesTheRepeatedAnnotationsInTheProcessorAtStartAndFrozen() throws Exception {
+        var expected = sorted(List.of("class [a, b]", "field field [f, g]", "field marks []", "method mixed [x, y, z]",
+                "method run [m, n]", "method single [single]", "parameter of run [p, q]", "type argument [1, 2]"));
+
+        var seen = seenThreeWays(withRepeatedAnnotations(), RepeatableRecorder.class, RepeatableRecorder.SEEN);
 
         seen.assertEachIs(expected);
     }

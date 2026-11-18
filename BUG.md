@@ -819,6 +819,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-56 — `repeatableAnnotation` does not unwrap the container
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`repeatableAnnotation` of `langmodel.declarations.VaubanClassInfo`, `VaubanMethodInfo`,
+  `VaubanParameterInfo`, `VaubanFieldInfo`, `langmodel.types.AnnotatedTypeUse`, `extensions.ReflectionMethodInfo`)
+- **Symptom**: `AnnotationTarget.repeatableAnnotation(Tag.class)` gave the annotation when it is written once, and
+  nothing when it is repeated, `@Tag("a") @Tag("b")`: the compiler wraps the repeated ones in their container, which
+  the method did not look into. With `@Tag("x") @Tag.List({@Tag("y"), @Tag("z")})` it gave `x` alone. In the
+  processor, at start and frozen; on a type use the processor gave the first of the repeated ones (see
+  BUG-20261118-26). The official language model TCK fails 8 checks on it (vauban#336, group 9,
+  `RepeatableAnnotations` lines 203-209 and 267-274).
+- **Spec**: the Javadoc of `AnnotationTarget.repeatableAnnotation` (lang-model 4.1.0): annotations in the `value`
+  member of a container annotation are considered present on the target that carries the container.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheRepeatedAnnotationsInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, red on fffe7852 the three ways (`stack-l1b-bug56.log`, "RED on fffe7852": `class []`,
+  `method mixed [x]`); `RepeatableAnnotationsTest` in `vauban-core`.
+- **Cause**: each implementation returned `annotation(annotationType)` as a one-element list.
+- **Fix**: `langmodel.RepeatableAnnotations` gives, from the annotations the target shows, those of the type and
+  those each of its containers holds, as `getAnnotationsByType` does. A container is the annotation type the
+  repeatable type names in its `@Repeatable`, and a type that is not repeatable has none; when nothing describes the
+  repeatable type, an annotation whose `value` is an array of it is taken as its container. Nothing of the index
+  changes.
+- **Verification**: `stack-l1b-bug56.log`, "GREEN on fffe7852 + BUG-56 fix", "GREEN: BUG-56 core unit test" and
+  "BUG-56 module tests: core, processor, maven-plugin".
+
 ## BUG-20261117-55 — An annotation of the language model lacks its default values
 
 - **Date**: 2026-11-18

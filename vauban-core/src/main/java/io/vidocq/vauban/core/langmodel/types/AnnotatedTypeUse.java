@@ -19,12 +19,12 @@
  */
 package io.vidocq.vauban.core.langmodel.types;
 
+import io.vidocq.vauban.core.langmodel.RepeatableAnnotations;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
 import java.lang.annotation.Annotation;
 import java.util.Collection;
-import java.util.List;
 import java.util.function.Predicate;
 
 /**
@@ -55,8 +55,7 @@ interface AnnotatedTypeUse extends Type {
 
     @Override
     default <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        var found = annotation(annotationType);
-        return found == null ? List.of() : List.of(found);
+        return RepeatableAnnotations.of(annotations(), annotationType);
     }
 
     @Override

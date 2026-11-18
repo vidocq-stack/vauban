@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.annotation.AnnotationValues;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
+import io.vidocq.vauban.core.langmodel.RepeatableAnnotations;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
@@ -142,8 +143,7 @@ final class ReflectionMethodInfo implements jakarta.enterprise.lang.model.declar
 
     @Override
     public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        var annotation = annotation(annotationType);
-        return annotation != null ? List.of(annotation) : List.of();
+        return RepeatableAnnotations.of(annotations(), annotationType);
     }
 
     @Override
