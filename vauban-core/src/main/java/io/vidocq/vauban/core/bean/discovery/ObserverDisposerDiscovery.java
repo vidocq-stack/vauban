@@ -98,7 +98,7 @@ final class ObserverDisposerDiscovery {
      * gives the one above it are carried down the walk, as {@code ObserverInjectionPoints} does: the event type is the
      * declared type, those substituted (CDI 4.1, 4.2), and a method the class or a nearer superclass overrides, by
      * name and erased parameter types after substitution, counts once. The start compares javac's bridges, which the
-     * compiler's elements do not have.
+     * compiler's elements do not have. A static method is not inherited (BUG-20261118-51).
      */
     private void discoverIndexedInheritedObservers(ClassInfo classInfo, List<ObserverDescriptor> result) {
         var seen = new java.util.HashSet<String>();
@@ -111,8 +111,8 @@ final class ObserverDisposerDiscovery {
             own = false;
             for (var method : current.methods()) {
                 int observed = method.isConstructor() ? -1 : observedParameterIndex(method);
-                if (!java.lang.reflect.Modifier.isPrivate(method.accessFlags()) && seen.add(signature(method, given))
-                        && observed >= 0) {
+                if (!java.lang.reflect.Modifier.isPrivate(method.accessFlags()) && !method.isStatic()
+                        && seen.add(signature(method, given)) && observed >= 0) {
                     result.add(indexedObserver(classInfo, method, observed, ObserverInjectionPoints.given(
                             method.parameters().get(observed).type(), given)));
                 }
@@ -203,7 +203,10 @@ final class ObserverDisposerDiscovery {
         var current = clazz.getSuperclass();
         while (current != null && current != Object.class) {
             for (var m : current.getDeclaredMethods()) {
-                if (java.lang.reflect.Modifier.isPrivate(m.getModifiers())) continue;
+                // CDI 4.1, section 4.2, lets a bean inherit the non-static observer methods of its superclasses
+                // only, so a static one is left out here (BUG-20261118-51).
+                if (java.lang.reflect.Modifier.isPrivate(m.getModifiers())
+                        || java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
                 var sig = m.getName() + ":" + java.util.Arrays.toString(m.getParameterTypes());
                 if (seen.add(sig)) {
                     result.add(m);

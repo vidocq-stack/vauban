@@ -57,10 +57,10 @@ final class ObserverInjectionPoints {
 
     /**
      * The injection points of {@code beanClass}'s static observers and of the observers it inherits, found as the start
-     * finds them ({@code ObserverDisposerDiscovery.getAllInheritedMethods}): a private superclass method is not
-     * inherited, and a method a class below declares with the same name and erased parameters, the type arguments
-     * substituted, overrides it, an observer or not. A parameter the bean class leaves a type variable is a definition
-     * error the definition rules report.
+     * finds them ({@code ObserverDisposerDiscovery.getAllInheritedMethods}): a private or static superclass method is
+     * not inherited (BUG-20261118-51), and a method a class below declares with the same name and erased parameters,
+     * the type arguments substituted, overrides it, an observer or not. A parameter the bean class leaves a type
+     * variable is a definition error the definition rules report.
      */
     List<InjectionPointInfo> of(ClassInfo beanClass) {
         var points = new ArrayList<InjectionPointInfo>();
@@ -92,7 +92,8 @@ final class ObserverInjectionPoints {
     private void addInherited(ClassInfo beanClass, ClassInfo superClass, Map<String, TypeInfo> given,
             Set<String> signatures, List<InjectionPointInfo> points) {
         for (var method : superClass.methods()) {
-            if (!method.isPrivate() && !method.isConstructor() && signatures.add(signature(method, given))
+            if (!method.isPrivate() && !method.isStatic() && !method.isConstructor()
+                    && signatures.add(signature(method, given))
                     && isObserver(method)) {
                 addParameters(beanClass, method, given, points);
             }

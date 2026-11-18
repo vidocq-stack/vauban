@@ -2850,6 +2850,52 @@ class VetoedInterceptorCompileTimeTest {
                 "vi.Sub, method of vi.Base, event vi.Pong"));
     }
 
+    /** Records the name of the observer method of each observer of {@code vi.Junior}. */
+    public static class StaticObserverRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Byte.class)
+        public void observers(ObserverInfo observer) {
+            if (observer.declaringClass().name().equals("vi.Junior")) {
+                var method = observer.observerMethod();
+                SEEN.add("vi.Junior " + (method == null ? "without a method" : method.name()));
+            }
+        }
+    }
+
+    /**
+     * A bean inherits the non-static observer methods of its superclass only (CDI 4.1, 4.2: "non-static observer
+     * methods are inherited by beans from their superclasses"). Both walks, by reflection at start and on the index in
+     * the processor, gave a bean the static observer methods of its superclass too (BUG-20261118-51).
+     */
+    @Test
+    @DisplayName("a bean does not inherit a static observer method, everywhere")
+    void aBeanDoesNotInheritAStaticObserverMethodFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Elder.java", """
+                package vi;
+                public class Elder {
+                    static void heard(@jakarta.enterprise.event.Observes Byte value) {
+                        // static: not inherited
+                    }
+                    void kept(@jakarta.enterprise.event.Observes Byte value) {
+                        // inherited
+                    }
+                }
+                """);
+        sources.put("vi/Junior.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Junior extends Elder {
+                }
+                """);
+
+        var seen = seenThreeWays(sources, StaticObserverRecorder.class, StaticObserverRecorder.SEEN);
+
+        seen.assertEachIs(List.of("vi.Junior kept"));
+    }
+
     /** Records the bean types, the qualifiers and the injection points of the interceptor {@code vi.Logger}. */
     public static class InterceptorDescriber implements BuildCompatibleExtension {
 

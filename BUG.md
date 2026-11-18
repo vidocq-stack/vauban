@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-51 — A bean inherits the static observer methods of its superclass
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, lane L4)
+- **Module**: `vauban-core` (`ObserverDisposerDiscovery`, `ObserverInjectionPoints`)
+- **Symptom**: `vi.Junior extends vi.Elder`, a `@Dependent` bean; `Elder` declares `static void heard(@Observes Byte)`
+  and `void kept(@Observes Byte)`. `Junior` gets both as observers, in the processor, at start and frozen. When the
+  superclass is a bean too, its static observer is registered once for it and once more for each bean below it, and
+  an event reaches it as many times.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aBeanDoesNotInheritAStaticObserverMethodFromTheProcessorAtStartAndFrozen`.
+- **Spec**: CDI 4.1, "Inheritance of member-level metadata" (`inheritance.asciidoc`): "injected fields, initializer
+  methods, lifecycle callback methods and non-static observer methods are inherited by beans from their
+  superclasses", and "If X declares an initializer, non-static observer, `@PostConstruct` or `@PreDestroy` method
+  `x()` then Y inherits `x()` if and only if ...".
+- **Cause** (proved): the reflective walk at start (`getAllInheritedMethods`) and the index walk of the processor
+  (`discoverIndexedInheritedObservers`, BUG-20261118-44) left out a private superclass method only.
+  `ObserverInjectionPoints.addInherited`, which follows the reflective walk, did the same for the injection points of
+  inherited observers.
+- **Fix**: the three leave out a static superclass method too. This departs from Weld 5.1.7
+  (`EnhancedAnnotatedTypeImpl`), which registers an inherited static observer on every subclass bean, the superclass
+  a bean or not; Vauban follows CDI 4.1, sections 4.2 and 10.4. The migration page says so.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-51-red.log` (`vi.Junior heard, vi.Junior kept` in the three places). Green,
+  `stack-l4-51-dev.log`, "Green run 1".
+- **Found by**: the L4 review, round 5.
+
 ## BUG-20261118-45 — The phases after `@Enhancement` still see the annotations it removed
 
 - **Date**: 2026-11-18
