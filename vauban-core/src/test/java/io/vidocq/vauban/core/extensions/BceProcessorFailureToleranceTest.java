@@ -27,7 +27,9 @@ import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
+import jakarta.enterprise.inject.build.compatible.spi.Messages;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
+import jakarta.enterprise.inject.build.compatible.spi.Types;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
 import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
@@ -67,6 +69,25 @@ class BceProcessorFailureToleranceTest {
         public void discover(ScannedClasses scanned) {
             scanned.add("com.acme.NeverAdded");
             throw new IllegalStateException("discovery failed");
+        }
+    }
+
+    /** Declares a {@code @Discovery} parameter of a type the phase does not support, and records each call. */
+    public static class UnsupportedDiscoveryParameter implements BuildCompatibleExtension {
+
+        static final List<String> CALLED = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discover(Types types) {
+            CALLED.add("discover with " + types);
+        }
+    }
+
+    /** Reports an error through the {@code Messages} of {@code @Discovery}. */
+    public static class ReportingDiscovery implements BuildCompatibleExtension {
+        @Discovery
+        public void discover(Messages messages) {
+            messages.error("nothing to discover");
         }
     }
 
@@ -110,6 +131,27 @@ class BceProcessorFailureToleranceTest {
                 () -> assertEquals(List.of("@Discovery of " + FailingDiscovery.class.getName()
                         + " failed: java.lang.IllegalStateException: discovery failed"), discovery.definitionErrors()),
                 () -> assertEquals("discovery failed", discovery.definitionErrorCauses().getFirst().getMessage()));
+    }
+
+    @Test
+    void aDiscoveryParameterOfAnUnsupportedTypeIsReportedBeforeTheCall() {
+        UnsupportedDiscoveryParameter.CALLED.clear();
+
+        var discovery = BceProcessor.processDiscovery(List.of(UnsupportedDiscoveryParameter.class), lookupWithTarget());
+
+        var invalid = "@Discovery method " + UnsupportedDiscoveryParameter.class.getName()
+                + ".discover has invalid parameter type: " + Types.class.getName();
+        List<String> called = UnsupportedDiscoveryParameter.CALLED;
+        assertAll(() -> assertEquals(List.of(invalid), discovery.definitionErrors()),
+                () -> assertEquals(List.of(), called, "the method is not called"));
+    }
+
+    @Test
+    void aDiscoveryMethodGetsMessagesAndItsErrorsAreDeploymentProblems() {
+        var discovery = BceProcessor.processDiscovery(List.of(ReportingDiscovery.class), lookupWithTarget());
+
+        assertAll(() -> assertEquals(List.of("nothing to discover"), discovery.deploymentErrors()),
+                () -> assertEquals(List.of(), discovery.definitionErrors()));
     }
 
     @Test

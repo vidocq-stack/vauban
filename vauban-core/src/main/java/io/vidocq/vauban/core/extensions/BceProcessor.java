@@ -56,6 +56,8 @@ public final class BceProcessor {
      * @param index          the current VaubanIndex
      * @param classLoader    ClassLoader for type resolution
      * @return enhancement modifications keyed by class DotName
+     * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method has a parameter
+     *         of an unsupported type, reported before any call (BUG-20261118-22)
      * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension threw, at start as under
      *         {@code vauban:generate} (BUG-20261118-05)
      */
@@ -69,6 +71,7 @@ public final class BceProcessor {
         var errors = new ArrayList<String>();
         var errorCauses = new ArrayList<Throwable>();
         var archiveTypes = typesOf(archiveClasses);
+        failOnInvalidEnhancementMethods(bceClasses);
 
         for (var bceClass : bceClasses) {
             try {
@@ -98,6 +101,8 @@ public final class BceProcessor {
      * @param replayPairs ordered list of (bceClass, targetClass) pairs
      * @param index       current VaubanIndex (must contain {@code targetClass})
      * @return enhancement modifications keyed by target DotName
+     * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method has a parameter
+     *         of an unsupported type, reported before any call (BUG-20261118-22)
      * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension threw (BUG-20261118-05)
      */
     public static Map<DotName, List<VaubanClassConfig>> replayEnhancementForTargets(
@@ -106,6 +111,7 @@ public final class BceProcessor {
         var lookup = new IndexLookup(index);
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
         var sink = new EnhancementSink(new ArrayList<>(), new ArrayList<>(), modifications);
+        failOnInvalidEnhancementMethods(replayPairs.stream().<Class<?>>map(Map.Entry::getKey).distinct().toList());
 
         for (var pair : replayPairs) {
             var bceClass = pair.getKey();
@@ -127,6 +133,18 @@ public final class BceProcessor {
 
         DeploymentFailures.failOnDeploymentErrors(sink.errors(), sink.errorCauses());
         return modifications;
+    }
+
+    /**
+     * Throws the {@code DefinitionException} of the {@code @Enhancement} methods of {@code bceClasses} whose parameters
+     * the phase does not support, before any of them is called, as the full cycle does (BUG-20261118-22).
+     */
+    private static void failOnInvalidEnhancementMethods(List<Class<?>> bceClasses) {
+        var definitionErrors = new ArrayList<String>();
+        for (var bceClass : bceClasses) {
+            ExtensionMethodValidator.validateEnhancementMethods(bceClass, definitionErrors);
+        }
+        DeploymentFailures.failOnDefinitionErrors(definitionErrors);
     }
 
     /**
@@ -161,13 +179,16 @@ public final class BceProcessor {
      * What {@code @Discovery} did. {@code definitionErrors} and their causes are the exceptions its methods threw: a
      * definition error, as CDI 4.1 treats an exception of a {@code BeforeBeanDiscovery} or an
      * {@code AfterTypeDiscovery} observer, the portable events of the same phase (BUG-20261118-04).
+     * {@code deploymentErrors} are those its methods reported through {@code Messages}: a deployment problem, as the
+     * Javadoc of {@code Messages} says (BUG-20261118-22).
      */
     public record DiscoveryResult(
             VaubanMetaAnnotations metaAnnotations,
             VaubanScannedClasses scannedClasses,
             Map<Class<?>, Object> bceInstances,
             List<String> definitionErrors,
-            List<Throwable> definitionErrorCauses
+            List<Throwable> definitionErrorCauses,
+            List<String> deploymentErrors
     ) {}
 
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
@@ -177,6 +198,7 @@ public final class BceProcessor {
         var bceInstances = new LinkedHashMap<Class<?>, Object>();
         var definitionErrors = new ArrayList<String>();
         var definitionErrorCauses = new ArrayList<Throwable>();
+        var deploymentErrors = new ArrayList<String>();
 
         for (var bceClass : bceClasses) {
             try {
@@ -184,20 +206,10 @@ public final class BceProcessor {
                     var bce = instantiateBce(bceClass);
                     bceInstances.put(bceClass, bce);
                     for (var method : getDeclaredMethodsSafe(bceClass)) {
-                        if (method.getAnnotation(Discovery.class) == null) continue;
-                        makeAccessibleSafe(method);
-
-                        var params = method.getParameters();
-                        var args = new Object[params.length];
-                        for (int i = 0; i < params.length; i++) {
-                            var paramType = params[i].getType();
-                            if (MetaAnnotations.class.isAssignableFrom(paramType)) {
-                                args[i] = metaAnnotations;
-                            } else if (ScannedClasses.class.isAssignableFrom(paramType)) {
-                                args[i] = scannedClasses;
-                            }
+                        if (method.getAnnotation(Discovery.class) != null
+                                && ExtensionMethodValidator.validDiscoveryMethod(bceClass, method, definitionErrors)) {
+                            invokeDiscovery(method, bce, metaAnnotations, scannedClasses, deploymentErrors);
                         }
-                        method.invoke(bce, args);
                     }
                 });
             } catch (Exception e) {
@@ -208,7 +220,32 @@ public final class BceProcessor {
         }
 
         return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances, definitionErrors,
-                definitionErrorCauses);
+                definitionErrorCauses, deploymentErrors);
+    }
+
+    /**
+     * Calls the {@code @Discovery} {@code method}, whose parameter types {@link ExtensionMethodValidator} checked, with
+     * the phase's arguments; the errors it reports through {@code Messages} join {@code errors}, the deployment
+     * problems of the phase.
+     */
+    private static void invokeDiscovery(Method method, Object bce, MetaAnnotations metaAnnotations,
+                                        ScannedClasses scannedClasses, List<String> errors)
+            throws ReflectiveOperationException {
+        makeAccessibleSafe(method);
+        var messages = new VaubanMessages();
+        var params = method.getParameterTypes();
+        var args = new Object[params.length];
+        for (int i = 0; i < params.length; i++) {
+            if (MetaAnnotations.class.isAssignableFrom(params[i])) {
+                args[i] = metaAnnotations;
+            } else if (ScannedClasses.class.isAssignableFrom(params[i])) {
+                args[i] = scannedClasses;
+            } else {
+                args[i] = messages;
+            }
+        }
+        method.invoke(bce, args);
+        errors.addAll(messages.getErrors());
     }
 
     /**

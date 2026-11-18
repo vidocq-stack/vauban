@@ -953,6 +953,7 @@ public final class VaubanContainerBuilder {
         if (discoveryResult != null) {
             failOn(discoveryResult.definitionErrors(), discoveryResult.definitionErrorCauses(), DEFINITION_FAILED,
                     jakarta.enterprise.inject.spi.DefinitionException::new);
+            failOnDeploymentErrors(discoveryResult.deploymentErrors(), List.of());
         }
         // What @Discovery registered: by the extensions that just ran, by those the build froze, or both.
         var extensionDiscovery = registeredAtDiscovery(discoveryResult, frozen, discoveryClassLoader);

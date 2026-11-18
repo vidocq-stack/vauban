@@ -37,9 +37,14 @@ import jakarta.enterprise.inject.build.compatible.spi.FieldConfig;
 import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
 import jakarta.enterprise.inject.build.compatible.spi.Messages;
+import jakarta.enterprise.inject.build.compatible.spi.MetaAnnotations;
 import jakarta.enterprise.inject.build.compatible.spi.MethodConfig;
 import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
+import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
+import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
+import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
+import jakarta.enterprise.inject.build.compatible.spi.Validation;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -49,8 +54,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Validation of BCE method signatures ({@code @Enhancement} / {@code @Registration}
- * parameter shapes → DefinitionException) and of registered invoker argument lookups
+ * Validation of BCE method signatures (the parameter types of each of the five phases
+ * → DefinitionException) and of registered invoker argument lookups
  * (unsatisfied / ambiguous → DeploymentException). Extracted from {@link BceProcessor}
  * (which stays the facade).
  */
@@ -76,6 +81,19 @@ final class ExtensionMethodValidator {
             Messages.class, InvokerFactory.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
     );
 
+    /** The parameter types of a {@code @Discovery} method (the Javadoc of {@code Discovery}). */
+    private static final Set<Class<?>> DISCOVERY_TYPES = Set.of(
+            ScannedClasses.class, MetaAnnotations.class, Messages.class
+    );
+    /** The parameter types of a {@code @Synthesis} method (the Javadoc of {@code Synthesis}). */
+    private static final Set<Class<?>> SYNTHESIS_TYPES = Set.of(
+            SyntheticComponents.class, Messages.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
+    );
+    /** The parameter types of a {@code @Validation} method (the Javadoc of {@code Validation}). */
+    private static final Set<Class<?>> VALIDATION_TYPES = Set.of(
+            Messages.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
+    );
+
     private static final Set<Class<?>> SPECIAL_LOOKUP_TYPES = Set.of(
             jakarta.enterprise.inject.Instance.class,
             jakarta.enterprise.event.Event.class,
@@ -83,53 +101,93 @@ final class ExtensionMethodValidator {
     );
 
     /**
-     * Validate BCE method signatures. Invalid signatures → DefinitionException.
+     * Validate BCE method signatures. Invalid signatures → DefinitionException. A parameter type matches exactly one
+     * the Javadoc of the phase lists: an extension's own subtype of one is not one (BUG-20261118-22).
      */
     static void validateExtensionMethods(Class<?> bceClass, List<String> errors) {
         for (var method : BceProcessor.getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Enhancement.class) != null) {
-                validateEnhancementMethod(method, errors);
+                validateEnhancementMethod(bceClass, method, errors);
             }
             if (method.getAnnotation(Registration.class) != null) {
-                validateRegistrationMethod(method, errors);
+                validateCountedMethod(bceClass, method, "@Registration", REGISTRATION_PRIMARY_TYPES,
+                        REGISTRATION_OPTIONAL_TYPES, "BeanInfo/InterceptorInfo/ObserverInfo", errors);
+            }
+            if (method.getAnnotation(Synthesis.class) != null) {
+                validParameters(bceClass, method, "@Synthesis", SYNTHESIS_TYPES, errors);
+            }
+            if (method.getAnnotation(Validation.class) != null) {
+                validParameters(bceClass, method, "@Validation", VALIDATION_TYPES, errors);
             }
         }
     }
 
-    private static void validateEnhancementMethod(Method method, List<String> errors) {
-        var params = method.getParameterTypes();
-        // Must have exactly 1 config/declaration parameter
-        int configCount = 0;
-        for (var p : params) {
-            if (ENHANCEMENT_CONFIG_TYPES.stream().anyMatch(t -> t.isAssignableFrom(p))) {
-                configCount++;
-            } else if (ENHANCEMENT_OPTIONAL_TYPES.stream().noneMatch(t -> t.isAssignableFrom(p))) {
-                errors.add("@Enhancement method " + method.getName() + " has invalid parameter type: " + p.getName());
-                return;
+    /**
+     * Checks the {@code @Enhancement} methods of {@code bceClass}; each one with a parameter the phase does not
+     * support joins {@code errors}. For the paths that run {@code @Enhancement} alone, the enhancement of an archive
+     * the processor did not see and the replay for a pre-processed jar, which check as the full cycle does.
+     */
+    static void validateEnhancementMethods(Class<?> bceClass, List<String> errors) {
+        for (var method : BceProcessor.getDeclaredMethodsSafe(bceClass)) {
+            if (method.getAnnotation(Enhancement.class) != null) {
+                validateEnhancementMethod(bceClass, method, errors);
             }
-        }
-        if (configCount != 1) {
-            errors.add("@Enhancement method " + method.getName()
-                    + " must have exactly one ClassConfig/MethodConfig/FieldConfig parameter, found " + configCount);
         }
     }
 
-    private static void validateRegistrationMethod(Method method, List<String> errors) {
-        var params = method.getParameterTypes();
-        // Must have exactly 1 BeanInfo or InterceptorInfo parameter
+    private static void validateEnhancementMethod(Class<?> bceClass, Method method, List<String> errors) {
+        validateCountedMethod(bceClass, method, "@Enhancement", ENHANCEMENT_CONFIG_TYPES, ENHANCEMENT_OPTIONAL_TYPES,
+                "ClassConfig/ClassInfo, MethodConfig/MethodInfo or FieldConfig/FieldInfo", errors);
+    }
+
+    /**
+     * Whether every parameter of the {@code @Discovery} {@code method} of {@code bceClass} has a type the phase
+     * supports; the first one that does not joins {@code errors}, so that the method is not called with {@code null}
+     * (BUG-20261118-22). A definition error, as in the other phases.
+     */
+    static boolean validDiscoveryMethod(Class<?> bceClass, Method method, List<String> errors) {
+        return validParameters(bceClass, method, "@Discovery", DISCOVERY_TYPES, errors);
+    }
+
+    /**
+     * Whether every parameter type of {@code method} is one of {@code supported}; the first one that is not joins
+     * {@code errors}, naming the phase, the extension, the method and the type.
+     */
+    private static boolean validParameters(Class<?> bceClass, Method method, String phase, Set<Class<?>> supported,
+                                           List<String> errors) {
+        for (var p : method.getParameterTypes()) {
+            if (!supported.contains(p)) {
+                errors.add(invalidParameter(bceClass, method, phase, p));
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Checks a method that takes exactly one parameter of a {@code primary} type, its target, and any of the
+     * {@code optional} types.
+     */
+    private static void validateCountedMethod(Class<?> bceClass, Method method, String phase, Set<Class<?>> primary,
+                                              Set<Class<?>> optional, String primaryNames, List<String> errors) {
         int primaryCount = 0;
-        for (var p : params) {
-            if (REGISTRATION_PRIMARY_TYPES.stream().anyMatch(t -> t.isAssignableFrom(p))) {
+        for (var p : method.getParameterTypes()) {
+            if (primary.contains(p)) {
                 primaryCount++;
-            } else if (REGISTRATION_OPTIONAL_TYPES.stream().noneMatch(t -> t.isAssignableFrom(p))) {
-                errors.add("@Registration method " + method.getName() + " has invalid parameter type: " + p.getName());
+            } else if (!optional.contains(p)) {
+                errors.add(invalidParameter(bceClass, method, phase, p));
                 return;
             }
         }
         if (primaryCount != 1) {
-            errors.add("@Registration method " + method.getName()
-                    + " must have exactly one BeanInfo/InterceptorInfo parameter, found " + primaryCount);
+            errors.add(phase + " method " + bceClass.getName() + "." + method.getName() + " must have exactly one "
+                    + primaryNames + " parameter, found " + primaryCount);
         }
+    }
+
+    private static String invalidParameter(Class<?> bceClass, Method method, String phase, Class<?> type) {
+        return phase + " method " + bceClass.getName() + "." + method.getName() + " has invalid parameter type: "
+                + type.getName();
     }
 
     /**

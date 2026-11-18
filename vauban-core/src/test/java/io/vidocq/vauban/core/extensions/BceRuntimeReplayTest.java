@@ -293,6 +293,17 @@ class BceRuntimeReplayTest {
         }
     }
 
+    /** Declares an {@code @Enhancement} parameter of a type the phase does not support, and records each call. */
+    public static class InvalidParameterBce implements BuildCompatibleExtension {
+
+        static final List<String> CALLED = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Enhancement(types = Object.class, withAnnotations = PathLike.class)
+        public void addScope(ClassConfig clazz, jakarta.enterprise.inject.build.compatible.spi.BeanInfo bean) {
+            CALLED.add("addScope " + clazz + bean);
+        }
+    }
+
     // ======================================================================
     // BUG-20261118-05 - an exception of @Enhancement fails the start
     // ======================================================================
@@ -309,6 +320,44 @@ class BceRuntimeReplayTest {
                     ThrowingOnBBce.class, ThrowingOnBBce.class);
 
             assertStartFails("replayEnhancementForTargets", jar);
+        }
+
+        /**
+         * An {@code @Enhancement} parameter of an unsupported type is a definition error before the call, on the replay
+         * as in the full cycle (BUG-20261118-22).
+         */
+        @Test
+        @DisplayName("an unsupported parameter, replayed for a pre-processed jar")
+        void anUnsupportedParameterOfAReplayedEnhancementIsADefinitionError() throws Exception {
+            var jar = buildPreProcessedJar(tempDir.resolve("resource.jar"), "app.TestResourceB",
+                    List.of("app.TestResourceB"), List.of(InvalidParameterBce.class.getName() + ";app.TestResourceB"),
+                    InvalidParameterBce.class, InvalidParameterBce.class);
+
+            assertInvalidParameter("replayEnhancementForTargets", jar);
+        }
+
+        /** As above, over an unprocessed archive, the extension reached through the replay list alone. */
+        @Test
+        @DisplayName("an unsupported parameter, run over an unprocessed archive")
+        void anUnsupportedParameterOfAnEnhancementOfAnUnprocessedArchiveIsADefinitionError() throws Exception {
+            var jarA = buildPreProcessedJar(tempDir.resolve("resA.jar"), "app.TestResourceA",
+                    List.of("app.TestResourceA"), List.of(InvalidParameterBce.class.getName() + ";app.TestResourceA"),
+                    InvalidParameterBce.class, null);
+            var jarB = buildRawJar(tempDir.resolve("resB.jar"), "app.TestResourceB");
+
+            assertInvalidParameter("processEnhancementOnly", jarA, jarB);
+        }
+
+        private void assertInvalidParameter(String path, Path... jars) throws Exception {
+            InvalidParameterBce.CALLED.clear();
+            var expected = "@Enhancement method " + InvalidParameterBce.class.getName()
+                    + ".addScope has invalid parameter type: jakarta.enterprise.inject.build.compatible.spi.BeanInfo";
+
+            var thrown = startFails(jakarta.enterprise.inject.spi.DefinitionException.class, path, jars);
+
+            List<String> called = InvalidParameterBce.CALLED;
+            assertAll(() -> assertTrue(thrown.getMessage().contains(expected), thrown.getMessage()),
+                    () -> assertEquals(List.of(), called, "the method is not called"));
         }
 
         /**
@@ -329,6 +378,18 @@ class BceRuntimeReplayTest {
 
         /** The start over {@code jars} fails with the extension's exception, thrown by the {@code path} it names. */
         private void assertStartFails(String path, Path... jars) throws Exception {
+            var thrown = startFails(jakarta.enterprise.inject.spi.DeploymentException.class, path, jars);
+
+            assertAll(() -> assertTrue(thrown.getMessage().contains(ThrowingOnBBce.CAUSE), thrown.getMessage()),
+                    () -> assertEquals(ThrowingOnBBce.CAUSE, thrown.getCause().getMessage()));
+        }
+
+        /**
+         * The {@code type} the start over {@code jars} throws, once checked that it came out of {@code BceProcessor}
+         * through {@code path}.
+         */
+        private RuntimeException startFails(Class<? extends RuntimeException> type, String path, Path... jars)
+                throws Exception {
             var urls = new URL[jars.length];
             for (int i = 0; i < jars.length; i++) {
                 urls[i] = jars[i].toUri().toURL();
@@ -337,15 +398,14 @@ class BceRuntimeReplayTest {
                 var builder = VaubanContainer.builder().classLoader(cl).scanClasspath()
                         .addBeanClass(Class.forName("app.TestResourceB", true, cl));
 
-                var thrown = assertThrows(jakarta.enterprise.inject.spi.DeploymentException.class, builder::build);
+                var thrown = assertThrows(type, builder::build);
 
                 var thrownBy = java.util.Arrays.stream(thrown.getStackTrace())
                         .filter(frame -> frame.getClassName().equals(BceProcessor.class.getName()))
                         .map(StackTraceElement::getMethodName)
                         .toList();
-                assertAll(() -> assertTrue(thrown.getMessage().contains(ThrowingOnBBce.CAUSE), thrown.getMessage()),
-                        () -> assertEquals(ThrowingOnBBce.CAUSE, thrown.getCause().getMessage()),
-                        () -> assertEquals(List.of(path), thrownBy, "the path that threw"));
+                assertEquals(path, thrownBy.getLast(), () -> "the path that threw: " + thrown);
+                return thrown;
             }
         }
     }

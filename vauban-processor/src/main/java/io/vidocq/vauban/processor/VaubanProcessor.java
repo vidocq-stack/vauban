@@ -618,7 +618,8 @@ public class VaubanProcessor extends AbstractProcessor {
 
         if (!bceClasses.isEmpty()) {
             discoveryResult = runDiscoveryPhase(bceClasses, index, indexBuilder, aptClassLoader);
-            if (reported(discoveryResult.definitionErrors())) {
+            boolean definitionFailed = reported(discoveryResult.definitionErrors());
+            if (reported(discoveryResult.deploymentErrors()) || definitionFailed) {
                 return true;
             }
             index = indexBuilder.build();

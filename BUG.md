@@ -5,6 +5,39 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-22 — An extension parameter of an unsupported type is `null`
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`extensions.BceProcessor.processDiscovery`, `extensions.ExtensionMethodValidator`)
+- **Symptom**: a `@Discovery`, `@Synthesis` or `@Validation` method that declares a parameter of a type its phase
+  does not support, `Types` in `@Discovery` for one, is called with `null` for it: nothing is reported, and an
+  extension that uses it fails with a `NullPointerException`, which BUG-20261118-04 turns into a definition error.
+  `@Enhancement` and `@Registration` reported it, without naming the extension, and accepted an extension's own
+  subtype of a listed type, which then failed in the call. `Messages`, which `@Discovery` supports, was `null` too.
+- **Spec**: the Javadoc of `BuildCompatibleExtension` (cdi-api 4.1.0): a parameter of a type unsupported in the
+  phase is a deployment problem. Vauban reports it as a definition error in every phase, as `@Enhancement` and
+  `@Registration` already did; the mapping is a question for the maintainer. The Javadoc of `Messages`: an error
+  reported through it is a deployment problem.
+- **Repro**: `UnsupportedParameterTypesTest` (one test per phase, the subtype, an error through `Messages` in
+  `@Discovery`) and `BceProcessorFailureToleranceTest#aDiscoveryParameterOfAnUnsupportedTypeIsReportedBeforeTheCall`
+  in `vauban-core`; `VetoedInterceptorCompileTimeTest#aDiscoveryParameterOfAnUnsupportedTypeFailsTheBuildTheStart...`
+  and `#anErrorDiscoveryReportsThroughMessagesFailsTheBuildTheStartAndTheFreeze` in `vauban-processor`. Red without
+  the fix (`stack-l1-r4-1822.log`, "BUG-18-22 red"; `stack-l1-r6.log`, "R6 red": the start threw nothing for
+  `@Synthesis` and `@Validation`, the messages did not name the extension, and `@Discovery`'s `Messages` error was a
+  `DefinitionException`; `stack-l1-r7.log`, "R7 red": `BceRuntimeReplayTest$EnhancementFailures` and
+  `EnhancementFailureGenerationTest`, nothing thrown on the replay, the unprocessed archive and `vauban:generate`).
+- **Cause**: the phases filled the arguments they knew and left the others `null`; `ExtensionMethodValidator`
+  checked `@Enhancement` and `@Registration` alone, with `isAssignableFrom`.
+- **Fix**: `ExtensionMethodValidator` checks the parameter types of the five phases before any call, on every path
+  that runs `@Enhancement` too (the enhancement of an unprocessed archive, at start and under `vauban:generate`, and
+  the replay for a pre-processed jar), each against
+  the exact types the Javadoc of its annotation lists, and reports the first other one as
+  `@<Phase> method <extension>.<method> has invalid parameter type: <type>`; the method is not called. A `Messages`
+  parameter of `@Discovery` gets one, and the errors it reports are deployment problems (`DiscoveryResult`
+  `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
+- **Found by**: the review of BUG-20261118-04.
+
 ## BUG-20261118-05 — An exception of `@Enhancement` is swallowed outside the full extension cycle
 
 - **Date**: 2026-11-18

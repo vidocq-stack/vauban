@@ -32,6 +32,7 @@ import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
+import jakarta.enterprise.inject.build.compatible.spi.Messages;
 import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
@@ -2754,31 +2755,101 @@ class VetoedInterceptorCompileTimeTest {
     @Test
     @DisplayName("an exception of @Discovery fails the build, the start and the freeze")
     void anExceptionOfDiscoveryFailsTheBuildTheStartAndTheFreeze() throws Exception {
-        var sources = withAVetoedPackage();
         var failure = "@Discovery of " + ThrowingDiscovery.class.getName() + " failed: "
                 + IllegalStateException.class.getName() + ": " + ThrowingDiscovery.CAUSE;
+
+        var started = discoveryFailsThreeWays(ThrowingDiscovery.class, failure);
+
+        assertEquals(ThrowingDiscovery.CAUSE, started.getCause().getMessage());
+    }
+
+    /** Declares a {@code @Discovery} parameter of a type the phase does not support, and records each call. */
+    public static class UnsupportedDiscoveryParameter implements BuildCompatibleExtension {
+
+        static final List<String> CALLED = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discover(Types types) {
+            CALLED.add("discover with " + types);
+        }
+    }
+
+    /**
+     * A {@code @Discovery} parameter of a type the phase does not support is reported before the call, naming the
+     * extension, the method and the type, as the other phases report theirs: a definition error. The method is not
+     * called with {@code null} (BUG-20261118-22).
+     */
+    @Test
+    @DisplayName("a @Discovery parameter of an unsupported type fails the build, the start and the freeze")
+    void aDiscoveryParameterOfAnUnsupportedTypeFailsTheBuildTheStartAndTheFreeze() throws Exception {
+        var failure = "@Discovery method " + UnsupportedDiscoveryParameter.class.getName()
+                + ".discover has invalid parameter type: " + Types.class.getName();
+        UnsupportedDiscoveryParameter.CALLED.clear();
+
+        discoveryFailsThreeWays(UnsupportedDiscoveryParameter.class, failure);
+
+        List<String> called = UnsupportedDiscoveryParameter.CALLED;
+        assertEquals(List.of(), called, "the method is not called");
+    }
+
+    /** Reports an error through the {@code Messages} of {@code @Discovery}. */
+    public static class ReportingDiscovery implements BuildCompatibleExtension {
+
+        static final String ERROR = "nothing to discover";
+
+        @Discovery
+        public void discover(Messages messages) {
+            messages.error(ERROR);
+        }
+    }
+
+    /**
+     * An error a {@code @Discovery} method reports through {@code Messages} is a deployment problem, as the Javadoc
+     * of {@code Messages} says, in the processor, at start and frozen (BUG-20261118-22).
+     */
+    @Test
+    @DisplayName("an error @Discovery reports through Messages fails the build, the start and the freeze")
+    void anErrorDiscoveryReportsThroughMessagesFailsTheBuildTheStartAndTheFreeze() throws Exception {
+        failsThreeWays(withAVetoedPackage(), ReportingDiscovery.class, ReportingDiscovery.ERROR,
+                DeploymentException.class);
+    }
+
+    /** {@link #failsThreeWays} for an extension that fails in {@code @Discovery}, with a definition error. */
+    private RuntimeException discoveryFailsThreeWays(Class<? extends BuildCompatibleExtension> extension,
+                                                     String failure) throws Exception {
+        return failsThreeWays(withAVetoedPackage(), extension, failure, DefinitionException.class);
+    }
+
+    /**
+     * Checks that {@code extension} fails on {@code sources} with {@code failure} three ways: the build fails, the
+     * start fails with {@code thrown}, and the freeze records nothing, so that the start runs the extension and fails
+     * again; returns the exception of the first start.
+     */
+    private RuntimeException failsThreeWays(Map<String, String> sources,
+                                            Class<? extends BuildCompatibleExtension> extension, String failure,
+                                            Class<? extends RuntimeException> thrown) throws Exception {
         var processor = new VaubanProcessor();
-        processor.overrideBceClasses(List.of(ThrowingDiscovery.class));
+        processor.overrideBceClasses(List.of(extension));
 
         var processed = ProcessorCompiler.compile(workDir.resolve("processed"), sources, List.of(), processor);
         var result = compile(sources);
-        registerExtension(result, ThrowingDiscovery.class);
+        registerExtension(result, extension);
         try (var loader = loader(result)) {
-            var started = assertThrows(DefinitionException.class,
+            var started = assertThrows(thrown,
                     VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "the container starts");
             var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
                     .freezeExtensions(result.classes());
-            var afterTheFreeze = assertThrows(DefinitionException.class,
+            var afterTheFreeze = assertThrows(thrown,
                     VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "it starts after the freeze");
 
             assertAll(() -> assertFalse(processed.success(), "the build fails"),
                     () -> assertTrue(processed.messages().stream().anyMatch(m -> m.contains(failure)),
                             () -> String.join("\n", processed.messages())),
                     () -> assertTrue(started.getMessage().contains(failure), started.getMessage()),
-                    () -> assertEquals(ThrowingDiscovery.CAUSE, started.getCause().getMessage()),
                     () -> assertFalse(outcome.frozen(), "the freeze records nothing"),
                     () -> assertTrue(outcome.reason().contains(failure), outcome.reason()),
                     () -> assertTrue(afterTheFreeze.getMessage().contains(failure), afterTheFreeze.getMessage()));
+            return started;
         }
     }
 
