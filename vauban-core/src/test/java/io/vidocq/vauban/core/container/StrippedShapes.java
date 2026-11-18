@@ -84,8 +84,8 @@ final class StrippedShapes {
 
     /** The local and anonymous classes of an instance method: an outer instance first, the captured values last. */
     static final class Locals {
-        /** The classes this method declares: a local one, then an anonymous one. */
-        List<Class<?>> declared(String captured, int count) {
+        /** An instance of each class this method declares: a local one, then an anonymous one. */
+        List<Object> declared(String captured, int count) {
             class Local {
                 final String text;
 
@@ -99,7 +99,7 @@ final class StrippedShapes {
                     return captured + count;
                 }
             };
-            return List.of(Local.class, anonymous.getClass());
+            return List.of(new Local(""), anonymous);
         }
     }
 
@@ -122,7 +122,7 @@ final class StrippedShapes {
 
     /** Every class above, the local and anonymous ones among them. */
     static List<Class<?>> all() {
-        var locals = new Locals().declared("", 0);
+        var locals = new Locals().declared("", 0).stream().map(Object::getClass).toList();
         return List.of(StrippedShapes.class, Bridged.class, BridgedTwice.class, Sized.class, Outer.Inner.class,
                 Point.class, Locals.class, locals.get(0), locals.get(1), staticLocal(""));
     }
