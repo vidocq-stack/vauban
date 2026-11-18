@@ -5,6 +5,29 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-52 — An earlier Vauban reads a key of an inherited member as the subclass's own member
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes)
+- **Module**: `vauban-core` (`EnhancementPatchSerializer`, `EnhancedClasses`)
+- **Symptom**: BUG-20261118-48 keyed a member a class inherits, configured through it, as one it declares, with the
+  declaring class after it: `Sub#field#x#Super`. The reader of `main` (`git show origin/main:` the serializer) splits
+  the key and reads `parts[2]` only: on a `Sub` that declares a field `x` hiding `Super.x`, it puts the annotation on
+  `Sub.x`, without a word.
+- **Repro**: `EnhancementPatchSerializerTest$RoundTrip#anInheritedMemberIsKeyedByTheClassDeclaringIt` and
+  `#inheritedMembersHaveKeysOfTheirOwnKinds` (the keys written); `#aMemberKeyOfAnUnknownKindFailsTheRead` (the read
+  of a kind the reader does not know).
+- **Cause** (proved): the suffix kept the kind an earlier reader knows.
+- **Fix**: an inherited member has a kind of its own: `Sub#inheritedField#x#Super`, `Sub#inheritedMethod#key#Super`,
+  `Sub#inheritedParameter#key#position#Super`, one helper (`EnhancementPatchSerializer.target`) for the additions and
+  for the removals `EnhancedClasses` keys the same way. The reader of `main` sends a kind it does not know to its
+  method branch: it fails with _Enhanced method is missing_, or, when the class declares a method of that key,
+  _Unknown enhancement target_. The suffix form was never released. The migration page says so.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l2d-ff-52.log`, "BUG-52 red" (the two key tests). Green, same log, "BUG-52 green:
+  serializer with nested classes" and "BUG-52 green: inherited key kinds".
+- **Found by**: the final whole-branch review of the stack.
+
 ## BUG-20261118-50 — `@Registration` does not see the injection points a bean inherits
 
 - **Date**: 2026-11-18

@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -167,7 +168,9 @@ class EnhancementPatchSerializerTest {
     /**
      * A field a class inherits, configured through it, is keyed by the class that declares it, after its name: the
      * class hides one of the same name, which keeps the key earlier versions wrote. Each reads back onto its own
-     * field (BUG-20261118-48).
+     * field (BUG-20261118-48). The key of the inherited one is of a kind of its own, {@code inheritedField}, which an
+     * earlier Vauban does not read: it fails the deployment, where a {@code field} key with the declaring class after
+     * it was read by its name alone, and the annotation went to the field of the subclass (BUG-20261118-52).
      */
     @Test
     @DisplayName("an inherited member's entry names the class declaring it, beside a member of the same name")
@@ -187,7 +190,7 @@ class EnhancementPatchSerializerTest {
         var read = EnhancementPatchSerializer.memberConfigurations(patch, index).get(hiding).getFirst();
 
         assertEquals(java.util.Set.of(hiding.value() + "#field#dependency",
-                hiding.value() + "#field#dependency#" + Hidden.class.getName()), additions.keySet());
+                hiding.value() + "#inheritedField#dependency#" + Hidden.class.getName()), additions.keySet());
         var named = new java.util.TreeMap<String, String>();
         read.getFieldConfigs().forEach(field -> named.put(field.info().declaringClass().name(),
                 field.getAddedAnnotationInfos().getFirst().value().asString()));
@@ -195,10 +198,62 @@ class EnhancementPatchSerializerTest {
                 Hiding.class.getName()), named);
     }
 
+    /**
+     * A member key of a kind this version does not read fails the read, naming the key, as an earlier Vauban fails on
+     * the {@code inheritedField}, {@code inheritedMethod} and {@code inheritedParameter} keys (BUG-20261118-52).
+     */
+    @Test
+    @DisplayName("a member key of a kind this version does not read fails the read")
+    void aMemberKeyOfAnUnknownKindFailsTheRead() throws IOException {
+        var index = indexOf(Hidden.class, Hiding.class);
+        var target = DotName.of(Hiding.class.getName() + "#laterField#dependency#" + Hidden.class.getName());
+        var patch = Map.of(target, List.of(ann("jakarta.inject.Inject")));
+        var thrown = assertThrows(IllegalStateException.class,
+                () -> EnhancementPatchSerializer.memberConfigurations(patch, index));
+        assertEquals("Unknown enhancement target: " + target, thrown.getMessage());
+    }
+
+    /** Each inherited member of a class, configured through it, has a key of an inherited kind (BUG-20261118-52). */
+    @Test
+    @DisplayName("an inherited field, method and parameter have keys of their own kinds, and read back")
+    void inheritedMembersHaveKeysOfTheirOwnKinds() throws IOException {
+        var index = indexOf(HiddenInjected.class, Sub.class);
+        var sub = DotName.of(Sub.class.getName());
+        var config = new VaubanClassConfig(new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(
+                index.getClassByName(sub).orElseThrow(), new io.vidocq.vauban.core.langmodel.IndexLookup(index)));
+        for (var method : config.methods()) {
+            if (method.info().name().equals("set")) {
+                method.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of("m"));
+                method.parameters().getFirst().addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of("p"));
+            }
+        }
+
+        var additions = EnhancementPatchSerializer.additions(Map.of(sub, List.of(config)));
+        var declaring = HiddenInjected.class.getName();
+        assertEquals(java.util.Set.of(sub.value() + "#inheritedMethod#set(Ljava/lang/String;)V#" + declaring,
+                sub.value() + "#inheritedParameter#set(Ljava/lang/String;)V#0#" + declaring), additions.keySet());
+        var patch = new java.util.HashMap<DotName, List<AnnotationInfo>>();
+        additions.forEach((target, annotations) -> patch.put(DotName.of(target), annotations));
+        var read = EnhancementPatchSerializer.memberConfigurations(patch, index).get(sub).getFirst();
+        var set = read.getMethodConfigs().stream().filter(method -> method.info().name().equals("set")).findFirst()
+                .orElseThrow();
+        assertEquals("m", set.getAddedAnnotationInfos().getFirst().value().asString());
+        assertEquals("p", set.getParameterConfigs().getFirst().getAddedAnnotations().getFirst().value().asString());
+    }
+
+    /** A class that inherits the initializer {@code set} of {@link HiddenInjected}. */
+    static class Sub extends HiddenInjected {
+    }
+
     /** A class whose injected field {@link HidingInjected} hides. */
     static class HiddenInjected {
         @jakarta.inject.Inject
         String dependency;
+
+        @jakarta.inject.Inject
+        void set(String value) {
+            dependency = value;
+        }
     }
 
     /** A class that declares an injected field of the name of one it inherits. */

@@ -63,11 +63,22 @@ import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
  * </pre>
  * The form earlier versions wrote — annotation names, comma-separated, members lost — still reads.
  * Member targets use {@code Class#field#name}, {@code Class#method#name(descriptor)} and
- * {@code Class#parameter#name(descriptor)#position}. Descriptors distinguish overloaded methods.
+ * {@code Class#parameter#name(descriptor)#position}. Descriptors distinguish overloaded methods. A member the class
+ * inherits, configured through it, has a kind of its own, the class that declares it last:
+ * {@code Class#inheritedField#name#Declaring}, {@code Class#inheritedMethod#name(descriptor)#Declaring} and
+ * {@code Class#inheritedParameter#name(descriptor)#position#Declaring} (BUG-20261118-48). An earlier Vauban reads no
+ * such kind, and fails the deployment, where it would have read the member by its name alone (BUG-20261118-52).
  */
 public final class EnhancementPatchSerializer {
 
     public static final String PATCH_PATH = "META-INF/vauban-enhancements.properties";
+
+    private static final String FIELD = "field";
+    private static final String METHOD = "method";
+    private static final String PARAMETER = "parameter";
+    private static final String INHERITED_FIELD = "inheritedField";
+    private static final String INHERITED_METHOD = "inheritedMethod";
+    private static final String INHERITED_PARAMETER = "inheritedParameter";
 
     private EnhancementPatchSerializer() {}
 
@@ -79,18 +90,16 @@ public final class EnhancementPatchSerializer {
             for (var config : configs) {
                 append(patch, name.value(), config.getAddedAnnotationsIndexed());
                 for (var field : config.getFieldConfigs()) {
-                    append(patch, name.value() + "#field#" + field.info().name() + declaring(config, field),
+                    append(patch, target(name, config, field),
                             annotations(field.getAddedAnnotations(), field.getAddedAnnotationInfos(),
                                     field.getAddedAnnotationInstances()));
                 }
                 for (var method : config.getMethodConfigs()) {
-                    var declaring = declaring(config, method);
-                    var key = name.value() + "#method#" + methodKey(method) + declaring;
-                    append(patch, key, annotations(method.getAddedAnnotations(),
+                    append(patch, target(name, config, method), annotations(method.getAddedAnnotations(),
                             method.getAddedAnnotationInfos(), method.getAddedAnnotationInstances()));
                     for (int i = 0; i < method.getParameterConfigs().size(); i++) {
                         var parameter = method.getParameterConfigs().get(i);
-                        append(patch, name.value() + "#parameter#" + methodKey(method) + "#" + i + declaring,
+                        append(patch, target(name, config, method, i),
                                 annotations(parameter.getAddedAnnotationClasses(),
                                         parameter.getAddedAnnotations(), parameter.getAddedAnnotationInstances()));
                     }
@@ -152,36 +161,37 @@ public final class EnhancementPatchSerializer {
         return result;
     }
 
-    /** Adds {@code annotations} to the member of {@code config} the key split into {@code parts} names. */
+    /**
+     * Adds {@code annotations} to the member of {@code config} the key split into {@code parts} names: one the class
+     * configures itself, or, for an inherited kind, one the class that the key names last declares.
+     */
     private static void restore(VaubanClassConfig config, String[] parts, DotName target,
             List<AnnotationInfo> annotations, IndexLookup lookup) {
-        var declaring = declaringClassOf(parts);
         switch (parts[1]) {
-            case "field" -> {
-                var field = field(config, parts[2], declaring, target);
-                annotations.forEach(annotation -> field.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
-            }
-            case "method" -> {
-                var method = method(config, parts[2], declaring, target);
-                annotations.forEach(annotation -> method.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
-            }
-            case "parameter" -> {
-                var parameter = method(config, parts[2], declaring, target).getParameterConfigs()
-                        .get(Integer.parseInt(parts[3]));
-                annotations.forEach(annotation -> parameter.addAnnotation(
-                        new VaubanAnnotationInfo(annotation, lookup)));
-            }
+            case FIELD -> add(field(config, parts[2], null, target), annotations, lookup);
+            case INHERITED_FIELD -> add(field(config, parts[2], last(parts, 4, target), target), annotations, lookup);
+            case METHOD -> add(method(config, parts[2], null, target), annotations, lookup);
+            case INHERITED_METHOD -> add(method(config, parts[2], last(parts, 4, target), target), annotations,
+                    lookup);
+            case PARAMETER -> add(method(config, parts[2], null, target).getParameterConfigs()
+                    .get(Integer.parseInt(parts[3])), annotations, lookup);
+            case INHERITED_PARAMETER -> add(method(config, parts[2], last(parts, 5, target), target)
+                    .getParameterConfigs().get(Integer.parseInt(parts[3])), annotations, lookup);
             default -> throw new IllegalStateException("Unknown enhancement target: " + target);
         }
     }
 
-    /**
-     * The class an inherited member's key names last, or {@code null} for a key without it, as earlier versions wrote
-     * every key: a member the class configures itself (BUG-20261118-48).
-     */
-    private static String declaringClassOf(String[] parts) {
-        int memberParts = "parameter".equals(parts[1]) ? 4 : 3;
-        return parts.length > memberParts ? parts[parts.length - 1] : null;
+    private static void add(jakarta.enterprise.inject.build.compatible.spi.DeclarationConfig member,
+            List<AnnotationInfo> annotations, IndexLookup lookup) {
+        annotations.forEach(annotation -> member.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
+    }
+
+    /** The class a key of {@code size} parts names last: the one that declares the inherited member. */
+    private static String last(String[] parts, int size, DotName target) {
+        if (parts.length != size) {
+            throw new IllegalStateException("Unknown enhancement target: " + target);
+        }
+        return parts[size - 1];
     }
 
     private static VaubanFieldConfig field(VaubanClassConfig config, String name, String declaring, DotName target) {
@@ -199,16 +209,28 @@ public final class EnhancementPatchSerializer {
     }
 
     /**
-     * What a key adds after a member a class inherits: {@code #} and the class that declares it. Nothing after a member
-     * the class configures itself, as earlier versions wrote every key (BUG-20261118-48).
+     * The key of {@code field}, configured through the class {@code name}: of the {@code field} kind for a member the
+     * class configures itself, as earlier versions wrote every key, else of the {@code inheritedField} kind, with the
+     * class that declares it (BUG-20261118-48, BUG-20261118-52).
      */
-    static String declaring(VaubanClassConfig config, VaubanFieldConfig field) {
-        return config.isConfigurable(field) ? "" : "#" + field.info().declaringClass().name();
+    static String target(DotName name, VaubanClassConfig config, VaubanFieldConfig field) {
+        return config.isConfigurable(field) ? name.value() + "#" + FIELD + "#" + field.info().name()
+                : name.value() + "#" + INHERITED_FIELD + "#" + field.info().name() + "#"
+                        + field.info().declaringClass().name();
     }
 
-    /** {@link #declaring(VaubanClassConfig, VaubanFieldConfig)} for a method. */
-    static String declaring(VaubanClassConfig config, VaubanMethodConfig method) {
-        return config.isConfigurable(method) ? "" : "#" + method.info().declaringClass().name();
+    /** {@link #target(DotName, VaubanClassConfig, VaubanFieldConfig)} for a method. */
+    static String target(DotName name, VaubanClassConfig config, VaubanMethodConfig method) {
+        return config.isConfigurable(method) ? name.value() + "#" + METHOD + "#" + methodKey(method)
+                : name.value() + "#" + INHERITED_METHOD + "#" + methodKey(method) + "#"
+                        + method.info().declaringClass().name();
+    }
+
+    /** {@link #target(DotName, VaubanClassConfig, VaubanFieldConfig)} for a method's parameter {@code position}. */
+    static String target(DotName name, VaubanClassConfig config, VaubanMethodConfig method, int position) {
+        return config.isConfigurable(method) ? name.value() + "#" + PARAMETER + "#" + methodKey(method) + "#" + position
+                : name.value() + "#" + INHERITED_PARAMETER + "#" + methodKey(method) + "#" + position + "#"
+                        + method.info().declaringClass().name();
     }
 
     /**

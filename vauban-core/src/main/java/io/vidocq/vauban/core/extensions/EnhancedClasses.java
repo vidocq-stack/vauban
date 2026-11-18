@@ -85,18 +85,15 @@ final class EnhancedClasses {
                 for (var field : config.getFieldConfigs()) {
                     // An inherited member names the class declaring it, as the additions do: the index holds it on that
                     // class, for every subclass, so the edited index leaves it as it is (BUG-20261118-48)
-                    remove(removals, name.value() + "#field#" + field.info().name()
-                                    + EnhancementPatchSerializer.declaring(config, field),
+                    remove(removals, EnhancementPatchSerializer.target(name, config, field),
                             field.isAllAnnotationsRemoved(), field.getRemovePredicates());
                 }
                 for (var method : config.getMethodConfigs()) {
-                    var key = EnhancementPatchSerializer.methodKey(method);
-                    var declaring = EnhancementPatchSerializer.declaring(config, method);
-                    remove(removals, name.value() + "#method#" + key + declaring, method.isAllAnnotationsRemoved(),
-                            method.getRemovePredicates());
+                    remove(removals, EnhancementPatchSerializer.target(name, config, method),
+                            method.isAllAnnotationsRemoved(), method.getRemovePredicates());
                     for (int i = 0; i < method.getParameterConfigs().size(); i++) {
                         var parameter = method.getParameterConfigs().get(i);
-                        remove(removals, name.value() + "#parameter#" + key + "#" + i + declaring,
+                        remove(removals, EnhancementPatchSerializer.target(name, config, method, i),
                                 parameter.isAllAnnotationsRemoved(), parameter.getRemovePredicates());
                     }
                 }
