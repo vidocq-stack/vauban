@@ -138,6 +138,26 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-26 — In the processor, an annotation repeated on a type use shows twice, not in its container
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-processor` (`apt.MirrorTypeAnnotations`)
+- **Symptom**: for `List<@Mark("1") @Mark("2") String>`, the type argument showed `[@Mark("1"), @Mark("2")]` in the
+  processor, and `[@Mark.List({...})]` at start and frozen, as the class file records it and as reflection's
+  `AnnotatedType.getAnnotations()` gives it. A declaration shows the container the three ways. An extension's
+  `annotations()` and `annotation(Mark.List.class)` disagreed between the build and the start.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheContainerOfAnAnnotationRepeatedOnATypeUse` in
+  `vauban-processor`, red on 7b58d173 in the processor (`stack-l1b-bug1826.log`, "RED on 7b58d173 ... (value rendered
+  by kind)": `marks [Mark 1, Mark 2]`).
+- **Cause**: javac's `TypeMirror.getAnnotationMirrors()` gives repeated type annotations one by one, where
+  `Element.getAnnotationMirrors()` gives the container; `MirrorTypeAnnotations` recorded what it was given.
+- **Fix**: `MirrorTypeAnnotations` records an annotation written more than once on a type as the container its
+  `@Repeatable` names, holding them in the order written, at the position of the first.
+- **Verification**: `stack-l1b-bug1826.log`, "GREEN on 7b58d173 + BUG-18-26 fix" and "BUG-18-26 module tests:
+  processor, maven-plugin".
+- **Found by**: BUG-20261117-56's test, which read `annotations()` of a type use the three ways.
+
 ## BUG-20261118-24 — A normal-scoped producer of a JDK class with package-private methods is refused; Weld deploys it
 
 - **Date**: 2026-11-18

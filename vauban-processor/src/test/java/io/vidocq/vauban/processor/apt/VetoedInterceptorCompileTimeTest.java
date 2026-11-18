@@ -3760,6 +3760,49 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(expected);
     }
 
+    /**
+     * Records, in {@code @Synthesis}, the annotations the type argument of the field {@code marks} of {@link #TAGGED}
+     * shows, and those its field {@code field} shows, each with its {@code value} as {@link #memberText} writes it
+     * (BUG-20261118-26).
+     */
+    public static class RepeatedTypeUseRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(TAGGED);
+        }
+
+        @Synthesis
+        public void shown(Types types) {
+            for (var field : types.ofClass(TAGGED).declaration().fields()) {
+                var type = field.type();
+                var shown = field.name().equals("marks")
+                        ? type.asParameterizedType().typeArguments().getFirst().annotations() : field.annotations();
+                SEEN.add(field.name() + " " + shown.stream()
+                        .map(annotation -> simpleName(annotation.name()) + " " + memberText(annotation.value()))
+                        .toList());
+            }
+        }
+    }
+
+    /**
+     * A type use that repeats an annotation shows the container that holds them, as the class file records it and as
+     * a declaration shows it, in the processor, at start and frozen. The processor showed each repeated annotation on
+     * its own (BUG-20261118-26).
+     */
+    @Test
+    @DisplayName("an extension sees the container of an annotation repeated on a type use the three ways")
+    void anExtensionSeesTheContainerOfAnAnnotationRepeatedOnATypeUse() throws Exception {
+        var expected = List.of("field [Tag$List [@Tag, @Tag]]", "marks [Mark$List [@Mark, @Mark]]");
+
+        var seen = seenThreeWays(withRepeatedAnnotations(), RepeatedTypeUseRecorder.class,
+                RepeatedTypeUseRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
     // ---- helpers ----
 
     /** The classes of the beans and interceptors {@code @Registration} sees while the processor compiles them. */

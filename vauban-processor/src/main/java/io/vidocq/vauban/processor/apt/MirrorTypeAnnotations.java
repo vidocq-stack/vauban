@@ -20,6 +20,7 @@
 package io.vidocq.vauban.processor.apt;
 
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
+import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Step;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
@@ -36,7 +37,9 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.WildcardType;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -51,17 +54,22 @@ final class MirrorTypeAnnotations {
 
     private static final String RETENTION = "java.lang.annotation.Retention";
     private static final String TARGET = "java.lang.annotation.Target";
+    private static final String REPEATABLE = "java.lang.annotation.Repeatable";
 
     private final Function<AnnotationMirror, AnnotationInfo> converter;
+    private final Function<TypeElement, DotName> binaryName;
     private final Predicate<TypeMirror> isObject;
     private final List<TypeAnnotationInfo> found = new ArrayList<>();
 
     /**
-     * @param converter reads an annotation as the index records it
-     * @param isObject  whether a type is {@code java.lang.Object}, a bound the index leaves out
+     * @param converter  reads an annotation as the index records it
+     * @param binaryName the binary name of a type, {@code Elements.getBinaryName}
+     * @param isObject   whether a type is {@code java.lang.Object}, a bound the index leaves out
      */
-    MirrorTypeAnnotations(Function<AnnotationMirror, AnnotationInfo> converter, Predicate<TypeMirror> isObject) {
+    MirrorTypeAnnotations(Function<AnnotationMirror, AnnotationInfo> converter,
+                          Function<TypeElement, DotName> binaryName, Predicate<TypeMirror> isObject) {
         this.converter = converter;
+        this.binaryName = binaryName;
         this.isObject = isObject;
     }
 
@@ -168,11 +176,39 @@ final class MirrorTypeAnnotations {
 
     private void add(List<? extends AnnotationMirror> annotations, Target target, int index, int boundIndex,
             List<Step> path) {
-        for (var annotation : annotations) {
-            if (isRuntimeRetained(annotation)) {
-                found.add(new TypeAnnotationInfo(target, index, boundIndex, path, converter.apply(annotation)));
-            }
-        }
+        var retained = annotations.stream().filter(MirrorTypeAnnotations::isRuntimeRetained).toList();
+        var written = new LinkedHashMap<TypeElement, List<AnnotationMirror>>();
+        retained.forEach(annotation -> written.computeIfAbsent(typeOf(annotation), _ -> new ArrayList<>())
+                .add(annotation));
+        written.forEach((type, repeated) -> found.add(new TypeAnnotationInfo(target, index, boundIndex, path,
+                repeated.size() == 1 ? converter.apply(repeated.getFirst()) : contained(type, repeated))));
+    }
+
+    /**
+     * The container of an annotation written more than once on a type, holding them in the order written: the class
+     * file records it so, and the start reads it so, where the compiler's model gives each on its own
+     * (BUG-20261118-26). A type that names no container is the compiler's error, never seen here.
+     */
+    private AnnotationInfo contained(TypeElement type, List<AnnotationMirror> repeated) {
+        var held = repeated.stream()
+                .<io.vidocq.vauban.indexer.model.AnnotationValue>map(
+                        annotation -> new io.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal(
+                                converter.apply(annotation)))
+                .toList();
+        return new AnnotationInfo(binaryName.apply(containerOf(type)),
+                Map.of("value", new io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal(held)));
+    }
+
+    /** The container type {@code type}'s {@code @Repeatable} names. */
+    private static TypeElement containerOf(TypeElement type) {
+        return type.getAnnotationMirrors().stream().filter(meta -> named(meta, REPEATABLE))
+                .flatMap(meta -> meta.getElementValues().values().stream())
+                .map(value -> (TypeElement) ((DeclaredType) value.getValue()).asElement())
+                .findFirst().orElseThrow(() -> new IllegalStateException(type + " is repeated but not @Repeatable"));
+    }
+
+    private static TypeElement typeOf(AnnotationMirror annotation) {
+        return (TypeElement) annotation.getAnnotationType().asElement();
     }
 
     private static List<Step> append(List<Step> path, Step step) {

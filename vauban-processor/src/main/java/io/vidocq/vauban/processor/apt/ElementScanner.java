@@ -162,7 +162,7 @@ public final class ElementScanner {
     }
 
     private MirrorTypeAnnotations typeAnnotations() {
-        return new MirrorTypeAnnotations(this::annotationInfo, ElementScanner::isJavaLangObject);
+        return new MirrorTypeAnnotations(this::annotationInfo, this::binaryName, ElementScanner::isJavaLangObject);
     }
 
     /**
