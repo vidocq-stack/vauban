@@ -1059,20 +1059,20 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
             return beanType.equals(requiredType)
                     || required != null && container.assignability().beanTypeMatches(converted(beanType), required);
         }
-    }
 
-    /** {@code beanType} converted, once for the life of the container. */
-    // The cache is concurrent, and the answer pure: two threads that race convert the same type to equal values.
-    // computeIfAbsent's method reference would spin a class at the first lookup of every start (vauban#347).
-    @SuppressWarnings("java:S3824")
-    private TypeInfo converted(Type beanType) {
-        var key = boxed(beanType);
-        var converted = convertedTypes.get(key);
-        if (converted == null) {
-            converted = TypeInfoUtils.fromReflectType(key);
-            convertedTypes.put(key, converted);
+        /** {@code beanType} converted, once for the life of the container. */
+        // The cache is concurrent, and the answer pure: two threads that race convert the same type to equal values.
+        // computeIfAbsent's method reference would spin a class at the first lookup of every start (vauban#347).
+        @SuppressWarnings("java:S3824")
+        private TypeInfo converted(Type beanType) {
+            var key = boxed(beanType);
+            var converted = convertedTypes.get(key);
+            if (converted == null) {
+                converted = TypeInfoUtils.fromReflectType(key);
+                convertedTypes.put(key, converted);
+            }
+            return converted;
         }
-        return converted;
     }
 
     /**

@@ -193,6 +193,7 @@ public final class VaubanContainerBuilder {
         return addClass(beanClass);
     }
 
+    @SuppressWarnings("java:S1872") // the name, not the class: the same class from two class loaders counts once
     private VaubanContainerBuilder addClass(Class<?> beanClass) {
         // Idempotent by class name (not identity) — same class from different ClassLoaders is deduplicated
         for (var added : beanClasses) {

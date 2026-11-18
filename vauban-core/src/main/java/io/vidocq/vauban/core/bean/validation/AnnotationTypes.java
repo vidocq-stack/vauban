@@ -103,12 +103,10 @@ final class AnnotationTypes {
     // start (vauban#347)
     @SuppressWarnings("java:S3824")
     Optional<Meta> meta(DotName name) {
-        var meta = metas.get(name);
-        if (meta == null) {
-            meta = read(name);
-            metas.put(name, meta);
+        if (!metas.containsKey(name)) {
+            metas.put(name, read(name));
         }
-        return meta;
+        return metas.get(name);
     }
 
     boolean isNormalScope(DotName name) {

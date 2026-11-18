@@ -24,7 +24,9 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.TreeMap;
 
 /**
@@ -43,11 +45,10 @@ import java.util.TreeMap;
  */
 final class DeploymentFingerprint {
 
-    /** A class to fingerprint: its model, null without a class file, and the class file of an extension. */
-    private record Source(ClassInfo model, byte[] classFile) {
-    }
-
-    private final TreeMap<String, Source> sources = new TreeMap<>();
+    /** The model of each class to fingerprint, by name: null for a class without a class file. */
+    private final TreeMap<String, ClassInfo> models = new TreeMap<>();
+    /** The class file of each extension, by name: its code counts too. */
+    private final Map<String, byte[]> extensionCode = new HashMap<>();
     private final String settings;
     /** The checksum of each class, by name, computed at the first read. */
     private TreeMap<String, String> classes;
@@ -62,13 +63,15 @@ final class DeploymentFingerprint {
      * the resources, which counts by its name.
      */
     void add(String className, ClassInfo model) {
-        sources.put(className, new Source(model, null));
+        models.put(className, model);
+        extensionCode.remove(className);
         classes = null;
     }
 
     /** One build compatible extension, by what the extensions see of it and by its code. */
     void addExtension(String className, ClassInfo model, byte[] classFile) {
-        sources.put(className, new Source(model, model == null ? null : classFile));
+        models.put(className, model);
+        extensionCode.put(className, classFile);
         classes = null;
     }
 
@@ -95,21 +98,20 @@ final class DeploymentFingerprint {
         var computed = classes;
         if (computed == null) {
             computed = new TreeMap<>();
-            for (var entry : sources.entrySet()) {
-                computed.put(entry.getKey(), checksum(entry.getValue()));
+            for (var entry : models.entrySet()) {
+                computed.put(entry.getKey(), checksum(entry.getValue(), extensionCode.get(entry.getKey())));
             }
             classes = computed;
         }
         return computed;
     }
 
-    private static String checksum(Source source) {
-        if (source.model() == null) {
+    /** {@code -} for a class without a model, the model's checksum, then an extension's code's. */
+    private static String checksum(ClassInfo model, byte[] classFile) {
+        if (model == null) {
             return "-";
         }
-        String model = Long.toHexString(ClassChecksums.ofModel(source.model()));
-        return source.classFile() == null
-                ? model
-                : model + "+" + Long.toHexString(ClassChecksums.ofCode(source.classFile()));
+        String checksum = Long.toHexString(ClassChecksums.ofModel(model));
+        return classFile == null ? checksum : checksum + "+" + Long.toHexString(ClassChecksums.ofCode(classFile));
     }
 }

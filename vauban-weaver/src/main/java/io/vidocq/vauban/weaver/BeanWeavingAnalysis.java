@@ -80,9 +80,8 @@ public final class BeanWeavingAnalysis {
         return false;
     }
 
-    // The class loader's cache is concurrent, and the answer pure: read from class bytes, the same for two threads
-    // that race. computeIfAbsent's lambda would spin a class at every start (vauban#347).
-    @SuppressWarnings("java:S3824")
+    // Get then put, not computeIfAbsent, whose lambda would spin a class at every start (vauban#347). The class
+    // loader's cache is concurrent, and the answer pure: read from class bytes, the same for two threads that race.
     private static boolean isCustomNormalScope(String descriptor, ByteResolver resolver,
             Map<String, Boolean> scopeCache) {
         var cached = scopeCache.get(descriptor);
