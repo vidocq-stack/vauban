@@ -37,6 +37,7 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.util.*;
+import java.util.function.IntPredicate;
 
 public final class ClassFileScanner {
 
@@ -71,8 +72,10 @@ public final class ClassFileScanner {
         var signature = classSignature(cm);
         var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
         List<TypeVariable> typeParameters = signature.map(ClassTypeParameters::of).orElse(List.of());
-        var members = new Members(name, (cm.flags().flagsMask() & ClassFile.ACC_ENUM) != 0, classParameters,
-                TypeAnnotationReader.of(cm, ClassFileScanner::buildAnnotationInfo),
+        var members = new Members(name, (cm.flags().flagsMask() & ClassFile.ACC_ENUM) != 0,
+                cm.findAttribute(Attributes.enclosingMethod())
+                        .map(enclosing -> enclosing.enclosingClass().asSymbol()).orElse(null),
+                classParameters, TypeAnnotationReader.of(cm, ClassFileScanner::buildAnnotationInfo),
                 TypeAnnotationReader.receiver(name, typeParameters));
 
         for (var element : cm) {
@@ -104,11 +107,13 @@ public final class ClassFileScanner {
     }
 
     /**
-     * What a field or a method is read against: the type parameters of its class, the reader of its type annotations,
-     * and the receiver type of the class's methods.
+     * What a field or a method is read against: whether its class is an enum, the class whose method or initializer
+     * declares it when it is local or anonymous ({@code null} otherwise), the type parameters of its class, the reader
+     * of its type annotations, and the receiver type of the class's methods.
      */
-    private record Members(DotName className, boolean enumClass, List<Signature.TypeParam> classParameters,
-                           TypeAnnotationReader typeAnnotations, TypeInfo receiver) {}
+    private record Members(DotName className, boolean enumClass, ClassDesc enclosingClass,
+                           List<Signature.TypeParam> classParameters, TypeAnnotationReader typeAnnotations,
+                           TypeInfo receiver) {}
 
     /** The parameters an enum's constructor takes before those its source declares: the name and the ordinal. */
     private static final int ENUM_CONSTRUCTOR_PREFIX = 2;
@@ -226,13 +231,9 @@ public final class ClassFileScanner {
         var generic = methodTypes(mm, members.classParameters());
         var returnType = generic.map(ClassTypeParameters.MethodTypes::result)
                 .orElseGet(() -> parseTypeFromDesc(methodType.returnType()));
-        int implicit = generic.map(types -> methodType.parameterCount() - types.parameters().size())
-                .orElseGet(() -> leadingImplicitParameters(mm, members));
-        // An enum's constructor takes the name and the ordinal of its constant first, which its source does not
-        // declare: the index records the parameters the source declares, as the processor does (BUG-20261117-58).
-        int dropped = members.enumClass() && ConstantDescs.INIT_NAME.equals(name) ? implicit : 0;
-        var parameters = buildParameters(mm, methodType,
-                generic.map(ClassTypeParameters.MethodTypes::parameters).orElse(null), dropped);
+        var genericParameters = generic.map(ClassTypeParameters.MethodTypes::parameters).orElse(null);
+        var layout = ParameterLayout.of(mm, members, genericParameters == null ? -1 : genericParameters.size());
+        var parameters = buildParameters(mm, methodType, genericParameters, layout);
         // The thrown types as the method declares them, when its signature names them: a type variable among them,
         // which the Exceptions attribute erases (BUG-20261117-52).
         var exceptionTypes = generic.map(ClassTypeParameters.MethodTypes::exceptions)
@@ -247,7 +248,7 @@ public final class ClassFileScanner {
             var methodParameters = mm.findAttribute(Attributes.signature())
                     .map(signature -> signature.asMethodSignature().typeParameters()).orElse(List.of());
             var shape = new MethodShape(ConstantDescs.INIT_NAME.equals(name) ? members.receiver() : returnType,
-                    parameters.stream().map(ParameterInfo::type).toList(), implicit - dropped, exceptionTypes,
+                    parameters.stream().map(ParameterInfo::type).toList(), layout.mandated(), exceptionTypes,
                     typeParameters,
                     methodParameters, members.receiver());
             typeAnnotations = members.typeAnnotations().read(mm, annotation -> placed(annotation, shape));
@@ -289,33 +290,112 @@ public final class ClassFileScanner {
     }
 
     /**
-     * How many leading parameters of a method without a {@code Signature} its source does not declare: the outer
-     * instance of an inner class's constructor. A type annotation numbers the parameters the source declares. The
-     * {@code MethodParameters} attribute marks them, synthetic or mandated, where javac writes it: for an inner
-     * class's constructor since Java 21. Without it, a constructor of a class the {@code InnerClasses} attribute names
-     * an inner member class takes its outer instance first, as javac has always compiled it, and an enum's constructor
-     * the name and the ordinal of its constant (BUG-20261117-58); a local or anonymous class's constructor, whose
-     * captured values javac before Java 21 does not mark either, is read as declaring them.
+     * Where the parameters a method's source declares are among those of its descriptor: after {@code skipped}
+     * synthetic ones the index leaves out, the name and the ordinal of an enum's constant (BUG-20261117-58), and
+     * {@code mandated} ones it keeps, the outer instance of an inner or a local class's constructor, which the language
+     * model counts as implicitly declared; and before {@code trailing} synthetic ones it leaves out, the values a local
+     * or anonymous class captures (BUG-20261118-32). A {@code Signature}, a type annotation and, as javac writes them,
+     * the parameter annotations number the declared parameters only.
      */
-    private static int leadingImplicitParameters(MethodModel mm, Members members) {
-        var attribute = mm.findAttribute(Attributes.methodParameters());
-        if (attribute.isEmpty()) {
+    private record ParameterLayout(int skipped, int mandated, int trailing) {
+
+        private static final ParameterLayout DECLARED = new ParameterLayout(0, 0, 0);
+
+        /** The parameters the index records: from {@code skipped} to {@code count - trailing}. */
+        int end(int count) {
+            return count - trailing;
+        }
+
+        /** The descriptor position of the first parameter the source declares. */
+        int firstDeclared() {
+            return skipped + mandated;
+        }
+
+        /**
+         * The layout of {@code mm}'s parameters, whose {@code Signature} names {@code declared} of them, or {@code -1}
+         * without one. The {@code MethodParameters} attribute marks the parameters javac adds, where javac writes it:
+         * for the constructors of enums, inner and local classes since Java 21. Without it, an enum's constructor
+         * takes the name and the ordinal first, an inner member class's the outer instance, as javac has always
+         * compiled them; a local class's takes the outer instance when its first parameter is of the class that
+         * declares it, and the captured values last, those its {@code Signature} does not name. Without a
+         * {@code Signature} either, its captured values cannot be told from its parameters, as reflection cannot:
+         * they are read as declared.
+         */
+        static ParameterLayout of(MethodModel mm, Members members, int declared) {
+            int count = mm.methodTypeSymbol().parameterCount();
+            var attribute = mm.findAttribute(Attributes.methodParameters())
+                    .filter(parameters -> parameters.parameters().size() == count);
+            if (attribute.isPresent()) {
+                return marked(attribute.get().parameters().stream().mapToInt(MethodParameterInfo::flagsMask)
+                        .toArray(), position -> isOuterInstance(mm, members, position));
+            }
             if (!ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue())) {
-                return 0;
+                return DECLARED;
             }
             if (members.enumClass()) {
-                return Math.min(ENUM_CONSTRUCTOR_PREFIX, mm.methodTypeSymbol().parameterCount());
+                return new ParameterLayout(Math.min(ENUM_CONSTRUCTOR_PREFIX, count), 0, 0);
             }
-            return members.typeAnnotations().isInnerMember(members.className()) ? 1 : 0;
+            int added = declared < 0 ? 0 : count - declared;
+            if (members.typeAnnotations().isInnerMember(members.className())) {
+                return new ParameterLayout(0, Math.min(1, count), Math.max(0, added - 1));
+            }
+            if (members.enclosingClass() != null) {
+                int outer = isOuterInstance(mm, members, 0) && (declared < 0 || added > 0) ? 1 : 0;
+                return new ParameterLayout(0, outer, Math.max(0, added - outer));
+            }
+            return new ParameterLayout(0, Math.max(0, added), 0);
         }
-        var described = attribute.get().parameters();
-        int count = 0;
-        while (count < described.size()
-                && (described.get(count).flagsMask() & (ClassFile.ACC_SYNTHETIC | ClassFile.ACC_MANDATED)) != 0) {
-            count++;
+
+        /**
+         * The layout {@code MethodParameters} flags give: the synthetic parameters first and last, and the outer
+         * instance after the first ones, mandated. Javac marks other parameters mandated too, which the source
+         * declares implicitly and a {@code Signature} names: every parameter of a record's compact constructor, the
+         * name of an enum's {@code valueOf}. Those are the method's own, numbered from 0 by the {@code Signature} and
+         * the type annotations, so only a mandated parameter {@code outer} tells the outer instance counts
+         * (BUG-20261118-32).
+         */
+        private static ParameterLayout marked(int[] flags, IntPredicate outer) {
+            int skipped = 0;
+            while (skipped < flags.length && isOnly(flags[skipped], ClassFile.ACC_SYNTHETIC)) {
+                skipped++;
+            }
+            int mandated = skipped < flags.length && (flags[skipped] & ClassFile.ACC_MANDATED) != 0
+                    && outer.test(skipped) ? 1 : 0;
+            int trailing = 0;
+            while (trailing < flags.length - skipped - mandated
+                    && isOnly(flags[flags.length - 1 - trailing], ClassFile.ACC_SYNTHETIC)) {
+                trailing++;
+            }
+            return new ParameterLayout(skipped, mandated, trailing);
         }
-        return count;
+
+        /**
+         * Whether the parameter at {@code position} of a constructor is the outer instance: that of an inner member
+         * class, or of a local or anonymous class whose descriptor names the class that declares it there. A record
+         * has none, local or not: it is implicitly static (JLS 8.10), and its compact constructor's parameters, all
+         * mandated, are its components, the first of which may be of that class.
+         *
+         * <p>Without {@code MethodParameters}, the check on the descriptor is a guess: a local class declared in a
+         * static method has no outer instance, yet a first parameter of the class that declares it reads as one.
+         * Javac has written {@code MethodParameters} for those constructors since Java 21, so only older class files
+         * meet it.
+         */
+        private static boolean isOuterInstance(MethodModel mm, Members members, int position) {
+            var type = mm.methodTypeSymbol();
+            return ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue()) && position < type.parameterCount()
+                    && mm.parent().flatMap(owner -> owner.findAttribute(Attributes.record())).isEmpty()
+                    && (members.typeAnnotations().isInnerMember(members.className())
+                            || type.parameterType(position).equals(members.enclosingClass()));
+        }
+
+        /** Whether {@code flags} has {@code flag} among the synthetic and mandated flags, and not the other. */
+        private static boolean isOnly(int flags, int flag) {
+            return (flags & IMPLICIT) == flag;
+        }
     }
+
+    /** The flags of a parameter javac adds to those the source declares. */
+    private static final int IMPLICIT = ClassFile.ACC_SYNTHETIC | ClassFile.ACC_MANDATED;
 
     /** The default an annotation type member declares in its {@code AnnotationDefault} attribute, or {@code null}. */
     private static io.vidocq.vauban.indexer.model.AnnotationValue extractDefaultValue(MethodModel mm) {
@@ -328,31 +408,29 @@ public final class ClassFileScanner {
     }
 
     /**
-     * The parameters of a method, from the {@code dropped}-th of its descriptor on; {@code generic}: its generic
-     * parameter types, or {@code null} to take the descriptor's. A
+     * The parameters of a method the index records, as {@code layout} places them; {@code generic}: the generic types
+     * of those its source declares, or {@code null} to take the descriptor's. A
      * {@code RuntimeVisibleParameterAnnotations} attribute that counts fewer parameters than the descriptor, as javac
-     * writes it for an enum's constructor, annotates the last ones: those the source declares.
+     * writes it for the constructor of an enum, an inner or a local class, annotates those the source declares.
      */
     private static List<ParameterInfo> buildParameters(MethodModel mm, MethodTypeDesc methodType,
-            List<TypeInfo> generic, int dropped) {
+            List<TypeInfo> generic, ParameterLayout layout) {
         var paramNames = extractParameterNames(mm);
         var paramAnnotations = extractParameterAnnotations(mm);
-        var params = new ArrayList<ParameterInfo>();
         int count = methodType.parameterCount();
-        // The signature leaves out a constructor's synthetic leading parameters: its types are the last ones.
-        int synthetic = generic == null ? count : count - generic.size();
-        int unannotated = Math.max(0, count - paramAnnotations.size());
-
-        for (int i = dropped; i < count; i++) {
-            var type = generic == null || i < synthetic
-                    ? parseTypeFromDesc(methodType.parameterType(i))
-                    : generic.get(i - synthetic);
-            // A name the class file does not give is argN, N the position among the declared parameters, as the
+        int first = layout.firstDeclared();
+        int annotated = paramAnnotations.size() == count ? 0 : first;
+        var params = new ArrayList<ParameterInfo>();
+        for (int i = layout.skipped(); i < layout.end(count); i++) {
+            var type = generic != null && i >= first && i - first < generic.size()
+                    ? generic.get(i - first)
+                    : parseTypeFromDesc(methodType.parameterType(i));
+            // A name the class file does not give is argN, N the position among the recorded parameters, as the
             // language model asks: a MethodParameters attribute may give flags without names (BUG-20261118-31).
             var named = i < paramNames.size() ? paramNames.get(i) : null;
-            var paramName = named != null ? named : "arg" + (i - dropped);
-            var annots = i >= unannotated ? paramAnnotations.get(i - unannotated) : List.<AnnotationInfo>of();
-            params.add(new ParameterInfo(paramName, type, annots));
+            var paramName = named != null ? named : "arg" + (i - layout.skipped());
+            var annots = element(paramAnnotations, i - annotated);
+            params.add(new ParameterInfo(paramName, type, annots != null ? annots : List.of()));
         }
         return params;
     }

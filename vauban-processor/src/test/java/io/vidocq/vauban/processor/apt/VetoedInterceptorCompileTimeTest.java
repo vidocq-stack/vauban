@@ -42,6 +42,7 @@ import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.inject.spi.PassivationCapable;
+import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.WildcardType;
@@ -2464,6 +2465,115 @@ class VetoedInterceptorCompileTimeTest {
         var seen = seenThreeWays(sources, SupertypeRecorder.class, SupertypeRecorder.SEEN);
 
         seen.assertEachIs(expected);
+    }
+
+    /**
+     * The constructor of a local class has the outer instance, which javac marks mandated, and the parameters its
+     * source declares, with their annotations, at start and frozen; not the values the class captures, which javac
+     * adds last (BUG-20261118-32). The processor does not reach a local class, which has no canonical name.
+     */
+    @Test
+    @DisplayName("a local class's constructor has its outer instance and its declared parameters, at start and frozen")
+    void aLocalClassConstructorHasItsDeclaredParameters() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Maker", DEPENDENT + """
+                public class Maker {
+                    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                    public @interface Marked {
+                    }
+                    public Object make(int count) {
+                        class Local {
+                            final String label;
+                            Local(@Marked String label) {
+                                this.label = label + count;
+                            }
+                        }
+                        return new Local("x");
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, LocalConstructorRecorder.class, LocalConstructorRecorder.SEEN);
+
+        var expected = List.of("[vi.types.Maker arg0 [], java.lang.String arg1 [vi.types.Maker$Marked]]");
+        assertAll(() -> assertEquals(List.of(), seen.processor(), "in the processor, which does not reach it"),
+                () -> assertEquals(expected, seen.start(), "at start"),
+                () -> assertEquals(expected, seen.build(), "frozen"));
+    }
+
+    /**
+     * A record's canonical constructor, compact or explicit, has its parameters with their generic types in the
+     * processor, at start and frozen, and an explicit one its type annotations: javac marks every parameter of a
+     * compact one mandated, which is no outer instance (BUG-20261118-32, review round 2). A compact one's type
+     * annotations are BUG-20261118-34's.
+     */
+    @Test
+    @DisplayName("a record's canonical constructor keeps its generic parameters and type annotations, three ways")
+    void aRecordConstructorKeepsItsGenericParameters() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Marked", """
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target(java.lang.annotation.ElementType.TYPE_USE)
+                public @interface Marked {
+                }""");
+        putType(sources, "Compact", """
+                public record Compact(java.util.List<String> names, int size) {
+                    public Compact {
+                        names = java.util.List.copyOf(names);
+                    }
+                }""");
+        putType(sources, "Explicit", """
+                public record Explicit(java.util.List<String> names) {
+                    public Explicit(java.util.@Marked List<String> names) {
+                        this.names = java.util.List.copyOf(names);
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, RecordConstructorRecorder.class, RecordConstructorRecorder.SEEN);
+
+        seen.assertEachIs(List.of("Compact [java.util.List<java.lang.String> [] [], int [] []]",
+                "Explicit [java.util.List<java.lang.String> [vi.types.Marked] []]"));
+    }
+
+    /** Records the parameter types of the records' constructors, with their annotations and their arguments'. */
+    public static class RecordConstructorRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(TYPES + "Compact");
+            classes.add(TYPES + "Explicit");
+        }
+
+        @Synthesis
+        public void constructors(Types types) {
+            for (var name : List.of("Compact", "Explicit")) {
+                types.ofClass(TYPES + name).declaration().constructors().forEach(constructor -> SEEN.add(name + " "
+                        + constructor.parameters().stream().map(parameter -> parameter.type() + " "
+                                + parameter.type().annotations().stream().map(AnnotationInfo::name).toList() + " "
+                                + argumentAnnotations(parameter.type())).toList()));
+            }
+        }
+
+        private static List<String> argumentAnnotations(Type type) {
+            return type.isParameterizedType() ? type.asParameterizedType().typeArguments().stream()
+                    .flatMap(argument -> argument.annotations().stream()).map(AnnotationInfo::name).toList()
+                    : List.of();
+        }
+    }
+
+    /** Records the parameters of the constructor of {@code vi.types.Maker}'s local class. */
+    public static class LocalConstructorRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void parameters(Types types) {
+            types.ofClass(TYPES + "Maker$1Local").declaration().constructors().forEach(constructor -> SEEN.add(
+                    constructor.parameters().stream().map(parameter -> parameter.type() + " " + parameter.name() + " "
+                            + parameter.annotations().stream().map(AnnotationInfo::name).toList())
+                            .toList().toString()));
+        }
     }
 
     /**

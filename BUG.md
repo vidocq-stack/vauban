@@ -5,6 +5,59 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-32 — At start, a local class's constructor shows its captured values, misplaced
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`)
+- **Symptom**: at start and frozen, the constructor of a local class lists the values the class captures, which
+  javac adds after the declared parameters, with the wrong types and annotations: for `Local(@Marked String label)`
+  capturing an `int`, `[Maker arg0, String arg1, String arg2 @Marked]`, the `int` shown with the declared `String`
+  type and the declared parameter's annotation on it. The language model asks for the parameters "declared or
+  implicitly declared".
+- **Repro**: `LocalClassConstructorParametersTest` in `vauban-indexer` (javac 25 in an instance and a static method,
+  and a class file without `MethodParameters` as javac before 21 writes it) and
+  `VetoedInterceptorCompileTimeTest#aLocalClassConstructorHasItsDeclaredParameters` in `vauban-processor`, at start and
+  frozen; red on 790e3d38 (`stack-l2c-red.log`, "RED BUG-20261118-32 on 790e3d38" and "RED BUG-20261118-32 three ways
+  on 790e3d38").
+- **Cause**: `ClassFileScanner` took the parameters the `Signature` names as the last of the descriptor, and, since
+  BUG-20261117-58, a shorter `RuntimeVisibleParameterAnnotations` as annotating the last ones: true of an enum's and an
+  inner member class's constructor, whose added parameters come first, not of a local class's, whose captured values
+  come last. Found by the review of batch C.
+- **Fix**: a `ParameterLayout` places the declared parameters among the descriptor's: after the synthetic ones the
+  index leaves out (an enum's name and ordinal), and the mandated ones it keeps (the outer instance of an inner or a
+  local class's constructor, as javac marks it), before the synthetic ones it leaves out (a local or anonymous
+  class's captured values). It reads the `MethodParameters` flags; without them, an enum's two, an inner member's
+  outer instance, and for a local class the outer instance when the first parameter is of the class that encloses it
+  (`EnclosingMethod`) and the parameters the `Signature` does not name last. A `Signature`, the parameter annotations
+  and the type annotations number the declared parameters from there. Without `MethodParameters` nor `Signature`, a
+  local class's captured values cannot be told from its parameters, as by reflection: they are read as declared. The
+  processor does not reach a local class (it has no canonical name). The frozen record's checksum of a local class
+  with captured values changes with its parameters.
+- **Mandated is the outer instance only** (review round 2): javac 25 marks other parameters mandated too, which the
+  source declares implicitly and the `Signature` names: every parameter of a record's compact canonical constructor,
+  the name of an enum's `valueOf`. Counting them as leading implicit took a compact constructor's `List<String>` for
+  `List` and dropped its type annotations (`RecordConstructorParametersTest`, red in `stack-l2c-red.log`, "RED round 2
+  BUG-20261118-32 records on e137a56c", and three ways, "RED round 2 ... records three ways": `Compact [java.util.List
+  [], int []]` at start and frozen). A mandated parameter is now the outer instance only when it is: that of an inner
+  member class's constructor, or of a local or anonymous class's whose descriptor names the enclosing class there. That
+  is javac's layout: the outer instance is the only mandated parameter javac adds before the declared ones; the others
+  it marks mandated are declared ones.
+- **A local record has no outer instance** (review round 3): declared in an instance method of `O`, with a first
+  component of type `O`, its compact constructor's first parameter, mandated and of the enclosing class, was taken for
+  the outer instance, which shifted the `Signature`'s types by one (`LocalClassConstructorParametersTest
+  #aLocalRecordOfJavac25`, red in `stack-l2c-red-localrecord2.log`: the `List<String>` component read as `O`). A
+  record is implicitly static: a constructor of a class with a `Record` attribute has no outer instance. Without
+  `MethodParameters`, the descriptor check stays a guess, documented on `isOuterInstance`: a local class declared in a
+  static method, whose first parameter is of the enclosing class, reads as having one; javac writes
+  `MethodParameters` for those constructors since Java 21.
+- **Verification**: `stack-l2c-dev.log`, "BUG-32 fix: indexer, core, processor, maven-plugin tests" (green), and
+  "Round 2 BUG-20261118-32 records fix (3)" with "Round 2 records three ways (reshaped)"; round 3:
+  `stack-l2c-green-idx3.log` (indexer, 138 tests).
+- **Found by**: the review of batch C (round 1, item 1).
+
+---
+
 ## BUG-20261118-31 — At start, a parameter the class file gives flags but no name for is named `null`
 
 - **Date**: 2026-11-18
@@ -676,7 +729,7 @@ suspected cause, status. Updated on every investigation.
 - **Fix**: an enum's constructor drops its leading parameters the source does not declare: the difference between
   its descriptor and its `Signature`, those its `MethodParameters` marks synthetic, or, with neither attribute, the
   two of an enum (`ACC_ENUM`). A `RuntimeVisibleParameterAnnotations` attribute that counts fewer parameters than the
-  descriptor annotates the last ones. A type annotation numbers the parameters the index records, as the processor
+  descriptor annotates the declared ones (the last ones here; placed by BUG-20261118-32 since). A type annotation numbers the parameters the index records, as the processor
   does. The frozen record's checksum of an enum changes with its parameters: a record an earlier Vauban wrote is
   refused for it, and the start runs the extensions again.
 - **Verification**: `stack-l2c-dev.log`, "BUG-58 fix: indexer, core, processor, maven-plugin tests" (green) and
