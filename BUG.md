@@ -5,6 +5,39 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-36 — Two intercepted instances created with one creational context share their interceptor instances
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`)
+- **Module**: `vauban-core` (`ManagedBean.create` and `destroy`, `context.CreationalContextImpl`)
+- **Symptom**: two intercepted `@Dependent` beans created with one creational context, by a bean constructor that
+  injects both or by `BeanManager.getReference(bean, type, sharedContext)`, have one interceptor instance between
+  them: the second's calls go through the first's interceptor instance, whose `@Intercepted Bean` names the first.
+  CDI 4.1, 6.4.1, makes an interceptor instance a dependent object of the one instance it intercepts.
+- **Repro**: `VetoedInterceptorCompileTimeTest#twoInterceptedBeansInjectedIntoOneBeanHaveAnInterceptorEach` in
+  `vauban-processor` (`vi.Pair` injects two beans bound to `vi.Watcher` through its constructor; the processor, at
+  start and frozen): it answered `Watcher(vi.WatchedService: hello) | Watcher(vi.WatchedService: hello)`.
+  `InterceptorInstancePerInterceptedInstanceTest` in `vauban-core`: the reviewer's probe, two beans by `getReference`
+  on one context; a constructor that injects both and an `Instance.get()`; each interceptor instance's `@PreDestroy`
+  runs once.
+- **Cause** (proved by both repros): `CreationalContextImpl` holds the interceptor instances by interceptor class only,
+  and an intercepted `ManagedBean` created its instance with the caller's context. Field injection gave an
+  intercepted `@Dependent` bean a fresh context (`BeanInjector.beanReference`); a constructor or initializer parameter
+  (`VaubanContainer.dependentReference`) and a caller's `getReference` did not. The `@Intercepted Bean` of
+  BUG-20261117-47, recorded on that context by the first intercepted bean only, followed the shared instance.
+- **Fix**: an intercepted `ManagedBean` creates each instance with a context of its own,
+  `CreationalContextImpl.forInterceptedInstanceOf(bean)`, which knows the bean for `@Intercepted Bean`. The caller's
+  context keeps it by instance (`adopt`). `destroy` takes it back (`release(instance)`) to run the `@PreDestroy`
+  interceptors and release it; releasing the caller's context releases those left. The instance's own dependents go
+  in that context too, and are destroyed with it.
+- **CDI Lite TCK**: no test creates two intercepted instances with one context; the TCK on aa27d1b0 passed
+  (774/774) with the defect.
+- **Verification**: red on 183726ec (`stack-l3b-red.log`, "BUG-20261118-36 red, on 183726ec: two intercepted beans a
+  constructor injects", at start and frozen, and "... one creational context, two intercepted instances
+  (vauban-core)", both tests). Green: `stack-l3b-green.log`, "BUG-20261118-36 fix: a context per intercepted instance,
+  core and processor".
+- **Found by**: the review of batch 2 (BUG-20261117-47), by a probe.
+
 ## BUG-20261118-34 — At start, a compact constructor's parameters lose their type annotations
 
 - **Date**: 2026-11-18
@@ -1351,9 +1384,8 @@ suspected cause, status. Updated on every investigation.
     records itself on the `CreationalContextImpl` it creates an instance with, unless one is already recorded.
   `BuiltInBean` takes qualifiers other than `@Default`. No reflection is added: the beans read what the container
   holds.
-- **Limit**: interceptor instances are cached by creational context and interceptor class, as before; an intercepted
-  `@Dependent` bean created with the creational context of another intercepted bean shares its interceptor instances,
-  and so their `@Intercepted Bean`. Nothing here changes which instances are shared.
+- **Limit**, fixed by BUG-20261118-36: an intercepted `@Dependent` bean created with the creational context of another
+  intercepted bean shared its interceptor instances, and so their `@Intercepted Bean`.
 - **CDI Lite TCK**: not covered. `tests.full.implementation.builtin.metadata.BuiltinMetadataBeanTest`, which injects
   these beans, is in the CDI Full part the runner leaves out, as it checks the decorator metadata too (`@Decorated`);
   the Lite tests of `builtin.metadata.broken` expect a definition error, and the validation that gives it is

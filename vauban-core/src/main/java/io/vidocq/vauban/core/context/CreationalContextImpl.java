@@ -23,6 +23,7 @@ import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.context.spi.CreationalContext;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -30,21 +31,45 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
     private final List<Object> incompleteInstances = new ArrayList<>();
     private final List<DependentInstance> dependentInstances = new ArrayList<>();
     private final Map<String, Object> interceptorInstances = new HashMap<>();
-    /** The intercepted bean whose instance this context creates first: its interceptors' {@code @Intercepted Bean}. */
-    private Contextual<?> interceptedBean;
-
     /**
-     * Records {@code bean}, an intercepted bean, as the one whose instance this context creates, unless one is already:
-     * the interceptor instances this context holds intercept it (CDI 4.1, 5.5.8; BUG-20261117-47).
+     * The intercepted bean whose one instance this context creates, its interceptors' {@code @Intercepted Bean}
+     * (BUG-20261117-47); {@code null} for a context of any other use.
      */
-    public void createsInterceptedInstanceOf(Contextual<?> bean) {
-        if (interceptedBean == null) {
-            interceptedBean = bean;
-        }
+    private final Contextual<T> interceptedBean;
+    /** The context of each intercepted instance created with this one, by instance (BUG-20261118-36). */
+    private final Map<Object, CreationalContextImpl<?>> intercepted = new IdentityHashMap<>();
+
+    public CreationalContextImpl() {
+        this(null);
     }
 
-    /** The intercepted bean {@link #createsInterceptedInstanceOf} recorded, or {@code null}. */
-    public Contextual<?> interceptedBean() {
+    private CreationalContextImpl(Contextual<T> interceptedBean) {
+        this.interceptedBean = interceptedBean;
+    }
+
+    /**
+     * A context of its own for one instance of {@code bean}, an intercepted bean: its interceptor instances are
+     * dependent objects of that instance alone (CDI 4.1, 6.4.1), and inject {@code bean} as their
+     * {@code @Intercepted Bean}. Two intercepted instances created with one context shared its interceptor instances,
+     * held by interceptor class (BUG-20261118-36). The caller hands the instance created to {@link #adopt}.
+     */
+    public static <X> CreationalContextImpl<X> forInterceptedInstanceOf(Contextual<X> bean) {
+        return new CreationalContextImpl<>(bean);
+    }
+
+    /** Keeps {@code context}, the context of the intercepted {@code instance}, until it is destroyed or released. */
+    public void adopt(Object instance, CreationalContextImpl<?> context) {
+        intercepted.put(instance, context);
+    }
+
+    /** The context {@link #adopt} keeps for {@code instance}, no longer kept, or {@code null}. */
+    @SuppressWarnings("unchecked")
+    public <X> CreationalContextImpl<X> release(X instance) {
+        return (CreationalContextImpl<X>) intercepted.remove(instance);
+    }
+
+    /** The intercepted bean this context creates an instance of, or {@code null}. */
+    public Contextual<T> interceptedBean() {
         return interceptedBean;
     }
 
@@ -91,6 +116,10 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
                 var dep = dependentInstances.remove(dependentInstances.size() - 1);
                 dep.destroy();
             }
+            // The contexts of intercepted instances no dependent destruction took (BUG-20261118-36)
+            var left = List.copyOf(intercepted.values());
+            intercepted.clear();
+            left.forEach(CreationalContextImpl::release);
             incompleteInstances.clear();
         } finally {
             releasing = false;

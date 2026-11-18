@@ -119,12 +119,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
 
     @Override
     public T create(CreationalContext<T> callerContext) {
-        var creationalContext = contextOfItsOwnIfIntercepted(callerContext);
-        if (interceptorManager != null
-                && creationalContext instanceof io.vidocq.vauban.core.context.CreationalContextImpl<T> context) {
-            // Its interceptors, created with this context, inject it as their @Intercepted Bean (BUG-20261117-47)
-            context.createsInterceptedInstanceOf(this);
-        }
+        var creationalContext = interceptorManager == null ? callerContext
+                : io.vidocq.vauban.core.context.CreationalContextImpl.forInterceptedInstanceOf(this);
         T instance = factory.create(creationalContext);
         
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
@@ -136,28 +132,40 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         if (instance != null && injector != null) {
             injector.accept(instance, creationalContext);
         }
+        if (instance != null && creationalContext != callerContext
+                && callerContext instanceof io.vidocq.vauban.core.context.CreationalContextImpl<T> caller) {
+            // Its interceptor instances are destroyed with it, or when the caller's context is released
+            caller.adopt(instance, (io.vidocq.vauban.core.context.CreationalContextImpl<T>) creationalContext);
+        }
         return instance;
     }
 
     /**
-     * The creational context an intercepted bean is created or destroyed with: the caller's, or one of the bean's own
-     * when the caller passes none (VAU-LIFE-002, VAU-LIFE-003), as its intercepted factory does (VAU-INT-008). At
-     * creation, its factory and its {@code @PostConstruct} step then share it, so one interceptor instance per
-     * interceptor class, a dependent object of the bean instance (CDI 4.1 §6.4.1), serves its construction, its
-     * lifecycle callbacks and its methods. At destruction, its {@code @PreDestroy} interceptors are resolved from it,
-     * then released with it. Only an intercepted bean gets an interceptor manager.
+     * The creational context an intercepted bean instance is destroyed with: the one it was created with, which the
+     * caller's context keeps (BUG-20261118-36); else the caller's, or one of the bean's own when the caller passes none
+     * (VAU-LIFE-002, VAU-LIFE-003), as its intercepted factory does (VAU-INT-008). An intercepted instance is created
+     * with a context of its own (see {@link #create}): its factory and its {@code @PostConstruct} step share it, so one
+     * interceptor instance per interceptor class, a dependent object of that one bean instance (CDI 4.1 §6.4.1),
+     * serves its construction, its lifecycle callbacks and its methods. At destruction, its {@code @PreDestroy}
+     * interceptors are resolved from it, then released with it. Only an intercepted bean gets an interceptor manager.
      */
-    private CreationalContext<T> contextOfItsOwnIfIntercepted(CreationalContext<T> callerContext) {
-        if (callerContext != null || interceptorManager == null) {
+    private CreationalContext<T> destructionContext(T instance, CreationalContext<T> callerContext) {
+        if (interceptorManager == null) {
             return callerContext;
         }
-        return new io.vidocq.vauban.core.context.CreationalContextImpl<>();
+        if (callerContext instanceof io.vidocq.vauban.core.context.CreationalContextImpl<T> caller) {
+            var own = caller.release(instance);
+            if (own != null) {
+                return own;
+            }
+        }
+        return callerContext != null ? callerContext : new io.vidocq.vauban.core.context.CreationalContextImpl<>();
     }
 
     @Override
     public void destroy(T instance, CreationalContext<T> callerContext) {
         if (instance == null) return;
-        var creationalContext = contextOfItsOwnIfIntercepted(callerContext);
+        var creationalContext = destructionContext(instance, callerContext);
 
         if (destroyer != null) {
             try {
@@ -169,7 +177,13 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         if (descriptor.kind() == BeanDescriptor.BeanKind.MANAGED) {
             callPreDestroy(instance, creationalContext);
         }
-        if (creationalContext instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
+        if (creationalContext != callerContext
+                && creationalContext instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> own) {
+            // Its own context: its interceptor instances and its dependents (BUG-20261118-36)
+            own.release();
+        }
+        if ((callerContext != null ? callerContext : creationalContext)
+                instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
             // Remove ourselves from the dependent list before releasing to avoid recursive destroy
             cc.getDependentInstances().removeIf(dep -> dep.instance() == instance);
             cc.release();

@@ -2892,6 +2892,43 @@ class VetoedInterceptorCompileTimeTest {
         assertEachPlaceServes(withAWatcher(argument), WATCHED_SERVICE, WATCHED_HELLO);
     }
 
+    /**
+     * Two intercepted {@code @Dependent} beans a bean injects through its constructor, both bound to
+     * {@code vi.Watcher}: each instance has its own interceptor instance, a dependent object of the one instance it
+     * intercepts (CDI 4.1, 6.4.1), and its {@code @Intercepted Bean} is its own bean. Both were created with the
+     * creational context of the bean that injects them, which held the interceptor instances by interceptor class
+     * only: the second call went through the first one's interceptor, whose {@code @Intercepted Bean} named the
+     * first (BUG-20261118-36).
+     */
+    @Test
+    @DisplayName("two intercepted beans injected into one bean have an interceptor each, in the processor, at start and"
+            + " frozen")
+    void twoInterceptedBeansInjectedIntoOneBeanHaveAnInterceptorEach() throws Exception {
+        var sources = withAWatcher("?");
+        sources.put("vi/OtherWatchedService" + JAVA, boundBean("OtherWatchedService", "Watched"));
+        sources.put("vi/Pair" + JAVA, """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Pair implements java.util.function.Supplier<String> {
+                    private final WatchedService first;
+                    private final OtherWatchedService second;
+
+                    @jakarta.inject.Inject
+                    public Pair(WatchedService first, OtherWatchedService second) {
+                        this.first = first;
+                        this.second = second;
+                    }
+
+                    @Override
+                    public String get() {
+                        return first.get() + " | " + second.get();
+                    }
+                }
+                """);
+
+        assertEachPlaceServes(sources, "vi.Pair", WATCHED_HELLO + " | Watcher(vi.OtherWatchedService: hello)");
+    }
+
     /** {@link #withAVetoedPackage()}, with {@code vi.Watcher}, which injects {@code @Intercepted Bean<argument>}. */
     private static Map<String, String> withAWatcher(String argument) {
         var sources = withAVetoedPackage();
