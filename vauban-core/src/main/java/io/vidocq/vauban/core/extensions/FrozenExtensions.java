@@ -254,11 +254,17 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
     // ---- reading ----
 
     /**
-     * The record {@code loader} sees. A deployment has one application, so one record: with several, none can be
-     * told to be this deployment's and none is used. One file that two loaders of the chain both see, as the boot
-     * layer of a jlink image and the layer above it that holds the application again, is one record.
+     * The record {@code loader} sees for the deployment whose fingerprint is {@code fingerprint}.
+     *
+     * <p>One record on the path is the one found, whatever its fingerprint: the caller compares it and says what
+     * differs. With several, the deployment's is the one that holds its fingerprint: the jar of a library built
+     * with the freeze on carries the record of the library's own deployment, which is no reason to run the
+     * application's extensions at start (vauban#341). When none holds it, none is used and the note names them.
+     *
+     * <p>One file that two loaders of the chain both see, as the boot layer of a jlink image and the layer above it
+     * that holds the application again, is one record.
      */
-    public static Found find(ClassLoader loader) {
+    public static Found find(ClassLoader loader, String fingerprint) {
         List<URL> records;
         try {
             var distinct = new LinkedHashMap<String, URL>();
@@ -272,16 +278,28 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
         if (records.isEmpty()) {
             return new Found(null, null);
         }
-        if (records.size() > 1) {
-            return new Found(null, records.size() + " records of frozen extensions on the path (" + records
-                    + "): none can be told to be this deployment's");
+        if (records.size() == 1) {
+            URL location = records.getFirst();
+            try {
+                return new Found(read(location), null);
+            } catch (IOException | RuntimeException e) {
+                return new Found(null, "the record of the frozen extensions " + location + " cannot be read: " + e);
+            }
         }
-        URL location = records.getFirst();
-        try {
-            return new Found(read(location), null);
-        } catch (IOException | RuntimeException e) {
-            return new Found(null, "the record of the frozen extensions " + location + " cannot be read: " + e);
+        var others = new ArrayList<String>();
+        for (URL location : records) {
+            try {
+                FrozenExtensions frozen = read(location);
+                if (frozen.fingerprint().equals(fingerprint)) {
+                    return new Found(frozen, null);
+                }
+                others.add(location + " (fingerprint " + frozen.fingerprint() + ")");
+            } catch (IOException | RuntimeException e) {
+                others.add(location + " (cannot be read: " + e + ")");
+            }
         }
+        return new Found(null, records.size() + " records of frozen extensions on the path, none is this"
+                + " deployment's (fingerprint " + fingerprint + "): " + String.join(", ", others));
     }
 
     private static FrozenExtensions read(URL location) throws IOException {

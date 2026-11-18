@@ -5,6 +5,28 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-61 — A second record of frozen extensions on the path turns the freeze off for the whole deployment
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/frozen-record-by-fingerprint` (vauban#341)
+- **Module**: `vauban-core` (`FrozenExtensions.find`, `VaubanContainerBuilder.frozenExtensionsOf`)
+- **Symptom**: an application whose path holds a jar that carries a record of frozen extensions runs all its
+  extensions at start, and does not start with `-Dvidocq.startup.require-frozen-extensions=true`: `2 records of
+  frozen extensions on the path (…): none can be told to be this deployment's`. The application's own record is
+  valid. Seen with the jar of `vidocq-runtime-langchain4j-cdi-mcp-extension`, built with the freeze on (Vidocq
+  BUG-20261118-04, fixed there by removing the record from that jar, vidocq#661).
+- **Minimal repro**: `FrozenExtensionsTest#theRecordOfALibraryLeavesTheApplicationsInUse`: two outputs frozen for
+  two deployments, both on the path of a start of the second one. `FrozenExtensionsRecordTest`: the three
+  `twoRecordsOnThePath…` tests.
+- **Cause**: `find` gave up as soon as the loader saw two distinct files, before anyone compared a fingerprint. The
+  fingerprint is what tells that a record is this deployment's, and it was asked only of a record found alone.
+- **Fix**: `find` takes the fingerprint of the deployment. With several records it reads each and returns the one
+  that holds that fingerprint, whatever the order of the path; a record it cannot read is skipped. When none holds
+  it, none is used and the note names each record with its fingerprint, or with why it cannot be read. One record
+  alone is returned as before, and the start says what differs from its build.
+- **Not done**: the build does not name the jars of the path that carry a record. Such a record no longer harms the
+  application, and a build cannot know that its project is a library: that part is the plugin's (Vidocq).
+
 ## BUG-20261118-60 — A `jlink` image runs its extensions at each start: the index reads parameters from an attribute `--strip-debug` removes
 
 - **Date**: 2026-11-18

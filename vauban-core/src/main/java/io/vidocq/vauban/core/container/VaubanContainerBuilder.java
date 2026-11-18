@@ -813,14 +813,14 @@ public final class VaubanContainerBuilder {
      * knows whether a refused record is expected (a test adds its classes) or a mistake, and says it at its level.
      */
     private static FrozenExtensions.Found frozenExtensionsOf(ClassLoader loader, DeploymentFingerprint fingerprint) {
-        var found = FrozenExtensions.find(loader);
+        String value = fingerprint.value();
+        var found = FrozenExtensions.find(loader, value);
         if (found.frozen() == null) {
             if (found.note() != null) {
                 LOG.log(System.Logger.Level.DEBUG, RUN_AT_START, found.note());
             }
             return found;
         }
-        String value = fingerprint.value();
         if (!found.frozen().fingerprint().equals(value)) {
             String differences = fingerprint.deployment().differencesFrom(found.frozen().deployment());
             String note = "the record of the frozen extensions (" + FrozenExtensions.PATH + ") was written for "

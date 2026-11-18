@@ -87,7 +87,7 @@ class FrozenExtensionsRecordTest {
     void whatABuildWritesIsWhatAStartReads() throws IOException {
         aRecord("abc123").write(output);
 
-        var found = FrozenExtensions.find(loaderOf(output));
+        var found = FrozenExtensions.find(loaderOf(output), "abc123");
 
         assertNull(found.note());
         var read = found.frozen();
@@ -120,24 +120,80 @@ class FrozenExtensionsRecordTest {
     @Test
     @DisplayName("no record: nothing to use, nothing to say")
     void noRecord() throws IOException {
-        var found = FrozenExtensions.find(loaderOf(output));
+        var found = FrozenExtensions.find(loaderOf(output), "abc123");
 
         assertNull(found.frozen());
         assertNull(found.note());
     }
 
     @Test
-    @DisplayName("two records on the path: none is this deployment's for sure, none is used")
-    void twoRecordsOnThePath() throws IOException {
-        Path other = Files.createDirectory(output.resolve("other"));
-        Path one = Files.createDirectory(output.resolve("one"));
-        aRecord("abc123").write(one);
-        aRecord("def456").write(other);
+    @DisplayName("two records on the path: the one whose fingerprint is the deployment's is used")
+    void twoRecordsOnThePathTheDeploymentsIsUsed() throws IOException {
+        // vauban#341: the jar of a library built with the freeze on carries the record of the library's own
+        // deployment. Whatever the order of the path, the application's record is the one of its fingerprint.
+        Path library = Files.createDirectory(output.resolve("library"));
+        Path application = Files.createDirectory(output.resolve("application"));
+        aRecord("abc123").write(application);
+        aRecord("def456").write(library);
 
-        var found = FrozenExtensions.find(loaderOf(one, other));
+        for (ClassLoader loader : List.of(loaderOf(library, application), loaderOf(application, library))) {
+            var found = FrozenExtensions.find(loader, "abc123");
+
+            assertNull(found.note());
+            assertNotNull(found.frozen());
+            assertEquals("abc123", found.frozen().fingerprint());
+        }
+    }
+
+    @Test
+    @DisplayName("two records on the path, none of this deployment: none is used, the note names them")
+    void twoRecordsOnThePathNoneIsTheDeployments() throws IOException {
+        Path library = Files.createDirectory(output.resolve("library"));
+        Path application = Files.createDirectory(output.resolve("application"));
+        aRecord("abc123").write(application);
+        aRecord("def456").write(library);
+
+        var found = FrozenExtensions.find(loaderOf(application, library), "0000");
 
         assertNull(found.frozen());
         assertTrue(found.note().contains("2 records"), found.note());
+        assertTrue(found.note().contains("none is this deployment's (fingerprint 0000)"), found.note());
+        assertTrue(found.note().contains("application/" + FrozenExtensions.PATH + " (fingerprint abc123)"),
+                found.note());
+        assertTrue(found.note().contains("library/" + FrozenExtensions.PATH + " (fingerprint def456)"),
+                found.note());
+    }
+
+    @Test
+    @DisplayName("two records on the path, one cannot be read: the deployment's is used, or the note says why")
+    void twoRecordsOnThePathOneCannotBeRead() throws IOException {
+        Path library = Files.createDirectory(output.resolve("library"));
+        Path application = Files.createDirectory(output.resolve("application"));
+        aRecord("abc123").write(application);
+        aRecord("def456").write(library);
+        Path main = library.resolve(FrozenExtensions.PATH);
+        Files.writeString(main, Files.readString(main).replace("format=1", "format=2"));
+
+        var used = FrozenExtensions.find(loaderOf(library, application), "abc123");
+        assertNull(used.note());
+        assertEquals("abc123", used.frozen().fingerprint());
+
+        var refused = FrozenExtensions.find(loaderOf(library, application), "def456");
+        assertNull(refused.frozen());
+        assertTrue(refused.note().contains("library/" + FrozenExtensions.PATH + " (cannot be read: "),
+                refused.note());
+        assertTrue(refused.note().contains("format 2"), refused.note());
+    }
+
+    @Test
+    @DisplayName("one record on the path is the one found, whatever its fingerprint: the start says what differs")
+    void oneRecordIsFoundWhateverItsFingerprint() throws IOException {
+        aRecord("abc123").write(output);
+
+        var found = FrozenExtensions.find(loaderOf(output), "0000");
+
+        assertNull(found.note());
+        assertEquals("abc123", found.frozen().fingerprint());
     }
 
     @Test
@@ -149,7 +205,7 @@ class FrozenExtensionsRecordTest {
         URL root = output.toUri().toURL();
         var layer = new URLClassLoader(new URL[] {root}, new URLClassLoader(new URL[] {root}, null));
 
-        var found = FrozenExtensions.find(layer);
+        var found = FrozenExtensions.find(layer, "abc123");
 
         assertNull(found.note());
         assertNotNull(found.frozen());
@@ -162,13 +218,13 @@ class FrozenExtensionsRecordTest {
         aRecord("abc123").write(output);
         Path main = output.resolve(FrozenExtensions.PATH);
         Files.writeString(main, Files.readString(main).replace("format=1", "format=2"));
-        var otherFormat = FrozenExtensions.find(loaderOf(output));
+        var otherFormat = FrozenExtensions.find(loaderOf(output), "abc123");
         assertNull(otherFormat.frozen());
         assertTrue(otherFormat.note().contains("format 2"), otherFormat.note());
 
         aRecord("abc123").write(output);
         Files.delete(output.resolve(FrozenExtensions.SYNTHETIC_PATH));
-        var incomplete = FrozenExtensions.find(loaderOf(output));
+        var incomplete = FrozenExtensions.find(loaderOf(output), "abc123");
         assertNull(incomplete.frozen());
         assertTrue(incomplete.note().contains("cannot be read"), incomplete.note());
     }
@@ -182,7 +238,7 @@ class FrozenExtensionsRecordTest {
                 .filter(line -> !line.startsWith("class.") && !line.startsWith("settings="))
                 .collect(Collectors.joining("\n", "", "\n")));
 
-        var found = FrozenExtensions.find(loaderOf(output));
+        var found = FrozenExtensions.find(loaderOf(output), "abc123");
 
         assertNull(found.note());
         assertEquals("abc123", found.frozen().fingerprint());

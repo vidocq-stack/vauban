@@ -56,6 +56,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -71,6 +72,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -405,6 +407,27 @@ class FrozenExtensionsTest {
             assertTrue(container.extensionsAtStart().frozen());
             assertEquals(List.of(StaticExtension.class.getName()), container.extensionsAtStart().frozenAtBuild());
             assertEquals(List.of(), container.extensionsAtStart().ranAtStart());
+        }
+    }
+
+    @Test
+    @DisplayName("the record of a library on the path leaves the application's record in use")
+    void theRecordOfALibraryLeavesTheApplicationsInUse(@TempDir Path library) throws IOException {
+        // vauban#341 (Vidocq BUG-20261118-04): a jar built with the freeze on carries the record of its own
+        // deployment, and every application that had it on its path ran its extensions at start.
+        assertTrue(deployment(List.of(Promoted.class, StaticExtension.class)).freezeExtensions(library).frozen());
+        assertTrue(deployment(STATIC_DEPLOYMENT).freezeExtensions(output).frozen());
+        var loader = new URLClassLoader(new URL[] {library.toUri().toURL(), output.toUri().toURL()},
+                getClass().getClassLoader());
+        VaubanContainerBuilder start = VaubanContainer.builder().classLoader(loader);
+        STATIC_DEPLOYMENT.forEach(start::addBeanClass);
+
+        StaticExtension.RUNS.set(0);
+        try (VaubanContainer container = start.build()) {
+            assertNull(container.extensionsAtStart().note());
+            assertTrue(container.extensionsAtStart().frozen());
+            assertEquals(0, StaticExtension.RUNS.get(), "the start must not run a frozen extension");
+            assertEquals("plain", container.select(Plain.class).id());
         }
     }
 
