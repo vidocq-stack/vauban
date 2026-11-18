@@ -138,6 +138,28 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-28 — The processor shows class- and source-retained annotations
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-processor` (`apt.ElementScanner.scanAnnotations`)
+- **Symptom**: in the processor, `annotations()` of a class, a field, a method, a parameter or a package also gave
+  the annotations of `@Retention(CLASS)` or `@Retention(SOURCE)`, and an `@Enhancement(withAnnotations = …)` of a
+  class-retained annotation was called for the classes that carry it. At start and frozen the container reads
+  `RuntimeVisibleAnnotations` alone: neither shows them, and the enhancement is called for no class.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheRuntimeRetainedAnnotationsAloneInTheProcessorAtStartAndFrozen`,
+  red on e85a19cf (`stack-l1b-bug1828.log`, "RED on e85a19cf"): the processor saw
+  `class [ClassRetained, Deprecated, SourceRetained]` and `enhanced vi.types.Retained`.
+- **Cause**: `scanAnnotations` kept every annotation mirror of the element; the type annotations already kept the
+  runtime-retained ones alone (`MirrorTypeAnnotations.isRuntimeRetained`).
+- **Fix**: `scanAnnotations` keeps the runtime-retained annotations, and those whose type the compilation does not
+  find, whose retention it cannot read (`UnseenClassProcessorTest`).
+- **Known limit**: that type is missing only for a class read from the class path, and javac merges the visible and
+  invisible annotations of its class file: an unresolved class-retained annotation shows in the processor only, the
+  start reading `RuntimeVisibleAnnotations` alone.
+- **Verification**: `stack-l1b-bug1828.log`, "GREEN (2) on e85a19cf": vauban-processor 405 tests, 18 skipped.
+- **Found by**: the review of BUG-20261117-57.
+
 ## BUG-20261118-27 — `@Named("")` on an injection point field keeps the empty name
 
 - **Date**: 2026-11-18

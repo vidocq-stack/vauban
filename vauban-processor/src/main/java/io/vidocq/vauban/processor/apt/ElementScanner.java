@@ -303,10 +303,22 @@ public final class ElementScanner {
         return enclosing == null ? null : new TypeInfo.ClassType(enclosing);
     }
 
+    /**
+     * The runtime-retained annotations of {@code element}, those its class file keeps for reflection and the container
+     * reads at start: a class- or source-retained annotation is none of the language model's (BUG-20261118-28).
+     *
+     * <p>An annotation whose type the compilation does not find is kept, as its retention cannot be read. That type
+     * is missing only for a class read from the class path, and there javac merges the class file's visible and
+     * invisible annotations: an unresolved class-retained annotation shows in the processor only, the start reading
+     * the visible ones alone.
+     */
     private List<AnnotationInfo> scanAnnotations(Element element) {
         var result = new ArrayList<AnnotationInfo>();
         for (var mirror : element.getAnnotationMirrors()) {
-            result.add(annotationInfo(mirror));
+            if (mirror.getAnnotationType().getKind() == TypeKind.ERROR
+                    || MirrorTypeAnnotations.isRuntimeRetained(mirror)) {
+                result.add(annotationInfo(mirror));
+            }
         }
         return result;
     }

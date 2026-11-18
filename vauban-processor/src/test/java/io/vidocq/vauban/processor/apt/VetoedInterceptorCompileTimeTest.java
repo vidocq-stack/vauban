@@ -24,6 +24,8 @@ import io.vidocq.vauban.processor.VaubanProcessor;
 import io.vidocq.vauban.processor.apt.binding.Traced;
 import io.vidocq.vauban.processor.apt.repeatable.Mark;
 import io.vidocq.vauban.processor.apt.repeatable.Tag;
+import io.vidocq.vauban.processor.apt.retention.ClassRetained;
+import io.vidocq.vauban.processor.apt.retention.SourceRetained;
 import io.vidocq.vauban.processor.apt.scanned.ScannedBean;
 import io.vidocq.vauban.processor.apt.vetoed.ScannedQuietBean;
 import jakarta.enterprise.context.Dependent;
@@ -3838,6 +3840,80 @@ class VetoedInterceptorCompileTimeTest {
                 "vi.types has @Labelled true");
 
         var seen = seenThreeWays(sources, PackageAnnotationRecorder.class, PackageAnnotationRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
+    /** The class whose annotations {@link RetentionRecorder} reads (BUG-20261118-28). */
+    private static final String RETAINED = TYPES + "Retained";
+
+    /**
+     * Records, in {@code @Synthesis}, the annotations {@link #RETAINED}, its field, its method, its parameter and its
+     * package show, and, in {@code @Enhancement}, each class that carries {@link ClassRetained} (BUG-20261118-28).
+     */
+    public static class RetentionRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(RETAINED);
+        }
+
+        @Enhancement(types = Object.class, withSubtypes = true, withAnnotations = ClassRetained.class)
+        public void classRetained(ClassInfo type) {
+            SEEN.add("enhanced " + type.name());
+        }
+
+        @Synthesis
+        public void shown(Types types) {
+            var retained = types.ofClass(RETAINED).declaration();
+            SEEN.add("class " + names(retained.annotations()));
+            SEEN.add("package " + names(retained.packageInfo().annotations()));
+            retained.fields().forEach(field -> SEEN.add("field " + names(field.annotations())));
+            for (var method : retained.methods()) {
+                SEEN.add("method " + names(method.annotations()));
+                method.parameters().forEach(parameter -> SEEN.add("parameter " + names(parameter.annotations())));
+            }
+        }
+
+        private static List<String> names(Collection<AnnotationInfo> annotations) {
+            return annotations.stream().map(annotation -> simpleName(annotation.name())).sorted().toList();
+        }
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, with {@code vi.types.Retained}, whose class, field, method, parameter and package
+     * carry {@link ClassRetained} and {@link SourceRetained} besides {@code @Deprecated}, which is runtime-retained.
+     */
+    private static Map<String, String> withRetainedAnnotations() {
+        var sources = withAVetoedPackage();
+        var all = "@%s @%s @Deprecated".formatted(ClassRetained.class.getName(), SourceRetained.class.getName());
+        putType(sources, "Retained", """
+                %1$s
+                public class Retained {
+                    %1$s
+                    public String field;
+                    %1$s
+                    public void run(%1$s String value) {
+                    }
+                }""".formatted(all));
+        sources.put("vi/types/package-info" + JAVA, all + "\npackage vi.types;\n");
+        return sources;
+    }
+
+    /**
+     * The language model shows the runtime-retained annotations alone, those the class file keeps for reflection, in
+     * the processor, at start and frozen, and an {@code @Enhancement} of a class-retained annotation is called for no
+     * class. The processor showed the class- and source-retained ones too, and called it (BUG-20261118-28).
+     */
+    @Test
+    @DisplayName("an extension sees the runtime-retained annotations alone in the processor, at start and frozen")
+    void anExtensionSeesTheRuntimeRetainedAnnotationsAloneInTheProcessorAtStartAndFrozen() throws Exception {
+        var expected = List.of("class [Deprecated]", "field [Deprecated]", "method [Deprecated]",
+                "package [Deprecated]", "parameter [Deprecated]");
+
+        var seen = seenThreeWays(withRetainedAnnotations(), RetentionRecorder.class, RetentionRecorder.SEEN);
 
         seen.assertEachIs(expected);
     }
