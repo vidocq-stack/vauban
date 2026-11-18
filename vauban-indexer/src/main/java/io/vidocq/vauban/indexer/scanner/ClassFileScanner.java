@@ -76,6 +76,7 @@ public final class ClassFileScanner {
         var members = new Members(name, (cm.flags().flagsMask() & ClassFile.ACC_ENUM) != 0,
                 cm.findAttribute(Attributes.enclosingMethod())
                         .map(enclosing -> enclosing.enclosingClass().asSymbol()).orElse(null),
+                cm.findAttribute(Attributes.record()).map(RecordAttribute::components).orElse(null),
                 classParameters, TypeAnnotationReader.of(cm, ClassFileScanner::buildAnnotationInfo),
                 TypeAnnotationReader.receiver(name, typeParameters));
 
@@ -113,12 +114,13 @@ public final class ClassFileScanner {
 
     /**
      * What a field or a method is read against: whether its class is an enum, the class whose method or initializer
-     * declares it when it is local or anonymous ({@code null} otherwise), the type parameters of its class, the reader
-     * of its type annotations, and the receiver type of the class's methods.
+     * declares it when it is local or anonymous ({@code null} otherwise), the components of a record ({@code null} for
+     * any other class), the type parameters of its class, the reader of its type annotations, and the receiver type of
+     * the class's methods.
      */
     private record Members(DotName className, boolean enumClass, ClassDesc enclosingClass,
-                           List<Signature.TypeParam> classParameters, TypeAnnotationReader typeAnnotations,
-                           TypeInfo receiver) {}
+                           List<RecordComponentInfo> recordComponents, List<Signature.TypeParam> classParameters,
+                           TypeAnnotationReader typeAnnotations, TypeInfo receiver) {}
 
     /** The parameters an enum's constructor takes before those its source declares: the name and the ordinal. */
     private static final int ENUM_CONSTRUCTOR_PREFIX = 2;
@@ -264,7 +266,8 @@ public final class ClassFileScanner {
         var annotations = extractAnnotations(mm);
         var defaultValue = extractDefaultValue(mm);
         List<TypeAnnotationInfo> typeAnnotations = List.of();
-        if (TypeAnnotationReader.hasTypeAnnotations(mm)) {
+        var components = compactComponents(mm, members);
+        if (components.isPresent() || TypeAnnotationReader.hasTypeAnnotations(mm)) {
             var typeParameters = generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(List.of());
             var methodParameters = mm.findAttribute(Attributes.signature())
                     .map(signature -> signature.asMethodSignature().typeParameters()).orElse(List.of());
@@ -272,10 +275,58 @@ public final class ClassFileScanner {
                     parameters.stream().map(ParameterInfo::type).toList(), layout.mandated(), exceptionTypes,
                     typeParameters,
                     methodParameters, members.receiver());
-            typeAnnotations = members.typeAnnotations().read(mm, annotation -> placed(annotation, shape));
+            typeAnnotations = components.map(found -> compactTypeAnnotations(mm, members, found, shape))
+                    .orElseGet(() -> members.typeAnnotations().read(mm, annotation -> placed(annotation, shape)));
         }
         return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,
                 generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(null), typeAnnotations);
+    }
+
+    /**
+     * The record components of {@code mm} when it is a record's compact canonical constructor: every parameter
+     * {@code MethodParameters} marks mandated, the source declaring them implicitly (JLS 8.10.4), and the descriptor
+     * that of the components in order; empty for any other method, the explicit and the implicit canonical
+     * constructors among them, whose type annotations javac writes right. A record without components has a compact
+     * constructor without parameters: its components are an empty list.
+     */
+    private static Optional<List<RecordComponentInfo>> compactComponents(MethodModel mm, Members members) {
+        var components = members.recordComponents();
+        var type = mm.methodTypeSymbol();
+        if (components == null || !ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue())
+                || components.size() != type.parameterCount()) {
+            return Optional.empty();
+        }
+        for (int i = 0; i < components.size(); i++) {
+            if (!components.get(i).descriptorSymbol().equals(type.parameterType(i))) {
+                return Optional.empty();
+            }
+        }
+        var parameters = mm.findAttribute(Attributes.methodParameters()).map(MethodParametersAttribute::parameters)
+                .orElse(List.of());
+        return Optional.of(components).filter(_ -> parameters.size() == components.size() && parameters.stream()
+                .allMatch(parameter -> (parameter.flagsMask() & ClassFile.ACC_MANDATED) != 0));
+    }
+
+    /**
+     * The type annotations of a compact canonical constructor: javac 25 writes those of its parameters with a path, on
+     * a qualified type or on an array as copies of its record components' with a {@code FIELD} target, which names
+     * no parameter (BUG-20261118-34). Each parameter takes its component's instead, path and all, and the constructor
+     * keeps its own others; its own parameter entries would count the top-level ones twice.
+     */
+    private static List<TypeAnnotationInfo> compactTypeAnnotations(MethodModel mm, Members members,
+            List<RecordComponentInfo> components, MethodShape shape) {
+        var result = new ArrayList<>(members.typeAnnotations().read(mm, annotation -> switch (annotation.targetInfo()) {
+            case TypeAnnotation.FormalParameterTarget _ -> null;
+            case TypeAnnotation.TargetInfo target when target.targetType() == TypeAnnotation.TargetType.FIELD -> null;
+            default -> placed(annotation, shape);
+        }));
+        for (int i = 0; i < components.size(); i++) {
+            var parameter = TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.PARAMETER, i,
+                    element(shape.parameters(), i));
+            result.addAll(members.typeAnnotations().read(components.get(i), annotation ->
+                    annotation.targetInfo().targetType() == TypeAnnotation.TargetType.FIELD ? parameter : null));
+        }
+        return result;
     }
 
     /**

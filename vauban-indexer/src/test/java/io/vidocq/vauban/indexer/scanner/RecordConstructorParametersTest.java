@@ -39,7 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * constructor mandated, which the source declares implicitly and its {@code Signature} names. They are the
  * constructor's own: with their generic types and their type annotations, numbered from 0, not taken for an outer
  * instance. Javac 25 writes the component's annotation on the type argument into a compact constructor with a
- * {@code FIELD} target, which no parameter reads: only the one on the parameter's type is the constructor's.
+ * {@code FIELD} target, which names no parameter: the scanner reads the components' instead, each on its parameter,
+ * path and all, the one on the parameter's type once (BUG-20261118-34).
  */
 @DisplayName("BUG-20261118-32 - a record's canonical constructor")
 class RecordConstructorParametersTest {
@@ -65,7 +66,7 @@ class RecordConstructorParametersTest {
     @DisplayName("a compact canonical constructor has its generic parameters and their type annotations")
     void aCompactConstructor() throws IOException {
         assertEquals("[ParameterizedType[rawType=java.util.List, typeArguments=[ClassType[name=java.lang.String]]]"
-                + " [Marked], PrimitiveType[kind=INT] []] [PARAMETER 0 [] Marked]",
+                + " [Marked], PrimitiveType[kind=INT] []] [PARAMETER 0 [] Marked, PARAMETER 0 [TYPE_ARGUMENT] Marked]",
                 described(constructor("RecordConstructorParametersTest$Compact.class")));
     }
 

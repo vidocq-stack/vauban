@@ -2534,6 +2534,39 @@ class VetoedInterceptorCompileTimeTest {
                 "Explicit [java.util.List<java.lang.String> [vi.types.Marked] []]"));
     }
 
+    /**
+     * The type annotations of a compact constructor's parameters, which javac 25 writes into the constructor with a
+     * {@code FIELD} target where they have a path, are on a qualified type or on an array: they are its record
+     * components', each on its parameter, in the processor, at start and frozen; a top-level one on a plain type once
+     * (BUG-20261118-34).
+     */
+    @Test
+    @DisplayName("a compact constructor's type annotations, with a path, qualified, on an array, three ways")
+    void aCompactConstructorTypeAnnotations() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Marked", """
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                @java.lang.annotation.Target(java.lang.annotation.ElementType.TYPE_USE)
+                public @interface Marked {
+                }""");
+        putType(sources, "Compact", """
+                public record Compact(java.util.@Marked List<@Marked String> names, @Marked String plain,
+                        String @Marked [] tags, int size) {
+                    public Compact {
+                        names = java.util.List.copyOf(names);
+                    }
+                }""");
+        putType(sources, "Explicit", """
+                public record Explicit(java.util.List<String> names) {
+                }""");
+
+        var seen = seenThreeWays(sources, RecordConstructorRecorder.class, RecordConstructorRecorder.SEEN);
+
+        seen.assertEachIs(List.of("Compact [java.util.List<java.lang.String> [vi.types.Marked] [vi.types.Marked],"
+                        + " java.lang.String [vi.types.Marked] [], java.lang.String[] [vi.types.Marked] [], int [] []]",
+                "Explicit [java.util.List<java.lang.String> [] []]"));
+    }
+
     /** Records the parameter types of the records' constructors, with their annotations and their arguments'. */
     public static class RecordConstructorRecorder implements BuildCompatibleExtension {
 

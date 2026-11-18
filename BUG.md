@@ -5,6 +5,37 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-34 — At start, a compact constructor's parameters lose their type annotations
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`); the cause is javac's
+- **Symptom**: for `record Compact(java.util.@Marked List<@Marked String> names, @Marked String plain, String
+  @Marked [] tags, int size) { Compact { ... } }`, with a `TYPE_USE` annotation, the compact canonical constructor's
+  parameters carry no type annotation that has a path (`List<@Marked String>`), sits on a qualified type
+  (`java.util.@Marked List`) or on an array (`String @Marked []`), at start and frozen, where the processor shows them.
+  A top-level one on a plain type (`@Marked String`) shows, and so does any annotation that also targets `PARAMETER`.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aCompactConstructorTypeAnnotations` in `vauban-processor`, three ways;
+  red on 922d0028 (`stack-l2c-red.log`, "RED round 3 BUG-20261118-34 on 922d0028"): `Compact
+  [java.util.List<java.lang.String> [] [], java.lang.String [vi.types.Marked] [], java.lang.String[] [] [], int []
+  []]` at start and frozen. `RecordConstructorParametersTest#aCompactConstructor` in `vauban-indexer`.
+- **Cause**: javac 25 writes these annotations into the compact constructor's `RuntimeVisibleTypeAnnotations` as
+  copies of the record component's, with a `FIELD` target (`javap`: `FIELD`, `FIELD, location=[TYPE_ARGUMENT(0)]`),
+  where the JVMS asks for `METHOD_FORMAL_PARAMETER` with an index: nothing says which parameter they belong to, and
+  the index keeps a method's formal parameter targets only. The top-level ones on a plain type it writes right. The
+  explicit and the implicit canonical constructors are written right.
+- **Fix**: after JLS 8.10.4, a compact canonical constructor's parameters are its record components, in order. For a
+  constructor whose `MethodParameters` marks every parameter mandated and whose descriptor is the components', in
+  order, `ClassFileScanner` places the type annotations of component *i* (its `RuntimeVisibleTypeAnnotations`, path
+  and all) on parameter *i*, instead of the constructor's own parameter entries, which would count the top-level ones
+  twice; the constructor's other type annotations stay. Without `MethodParameters`, and for an explicit or an
+  implicit canonical constructor, nothing changes. The frozen record's checksum of such a record changes.
+- **Verification**: `stack-l2c-green34b.log` (the three-way repro and `aRecordConstructorKeepsItsGenericParameters`,
+  green), `stack-l2c-green-idx3.log` (indexer, 138 tests); the full build in the report's "Review round 3".
+- **Found by**: the red test of BUG-20261118-32's round 2 (review of batch C); fix after the review's round 3.
+
+---
+
 ## BUG-20261118-33 — In the processor, an inner class's constructor lacks its outer instance
 
 - **Date**: 2026-11-18
