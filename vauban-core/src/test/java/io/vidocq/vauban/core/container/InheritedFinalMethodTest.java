@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.container;
 
+import io.vidocq.vauban.api.ClientProxyClass;
 import io.vidocq.vauban.core.container.finalpackage.PackageFinalBase;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -31,7 +32,6 @@ import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.interceptor.InvocationContext;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -39,18 +39,18 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A bean that inherits a final method, neither private nor static, is unproxyable (CDI 4.1 §3.10), as one that declares
- * the method is: an injected normal-scoped one and an intercepted one fail the deployment, and a lookup of a
- * normal-scoped one throws. The container used to read the
- * bean class's own methods only, so such a bean started and a call of the method ran on the proxy or the subclass
- * itself (BUG-20261118-19). The superclasses here are no beans of the deployment: the index the validator walks does
- * not hold them, as for a superclass of a library.
+ * A bean that inherits a final method, neither private nor static, is unproxyable (CDI 4.1 §3.10), as one that
+ * declares the method is: an injected normal-scoped one and an intercepted one fail the deployment, and a lookup of a
+ * normal-scoped one throws. The container used to read the bean class's own methods only, so such a bean started
+ * and a call of the method ran on the proxy or the subclass itself (BUG-20261118-19). The superclasses here are no
+ * beans of the deployment: the index the validator walks does not hold them, as for a superclass of a library.
  */
 @DisplayName("A bean that inherits a final method is unproxyable")
 class InheritedFinalMethodTest {
@@ -168,6 +168,92 @@ class InheritedFinalMethodTest {
     /** Implements {@link Stateful#state()} with the final method it inherits: no subclass proxy can forward it. */
     @ApplicationScoped
     public static class StatefulSvc extends StatefulFinalBase implements Stateful {
+        @Override
+        public String toString() {
+            return "stateful " + state();
+        }
+
+        @Override
+        public int hashCode() {
+            return 42;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Stateful;
+        }
+    }
+
+    @Dependent
+    public static class StatefulConsumer {
+        @Inject
+        Stateful stateful;
+    }
+
+    /** A superclass with no final method, above the one that declares it: a bean type a proxy can extend. */
+    public static class Top {
+        public String top() {
+            return "top " + getClass().getSimpleName();
+        }
+    }
+
+    public static class FinalBelowTop extends Top {
+        public final String sealedOff() {
+            return "sealed";
+        }
+    }
+
+    @ApplicationScoped
+    public static class BelowTop extends FinalBelowTop implements Stateful {
+        @Override
+        public String state() {
+            return "below";
+        }
+    }
+
+    /** Its final method sits below a class no proxy here can extend, which sits below one a proxy can. */
+    @ApplicationScoped
+    public static class BelowMiddle extends io.vidocq.vauban.core.container.finalpackage.PackageMethodMiddle
+            implements Stateful {
+        @Override
+        public String state() {
+            return "below middle";
+        }
+
+        public final String sealedOff() {
+            return "sealed";
+        }
+    }
+
+    /** Implements, through its superclass, an interface its proxy cannot name. */
+    @ApplicationScoped
+    public static class Faced extends io.vidocq.vauban.core.container.finalpackage.FacedFinalBase
+            implements Stateful {
+        @Override
+        public String state() {
+            return "faced";
+        }
+    }
+
+    @Dependent
+    public static class TopConsumer {
+        @Inject
+        Top top;
+    }
+
+    /** Produced: its class inherits the final {@code state()} that implements {@link Stateful}. */
+    public static class StatefulProduct extends StatefulFinalBase implements Stateful {
+    }
+
+    @Dependent
+    public static class StatefulProducts {
+        @Produces
+        @ApplicationScoped
+        StatefulProduct product() {
+            var product = new StatefulProduct();
+            product.init();
+            return product;
+        }
     }
 
     /** A private and a static final method: no subclass overrides them, and no proxy needs to. */
@@ -273,11 +359,79 @@ class InheritedFinalMethodTest {
     }
 
     @Test
-    @Disabled("BUG-20261118-20: the client proxy subclasses the bean class and cannot override state(), which then"
-            + " runs on the proxy; an interface-typed proxy would forward it")
     @DisplayName("looked up as an interface the inherited final method implements, the call reaches the instance")
     void anInterfaceMethodTheFinalMethodImplements() {
+        // BUG-20261118-20: a proxy that subclasses the bean class cannot override state(), which ran on the proxy.
         try (var container = VaubanContainer.builder().addBeanClass(StatefulSvc.class).build()) {
+            assertEquals("instance", container.select(Stateful.class).state());
+        }
+    }
+
+    @Test
+    @DisplayName("injected as that interface, the call reaches the instance")
+    void injectedAsTheInterface() {
+        try (var container = VaubanContainer.builder().addBeanClass(StatefulSvc.class)
+                .addBeanClass(StatefulConsumer.class).build()) {
+            assertEquals("instance", container.select(StatefulConsumer.class).stateful.state());
+        }
+    }
+
+    @Test
+    @DisplayName("toString, hashCode and equals of that proxy reach the instance")
+    void objectMethods() {
+        try (var container = VaubanContainer.builder().addBeanClass(StatefulSvc.class).build()) {
+            var proxy = container.select(Stateful.class);
+            assertEquals("stateful instance", proxy.toString());
+            assertEquals(42, proxy.hashCode());
+            Stateful other = () -> "other";
+            assertEquals(proxy, other, "equals reaches the instance, which takes any Stateful");
+        }
+    }
+
+    @Test
+    @DisplayName("a superclass above the final method is a proxyable bean type: looked up or injected as it, it works")
+    void aSuperclassAboveTheFinalMethod() {
+        try (var container = VaubanContainer.builder().addBeanClass(BelowTop.class).addBeanClass(TopConsumer.class)
+                .build()) {
+            assertEquals("top BelowTop", container.select(Top.class).top());
+            assertEquals("top BelowTop", container.select(TopConsumer.class).top.top());
+            assertEquals("below", container.select(Stateful.class).state());
+            var failure = assertThrows(UnproxyableResolutionException.class,
+                    () -> container.select(FinalBelowTop.class));
+            assertTrue(messages(failure).contains("final method sealedOff"), messages(failure));
+        }
+    }
+
+    @Test
+    @DisplayName("past a class no proxy can extend, the proxy extends the next one above that it can")
+    void pastAClassNoProxyCanExtend() {
+        try (var container = VaubanContainer.builder().addBeanClass(BelowMiddle.class).build()) {
+            var top = container.select(io.vidocq.vauban.core.container.finalpackage.PublicTop.class);
+            assertEquals("top BelowMiddle", top.top());
+            assertEquals("below middle", container.select(Stateful.class).state());
+            // The class passed over has no final method, but the proxy is no instance of it.
+            var failure = assertThrows(UnproxyableResolutionException.class,
+                    () -> container.select(io.vidocq.vauban.core.container.finalpackage.PackageMethodMiddle.class));
+            assertTrue(messages(failure).contains("is no instance of"), messages(failure));
+            assertEquals(Optional.of(BelowMiddle.class), ClientProxyClass.beanClassOf(top.getClass()));
+        }
+    }
+
+    @Test
+    @DisplayName("looked up as an interface its proxy cannot implement, the bean is not resolved")
+    void anInterfaceTheProxyCannotImplement() throws ClassNotFoundException {
+        var hidden = Class.forName("io.vidocq.vauban.core.container.finalpackage.HiddenFace");
+        try (var container = VaubanContainer.builder().addBeanClass(Faced.class).build()) {
+            assertEquals("faced", container.select(Stateful.class).state());
+            var failure = assertThrows(UnproxyableResolutionException.class, () -> container.select(hidden));
+            assertTrue(messages(failure).contains("is no instance of"), messages(failure));
+        }
+    }
+
+    @Test
+    @DisplayName("a normal-scoped producer of such a class, looked up as the interface, reaches the product")
+    void producedThroughTheInterface() {
+        try (var container = VaubanContainer.builder().addBeanClass(StatefulProducts.class).build()) {
             assertEquals("instance", container.select(Stateful.class).state());
         }
     }

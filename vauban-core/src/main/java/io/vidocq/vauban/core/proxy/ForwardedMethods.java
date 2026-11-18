@@ -123,6 +123,39 @@ public final class ForwardedMethods {
     }
 
     /**
+     * The class a client proxy of {@code target} extends: {@code target} itself, unless it has a final method
+     * ({@link #firstFinalMethod}), which no subclass can forward. Then the nearest superclass that has none and that a
+     * proxy can extend: in the proxy's package ({@code proxyInTargetPackage} and the same package as {@code target}),
+     * or fit to be extended from another one ({@link ProducerProxyEligibility}); at the end, {@code java.lang.Object}.
+     * The proxy implements the interfaces of {@code target} besides, so a call typed by one of them, a final method
+     * implementing it included, reaches the contextual instance; a class below the one it extends is unproxyable as a
+     * requested type, as CDI 4.1 §3.10 says (BUG-20261118-20). Weld picks the same superclass for the requested type.
+     */
+    public static TypeView proxySuperclass(TypeView target, boolean proxyInTargetPackage) {
+        if (firstFinalMethod(target).isEmpty()) {
+            return target;
+        }
+        TypeView c = target.superclass();
+        if (c == null) {
+            return target;
+        }
+        // The nearest class above with no final method that a proxy can extend; a class it cannot extend is passed
+        // over, not the end of the walk: one above it may do (review round 6).
+        while (!c.isObject() && (firstFinalMethod(c).isPresent() || !extendable(c, target, proxyInTargetPackage))) {
+            c = c.superclass();
+        }
+        return c;
+    }
+
+    /** Whether a proxy placed as {@code proxyInTargetPackage} says may extend {@code superclass} of {@code target}. */
+    private static boolean extendable(TypeView superclass, TypeView target, boolean proxyInTargetPackage) {
+        if (proxyInTargetPackage && superclass.isSamePackage(target)) {
+            return ClientProxyShape.superConstructor(superclass) != null;
+        }
+        return ProducerProxyEligibility.of(superclass).eligible();
+    }
+
+    /**
      * Whether a proxy may override {@code m}: neither static, private nor final, neither a bridge nor generated
      * plumbing, nor a finalizer or {@code clone()}, nor a serialization hook ({@link #isSerialHook}), which no proxy
      * forwards. An abstract method is forwarded like any other: the proxy never calls {@code super}, and the

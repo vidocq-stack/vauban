@@ -485,8 +485,31 @@ class ClientProxyInheritanceCrossCheckTest {
         Set<String> bytecode = Set.of("tag(java.lang.String)", "tag(java.lang.Integer)", "tag(java.lang.Object)");
         assertEquals(bytecode, runtimeShape(TaggedWithOverload.class), "run-time shape");
         assertEquals(bytecode, colocatedShapeFromElements(TaggedWithOverload.class), "co-located shape");
-        assertEquals(Set.of(), runtimeShape(FinalTagged.class), "run-time shape of FinalTagged");
         assertEquals(Set.of(), colocatedShapeFromElements(FinalTagged.class), "co-located shape of FinalTagged");
+    }
+
+    @Test
+    @DisplayName("past a final method, both paths extend the class above and forward the interfaces (BUG-20261118-20)")
+    void beyondAFinalMethod() throws Exception {
+        // FinalTagged's final tag(String) implements Tagged<String>.tag(T): the proxy extends Object, the class above
+        // FinalTagBase, and forwards tag(Object) through Tagged, which reaches the final method on the instance.
+        var beyond = Set.of("tag(java.lang.Object)@" + Tagged.class.getName());
+        assertEquals(beyond, runtimeShape(FinalTagged.class), "run-time shape of FinalTagged");
+        assertEquals(beyond, beyondFinalShapeFromElements(FinalTagged.class), "processor shape of FinalTagged");
+    }
+
+    private Set<String> beyondFinalShapeFromElements(Class<?> fixture) throws Exception {
+        String joined = capture(fixture, (element, env) -> {
+            var shape = ClientProxyShapeFromElements.beyondFinalMethod(element, env.elements(), env.types(), _ -> { })
+                    .orElseThrow();
+            return shape.methods().stream()
+                    .map(m -> m.name() + "(" + m.params().stream().map(Object::toString)
+                            .collect(Collectors.joining(",")) + ")" + (m.needsMethodHandle() ? "#mh" : "")
+                            + ownerSuffix(m))
+                    .filter(k -> !OBJECT_METHODS.contains(k.replace("#mh", "")))
+                    .collect(Collectors.joining(";"));
+        });
+        return distinctParts(joined);
     }
 
     private Set<String> colocatedShapeFromElements(Class<?> fixture) throws Exception {

@@ -390,6 +390,105 @@ public final class ClientProxyShapeFromElements {
         }
     }
 
+    /**
+     * The shape of the proxy of {@code bean} when its class has a final method: the proxy extends the class above it
+     * that {@link ForwardedMethods#proxySuperclass} picks, as the run-time generator's does, and implements the
+     * interfaces of {@code bean}, every method of which it forwards through its interface (BUG-20261118-20). Empty when
+     * the proxy extends {@code bean}. Such a shape is emitted as bytecode, named after {@code bean}.
+     */
+    public static Optional<ClientProxyShape> beyondFinalMethod(TypeElement bean, Elements elements, Types types,
+            Consumer<String> omitted) {
+        var superclass = ((ElementTypeView) ForwardedMethods.proxySuperclass(ElementTypeView.of(bean, types), true))
+                .type();
+        if (superclass.equals(bean)) {
+            return Optional.empty();
+        }
+        var proxyPackage = elements.getPackageOf(bean);
+        var base = fromErased(superclass, proxyPackage, elements, types, omitted);
+        var methods = new ArrayList<>(base.methods());
+        var declared = new java.util.HashSet<String>();
+        for (var m : methods) declared.add(descriptorKey(m));
+        var interfaces = new ArrayList<TypeRef>();
+        for (var implemented : proxiedInterfaces(bean, proxyPackage, elements)) {
+            var owner = TypeRef.ofReference(elements.getBinaryName(implemented).toString());
+            interfaces.add(owner);
+            for (var method : ElementFilter.methodsIn(elements.getAllMembers(implemented))) {
+                if (isForwardedInterfaceMethod(method)) {
+                    var shape = new ProxyMethodShape(method.getSimpleName().toString(),
+                            typeRef(method.getReturnType(), elements, types),
+                            typeRefs(method.getParameters(), elements, types),
+                            mirrorRefs(method.getThrownTypes(), elements, types), false, owner);
+                    if (declared.add(descriptorKey(shape))) {
+                        methods.add(shape);
+                    }
+                }
+            }
+        }
+        return Optional.of(new ClientProxyShape(base.beanBinaryName(), base.superCtorParams(), methods,
+                base.superCtorThrown(), base.overridesWriteReplace() || inheritsInterfaceWriteReplace(interfaces,
+                        methods), interfaces));
+    }
+
+    /** Whether an interface's {@code Object writeReplace()} is among {@code methods}, forwarded through it. */
+    private static boolean inheritsInterfaceWriteReplace(List<TypeRef> interfaces, List<ProxyMethodShape> methods) {
+        return !interfaces.isEmpty() && methods.stream().anyMatch(m -> m.interfaceOwner() != null
+                && m.name().equals(ForwardedMethods.WRITE_REPLACE) && m.params().isEmpty());
+    }
+
+    /** A method an interface declares, neither static nor private: its own, or one of a superinterface. */
+    private static boolean isForwardedInterfaceMethod(ExecutableElement method) {
+        return method.getEnclosingElement().getKind() == javax.lang.model.element.ElementKind.INTERFACE
+                && !method.getModifiers().contains(Modifier.STATIC)
+                && !method.getModifiers().contains(Modifier.PRIVATE);
+    }
+
+    /**
+     * The interfaces of {@code bean} and of its superclasses, with theirs, in the order the classes declare them, that
+     * a proxy in {@code proxyPackage} may implement, {@code java.io.Serializable} aside: the run-time generator's list.
+     */
+    private static List<TypeElement> proxiedInterfaces(TypeElement bean,
+            javax.lang.model.element.PackageElement proxyPackage, Elements elements) {
+        var found = new java.util.LinkedHashSet<TypeElement>();
+        for (TypeElement c = bean; c != null && !c.getQualifiedName().contentEquals(ForwardedMethods.OBJECT);
+                c = superclassOf(c)) {
+            for (var implemented : c.getInterfaces()) {
+                addWithSuperinterfaces(implemented, found);
+            }
+        }
+        found.removeIf(implemented -> implemented.getQualifiedName().contentEquals("java.io.Serializable")
+                || !accessibleFrom(implemented, proxyPackage, elements));
+        return List.copyOf(found);
+    }
+
+    private static void addWithSuperinterfaces(TypeMirror implemented, java.util.Set<TypeElement> found) {
+        if (implemented instanceof javax.lang.model.type.DeclaredType declared
+                && declared.asElement() instanceof TypeElement element && found.add(element)) {
+            for (var parent : element.getInterfaces()) {
+                addWithSuperinterfaces(parent, found);
+            }
+        }
+    }
+
+    private static TypeElement superclassOf(TypeElement type) {
+        return type.getSuperclass() instanceof javax.lang.model.type.DeclaredType declared
+                && declared.asElement() instanceof TypeElement superclass ? superclass : null;
+    }
+
+    /** Whether code of {@code proxyPackage} may name {@code type}: public, enclosing types included, or its own. */
+    private static boolean accessibleFrom(TypeElement type, javax.lang.model.element.PackageElement proxyPackage,
+            Elements elements) {
+        if (elements.getPackageOf(type).equals(proxyPackage)) {
+            return true;
+        }
+        for (var e = (javax.lang.model.element.Element) type; e instanceof TypeElement;
+                e = e.getEnclosingElement()) {
+            if (!e.getModifiers().contains(Modifier.PUBLIC)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** The name, parameter types and return type: what a method of a class file is told apart by. */
     private static String descriptorKey(ProxyMethodShape m) {
         return m.name() + m.params() + m.returnType();

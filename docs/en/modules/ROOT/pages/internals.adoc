@@ -240,6 +240,18 @@ proxy is generated, and whether it costs an `opens`, depends entirely on **who o
 proxied type**. Vauban resolves this in the order below; the first strategy that applies
 wins.
 
+The proxy extends the bean class, unless that class has a `final` method, neither `private` nor `static`, of its own
+or of a superclass: no subclass can forward it. The proxy then extends the nearest
+class above that method that has none and that a proxy can extend, often `Object`, and implements the interfaces of
+the bean class a proxy in its package can name, forwarding each of their methods through its interface; such a bean
+is proxyable only as those interfaces or a class above the method (CDI 4.1 §3.10), and a lookup as any other type
+throws `UnproxyableResolutionException`. Weld picks the same superclass. Every path builds that shape from
+`ForwardedMethods.proxySuperclass`; the processor emits it as bytecode, still named `<Bean>_ClientProxy`
+(BUG-20261118-20). That name is what tells the bean class behind a proxy that may not extend it:
+`io.vidocq.vauban.api.ClientProxyClass.beanClassOf(Class)` reads it, for code that reads the bean class's annotations,
+a JAX-RS provider's say; code that casts the proxy to the class it names must check the proxy is an instance of it.
+[.tag-new]#NEW#
+
 [cols="1,2,2"]
 |===
 |Case |Strategy |Cost

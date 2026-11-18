@@ -61,7 +61,9 @@ public final class RuntimeClientProxyGenerator {
      */
     public static GeneratedProxy generate(Class<?> beanClass) {
         ClientProxyShape shape = shapeOf(beanClass);
-        return new GeneratedProxy(shape.proxyClassName(), ClientProxyEmitter.emit(shape));
+        // Named after the bean, which the shape may not extend (ForwardedMethods.proxySuperclass).
+        var proxyName = proxyClassName(beanClass);
+        return new GeneratedProxy(proxyName, ClientProxyEmitter.emitAt(shape, proxyName));
     }
 
     /**
@@ -118,6 +120,12 @@ public final class RuntimeClientProxyGenerator {
     /** The shape of a proxy of {@code beanClass} placed as {@code placement} says. */
     private static ClientProxyShape shapeAt(Class<?> beanClass, boolean colocated,
             ForwardedMethods.Placement placement) {
+        var inPackage = placement == ForwardedMethods.Placement.TYPE_PACKAGE;
+        var superclass = ((ClassTypeView) ForwardedMethods.proxySuperclass(ClassTypeView.of(beanClass), inPackage))
+                .type();
+        if (superclass != beanClass) {
+            return beyondFinalMethod(beanClass, superclass, colocated, placement);
+        }
         var type = ClassTypeView.of(beanClass);
         var selection = ForwardedMethods.select(type, placement);
         var proxiedSeen = new java.util.HashSet<>(selection.keys());
@@ -144,6 +152,88 @@ public final class RuntimeClientProxyGenerator {
                 typeRefs(superCtor.getExceptionTypes()),
                 ForwardedMethods.exposesWriteReplace(type, placement)
                         || inheritsInterfaceWriteReplace(beanClass));
+    }
+
+    /**
+     * The shape of a proxy of {@code beanClass}, which has a final method, that extends {@code superclass} instead, a
+     * class above it with none, and implements the interfaces of {@code beanClass}: the shape of {@code superclass},
+     * placed where the proxy of {@code beanClass} lives, and every method of those interfaces, forwarded through its
+     * interface (BUG-20261118-20). A final method that implements one of them is reached that way.
+     */
+    private static ClientProxyShape beyondFinalMethod(Class<?> beanClass, Class<?> superclass, boolean colocated,
+            ForwardedMethods.Placement placement) {
+        var samePackage = placement == ForwardedMethods.Placement.TYPE_PACKAGE
+                && superclass.getPackageName().equals(beanClass.getPackageName());
+        var base = shapeAt(superclass, colocated && samePackage,
+                samePackage ? placement : ForwardedMethods.Placement.OTHER_PACKAGE);
+        var methods = new ArrayList<>(base.methods());
+        var declared = new java.util.HashSet<String>();
+        for (var m : methods) declared.add(descriptorKey(m));
+        var interfaces = new ArrayList<TypeRef>();
+        var proxyPackage = placement == ForwardedMethods.Placement.TYPE_PACKAGE ? beanClass.getPackageName() : null;
+        for (var implemented : proxiedInterfaces(beanClass, proxyPackage)) {
+            interfaces.add(TypeRef.fromClass(implemented));
+            addInterfaceMethods(implemented, declared, methods);
+        }
+        return new ClientProxyShape(superclass.getName(), base.superCtorParams(), methods, base.superCtorThrown(),
+                base.overridesWriteReplace() || inheritsInterfaceWriteReplace(beanClass), interfaces);
+    }
+
+    /**
+     * Adds to {@code methods} each method of {@code implemented}, neither static nor a {@code writeReplace()}, whose
+     * descriptor {@code declared} does not hold yet, forwarded through {@code implemented}.
+     */
+    private static void addInterfaceMethods(Class<?> implemented, java.util.Set<String> declared,
+            List<ProxyMethodShape> methods) {
+        var owner = TypeRef.fromClass(implemented);
+        for (var method : BeanMembers.inStableOrder(implemented.getMethods())) {
+            if (Modifier.isStatic(method.getModifiers()) || isObjectWriteReplace(method)) {
+                continue;
+            }
+            var shape = new ProxyMethodShape(method.getName(), TypeRef.fromClass(method.getReturnType()),
+                    typeRefs(method.getParameterTypes()), typeRefs(method.getExceptionTypes()), false, owner);
+            if (declared.add(descriptorKey(shape))) {
+                methods.add(shape);
+            }
+        }
+    }
+
+    /**
+     * The interfaces of {@code beanClass} and of its superclasses, with theirs, in the order the classes declare them,
+     * that a proxy in {@code proxyPackage} may implement, public ones only when it is {@code null}:
+     * {@code java.io.Serializable} aside, which every proxy implements.
+     */
+    static List<Class<?>> proxiedInterfaces(Class<?> beanClass, String proxyPackage) {
+        var found = new java.util.LinkedHashSet<Class<?>>();
+        for (Class<?> c = beanClass; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (var implemented : c.getInterfaces()) {
+                addWithSuperinterfaces(implemented, found);
+            }
+        }
+        found.remove(java.io.Serializable.class);
+        found.removeIf(implemented -> !accessibleFrom(implemented, proxyPackage));
+        return List.copyOf(found);
+    }
+
+    private static void addWithSuperinterfaces(Class<?> implemented, java.util.Set<Class<?>> found) {
+        if (found.add(implemented)) {
+            for (var parent : implemented.getInterfaces()) {
+                addWithSuperinterfaces(parent, found);
+            }
+        }
+    }
+
+    /** Whether code of {@code packageName} may name {@code type}: public, enclosing types included, or its own. */
+    private static boolean accessibleFrom(Class<?> type, String packageName) {
+        if (type.getPackageName().equals(packageName)) { // a null packageName is no package
+            return true;
+        }
+        for (Class<?> t = type; t != null; t = t.getEnclosingClass()) {
+            if (!Modifier.isPublic(t.getModifiers())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

@@ -67,6 +67,8 @@ public final class ProxyLinkWeaver {
             MethodTypeDesc.of(ConstantDescs.CD_void, CD_PROXY_LINK);
     private static final String MARKER_DESCRIPTOR = MTD_MARKER.descriptorString();
     private static final MethodTypeDesc MTD_VOID = MethodTypeDesc.of(ConstantDescs.CD_void);
+    /** The client proxy's name suffix — mirror of {@code ClientProxyShape.PROXY_SUFFIX}. */
+    private static final String PROXY_SUFFIX = "_ClientProxy";
     /** The client proxy's delegate field — mirror of {@code ClientProxyShape.FIELD_DELEGATE}. */
     private static final String FIELD_DELEGATE = "$$delegate";
     private static final ClassDesc CD_SUPPLIER = ClassDesc.of("java.util.function.Supplier");
@@ -152,13 +154,19 @@ public final class ProxyLinkWeaver {
      * {@code (Supplier d)}, and stores it in the final {@code $$delegate} after the super call
      * (vauban#227): the rewritten body keeps that assignment. Idempotent: retargeting a proxy that
      * already chains to the marker produces the same body. The bean class must carry the marker
-     * constructor (woven or manual) before the retargeted proxy is loaded.
+     * constructor (woven or manual) before the retargeted proxy is loaded. A proxy that does not extend its bean is
+     * left as it is: the proxy of a bean whose class has a final method extends a class above it, and chains to that
+     * class's constructor (BUG-20261118-20).
      */
     public static byte[] retargetProxyConstructor(byte[] proxyClass) {
         var cf = ClassFile.of();
         var model = cf.parse(proxyClass);
         var thisDesc = model.thisClass().asSymbol();
-        var superDesc = model.superclass().orElseThrow().asSymbol();
+        var superEntry = model.superclass().orElseThrow();
+        var superDesc = superEntry.asSymbol();
+        if (!model.thisClass().asInternalName().equals(superEntry.asInternalName() + PROXY_SUFFIX)) {
+            return proxyClass;
+        }
         boolean hasDelegateField = model.fields().stream()
                 .anyMatch(f -> f.fieldName().equalsString(FIELD_DELEGATE)
                         && f.fieldTypeSymbol().equals(CD_SUPPLIER));

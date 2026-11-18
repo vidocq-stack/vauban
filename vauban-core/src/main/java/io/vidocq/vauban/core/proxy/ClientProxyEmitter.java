@@ -99,7 +99,11 @@ public final class ClientProxyEmitter {
 
             // Serializable, writing its delegate in its place: a session value that holds the proxy moves to
             // another container, where the delegate's serial form resolves to that container's proxy (foy#114).
-            clb.withInterfaceSymbols(CD_Serializable);
+            // A proxy that extends a class above the bean's implements the bean's interfaces too (BUG-20261118-20).
+            var interfaces = new java.util.ArrayList<ClassDesc>();
+            interfaces.add(CD_Serializable);
+            shape.interfaces().forEach(type -> interfaces.add(type.classDesc()));
+            clb.withInterfaceSymbols(interfaces);
             clb.withField(SERIAL_VERSION_UID, ConstantDescs.CD_long, fb -> fb
                     .withFlags(ClassFile.ACC_PRIVATE | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL)
                     .with(ConstantValueAttribute.of(1L)));

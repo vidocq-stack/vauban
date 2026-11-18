@@ -197,6 +197,74 @@ class UnnameableMemberBytecodeEmissionTest {
         }
     }
 
+    /**
+     * Beans whose class has a final method: {@code StatefulService} inherits the final {@code state()} that implements
+     * {@code Stateful}, and {@code BelowTopService} inherits a final method from a class below {@code Top}, which has
+     * none (BUG-20261118-20).
+     */
+    private static final Map<String, String> FINAL_SOURCES = Map.of(
+            "lib/StatefulBase.java", """
+                    package lib;
+                    public class StatefulBase {
+                        public final String state() { return "on " + getClass().getSimpleName(); }
+                    }
+                    """,
+            "lib/Stateful.java", """
+                    package lib;
+                    public interface Stateful {
+                        String state();
+                        static String callState(Stateful stateful) { return stateful.state(); }
+                    }
+                    """,
+            "lib/Top.java", """
+                    package lib;
+                    public class Top {
+                        public String top() { return "top " + getClass().getSimpleName(); }
+                        public static String callTop(Top top) { return top.top(); }
+                    }
+                    """,
+            "lib/FinalBelowTop.java", """
+                    package lib;
+                    public class FinalBelowTop extends Top {
+                        public final String sealedOff() { return "sealed"; }
+                    }
+                    """,
+            "app/StatefulService.java", """
+                    package app;
+                    @jakarta.enterprise.context.ApplicationScoped
+                    public class StatefulService extends lib.StatefulBase implements lib.Stateful {
+                    }
+                    """,
+            "app/BelowTopService.java", """
+                    package app;
+                    @jakarta.enterprise.context.ApplicationScoped
+                    public class BelowTopService extends lib.FinalBelowTop implements lib.Stateful {
+                        public String state() { return "below"; }
+                    }
+                    """);
+
+    @Test
+    @DisplayName("the proxy of a bean whose class has a final method extends the class above it that has none")
+    void finalMethodProxy() throws Exception {
+        var result = compile(FINAL_SOURCES);
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        try (var loader = new URLClassLoader(new URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var stateful = loader.loadClass("app.StatefulService_ClientProxy");
+            assertEquals(Object.class, stateful.getSuperclass(), "no class above the final state() but Object");
+            assertTrue(loader.loadClass("lib.Stateful").isAssignableFrom(stateful), "it implements Stateful");
+            assertEquals("lib.Top", loader.loadClass("app.BelowTopService_ClientProxy").getSuperclass().getName());
+            assertEquals(java.util.Optional.of(loader.loadClass("app.StatefulService")),
+                    io.vidocq.vauban.api.ClientProxyClass.beanClassOf(stateful), "it states its bean class");
+        }
+        assertEquals("on StatefulService", forwarded(result, "app.StatefulService_ClientProxy",
+                "app.StatefulService", "lib.Stateful", "callState"), "state() runs on the instance, not the proxy");
+        assertEquals("top BelowTopService", forwarded(result, "app.BelowTopService_ClientProxy",
+                "app.BelowTopService", "lib.Top", "callTop"));
+        assertEquals("below", forwarded(result, "app.BelowTopService_ClientProxy",
+                "app.BelowTopService", "lib.Stateful", "callState"));
+    }
+
     @Test
     @DisplayName("a producer's proxy over take(HiddenArg) is a class file the provider reaches by name")
     void producerProxy() throws Exception {
@@ -216,6 +284,12 @@ class UnnameableMemberBytecodeEmissionTest {
 
         assertEquals("took hidden on Taker", forwarded(result, proxyName, "lib.Taker", "lib.Taker", "callTake"),
                 "forwarded to the contextual instance, not run on the proxy");
+        try (var loader = new URLClassLoader(new URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            assertEquals(java.util.Optional.of(loader.loadClass("lib.Taker")),
+                    io.vidocq.vauban.api.ClientProxyClass.beanClassOf(loader.loadClass(proxyName)),
+                    "a producer's proxy states the produced class");
+        }
     }
 
     @Test

@@ -45,16 +45,20 @@ import java.util.List;
  *        them in turn (vauban#227); the bytecode emitter ignores them
  * @param overridesWriteReplace the proxied type exposes an {@code Object writeReplace()} to the proxy, which the
  *        proxy's own {@code writeReplace()} then overrides ({@link ForwardedMethods#exposesWriteReplace})
+ * @param interfaces the interfaces the proxy implements besides {@code java.io.Serializable}: those of a bean whose
+ *        class has a final method, when the proxy extends a class above it ({@link ForwardedMethods#proxySuperclass},
+ *        BUG-20261118-20); {@code beanBinaryName} then names that class. Empty otherwise
  */
 public record ClientProxyShape(
         String beanBinaryName,
         List<TypeRef> superCtorParams,
         List<ProxyMethodShape> methods,
         List<TypeRef> superCtorThrown,
-        boolean overridesWriteReplace) {
+        boolean overridesWriteReplace,
+        List<TypeRef> interfaces) {
 
     /** Suffix of the generated proxy class: {@code <Bean>_ClientProxy}. */
-    public static final String PROXY_SUFFIX = "_ClientProxy";
+    public static final String PROXY_SUFFIX = io.vidocq.vauban.api.ClientProxyClass.SUFFIX;
     /**
      * The contextual-instance supplier field: {@code private final}, assigned once by the proxy's
      * only constructor, {@code (java.util.function.Supplier)} — no setter can rewire it (vauban#227).
@@ -106,6 +110,13 @@ public record ClientProxyShape(
         superCtorParams = List.copyOf(superCtorParams);
         methods = List.copyOf(methods);
         superCtorThrown = List.copyOf(superCtorThrown);
+        interfaces = List.copyOf(interfaces);
+    }
+
+    /** A shape that implements no interface but {@code java.io.Serializable}. */
+    public ClientProxyShape(String beanBinaryName, List<TypeRef> superCtorParams, List<ProxyMethodShape> methods,
+                            List<TypeRef> superCtorThrown, boolean overridesWriteReplace) {
+        this(beanBinaryName, superCtorParams, methods, superCtorThrown, overridesWriteReplace, List.of());
     }
 
     /** A shape whose proxied type exposes no {@code writeReplace()} to the proxy. */

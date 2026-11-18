@@ -155,6 +155,51 @@ class VaubanGeneratorTest {
         assertTrue(result.warnings().getFirst().contains("non-existent"));
     }
 
+    /** Its final {@code state()} implements {@link Stated}: no subclass of a bean that inherits it can forward it. */
+    public static class FinalStateBase {
+        public final String state() {
+            return "on " + getClass().getSimpleName();
+        }
+    }
+
+    public interface Stated {
+        String state();
+    }
+
+    @jakarta.enterprise.context.ApplicationScoped
+    public static class FinalStateBean extends FinalStateBase implements Stated {
+    }
+
+    @Test
+    @DisplayName("the proxy of a bean whose class has a final method extends Object and forwards its interfaces")
+    void proxyBeyondAFinalMethod() throws Exception {
+        // BUG-20261118-20: vauban:generate writes the proxy the processor and the run-time fallback make.
+        var name = FinalStateBean.class.getName();
+        var jarPath = tempDir.resolve("final-lib.jar");
+        try (var jos = new JarOutputStream(new FileOutputStream(jarPath.toFile()));
+             var in = FinalStateBean.class.getResourceAsStream("/" + name.replace('.', '/') + ".class")) {
+            jos.putNextEntry(new JarEntry(name.replace('.', '/') + ".class"));
+            jos.write(in.readAllBytes());
+            jos.closeEntry();
+        }
+        var outputDir = tempDir.resolve("output");
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(jarPath), null, outputDir,
+                getClass().getClassLoader()));
+
+        assertEquals(List.of(name + "_ClientProxy"), result.generatedProxies());
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {outputDir.toUri().toURL()},
+                getClass().getClassLoader())) {
+            var proxyClass = loader.loadClass(name + "_ClientProxy");
+            assertEquals(Object.class, proxyClass.getSuperclass());
+            assertEquals(java.util.Optional.of(FinalStateBean.class),
+                    io.vidocq.vauban.api.ClientProxyClass.beanClassOf(proxyClass), "it states its bean class");
+            var instance = new FinalStateBean();
+            var proxy = (Stated) proxyClass.getDeclaredConstructor(java.util.function.Supplier.class)
+                    .newInstance((java.util.function.Supplier<Object>) () -> instance);
+            assertEquals("on FinalStateBean", proxy.state(), "state() runs on the instance, not on the proxy");
+        }
+    }
+
     @Test
     @DisplayName("generates deterministic client proxy .class for normal-scoped beans")
     void shouldGenerateProxyForNormalScopedBeans() throws Exception {

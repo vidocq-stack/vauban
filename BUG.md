@@ -61,18 +61,63 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-20 — A proxy looked up as an interface runs a final method that implements it on itself
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
-- **Module**: `vauban-core` (`container.InterceptorBeanWrapper`, `proxy.RuntimeClientProxyGenerator`),
-  `vauban-processor` (client proxies)
+- **Status**: FIXED on `fix/client-proxy-bridge`
+- **Module**: `vauban-core` (`proxy.ForwardedMethods`, `proxy.RuntimeClientProxyGenerator`, `proxy.ClientProxyShape`,
+  `proxy.ClientProxyEmitter`, `container.InterceptorBeanWrapper`), `vauban-processor` (`ClientProxyArtefacts`,
+  `codegen.proxy.ClientProxyShapeFromElements`), `vauban-weaver` (`ProxyLinkWeaver`), `vauban-api`
+  (`ClientProxyClass`, review round 6)
 - **Symptom**: `@ApplicationScoped class StatefulSvc extends StatefulFinalBase implements Stateful`, where
   `StatefulFinalBase` declares `public final String state()`, which implements `Stateful.state()`. Looked up or
-  injected as `Stateful`, which CDI 4.1 §3.10 allows, the bean resolves, and `state()` runs on the client proxy, not
-  on the contextual instance: it returns the proxy's field, `null`.
-- **Repro**: `InheritedFinalMethodTest.anInterfaceMethodTheFinalMethodImplements`, `@Disabled` with this id.
-- **Cause** (hypothesis): the client proxy of a managed bean subclasses the bean class whatever type it is requested
-  as; it cannot override the final method, and the interface method resolves to it. Pre-existing: 81fab2cb proxies
-  the same way. Fix candidates: a proxy of the bean's interfaces only (a generated class, not
-  `java.lang.reflect.Proxy`) when the bean class has a final method, as such a bean is never looked up as its class.
+  injected as `Stateful`, which CDI 4.1 §3.10 allows, the bean resolved, and `state()` ran on the client proxy, not on
+  the contextual instance: it returned the proxy's field, `null`. A normal-scoped producer of such a class did the
+  same.
+- **Repro**: `InheritedFinalMethodTest` in `vauban-core` (`anInterfaceMethodTheFinalMethodImplements`,
+  `injectedAsTheInterface`, `producedThroughTheInterface`, `objectMethods`, `aSuperclassAboveTheFinalMethod`);
+  `UnnameableMemberBytecodeEmissionTest.finalMethodProxy` in `vauban-processor`;
+  `VaubanGeneratorTest.proxyBeyondAFinalMethod` in `vauban-maven-plugin`; `ProxyLinkWeaverTest
+  .retargetLeavesAProxyBeyondAFinalMethod` in `vauban-weaver`; `ClientProxyInheritanceCrossCheckTest
+  .beyondAFinalMethod` pins that the run-time and processor shapes agree.
+- **Cause** (proved by the red runs): every path built the client proxy as a subclass of the bean class, whatever type
+  the bean was requested as; a subclass cannot override the final method, and the interface call resolved to it, on
+  the proxy. `RuntimeClientProxyGeneratorTest.shouldNotOverrideFinalMethods` pinned that shape.
+- **Fix**: Weld's rule (`ClientProxyProvider`, weld-core-impl 5.1.7: a bean whose types are not all proxyable gets a
+  proxy whose superclass is the requested class, else `Object`, with every bean interface). Vauban keeps one proxy per
+  bean, `<Bean>_ClientProxy`: `ForwardedMethods.proxySuperclass` picks the class it extends, the bean class when it
+  has no final method, else the nearest class above with none that a proxy can extend, else `Object`. Every class type
+  the bean may be requested as (no final method in its walk, BUG-20261118-19) is that class or above it. The proxy
+  forwards that class's methods as before, implements the interfaces of the bean class, and forwards each of their
+  methods through its interface, so a final method implementing one is reached on the instance; `toString`,
+  `hashCode` and `equals` are forwarded through `Object`. The run-time generator, `vauban:generate` (the same
+  generator) and the processor build that shape; the processor emits it as bytecode, which Java source could not name
+  after the bean. The weaver no longer retargets a proxy that does not extend its bean onto a `(ProxyLink)`
+  constructor. A lookup checks the proxy is an instance of the requested class, for a class above the final method
+  that no proxy can extend from the bean's package. The final-method walk of a lookup is cached per requested class
+  (`ClassValue`). Frozen deployments need no new record: the shape is a function of the bean class, and the provider
+  instantiates the class under the same name. An intercepted bean with a final method stays a deployment error.
+- **Fix, review round 6**: a proxy that no longer extends its bean class no longer tells it through its superclass,
+  which Cassini read (`FilterEntry`, the `@Provider`, `@Priority`, `@PreMatching` and name bindings of a filter,
+  CASSINI-066). Vidocq's EL unwrapper (`VaubanProxyUnwrapper`) rightly keeps the superclass: Peano's accessor table
+  casts the base to the class the unwrapper names, which such a proxy is no instance of.
+  `io.vidocq.vauban.api.ClientProxyClass.beanClassOf(Class)` states it, from what every path already guarantees: the
+  proxy is named `<Bean>_ClientProxy`, in the bean's package and loader, frozen or not. It loads that name through the
+  proxy's loader, keeps it when it is of the proxy's package and a subclass of what the proxy extends. A producer's
+  proxy (`<Produced>$$<hash>_ClientProxy`) answers its superclass when the hash of that class's name matches, nothing
+  past a final method of the produced class. Every path generates the proxy final, so a class only named like one
+  answers nothing (review round 8). Cached per class (`ClassValue`).
+  `ClientProxyShape.PROXY_SUFFIX` is its `SUFFIX`. Two gaps of the shape: `proxySuperclass` jumped to `Object` past the
+  first class above the final method that a proxy cannot extend; it now walks on to the nearest one it can (`PublicTop`
+  above `PackageMethodMiddle`). And a lookup as an interface skipped the instance check: an interface the proxy cannot
+  name, package-private in another package, returned a proxy that is none of it; it now throws
+  `UnproxyableResolutionException`, `... which its client proxy <name> is no instance of`, as for a class.
+- **Verification, review round 6**: red, `stack-bug20-red.log`, "Red run 5" (on 6686465c: the proxy of `BelowMiddle`
+  extended `Object`, the lookup as `PublicTop` threw) and "Red run 6" (a `ClientProxyClass` stub that reads the
+  superclass, as the consumers did: empty on the run-time, processor and `vauban:generate` paths and for the API
+  cases of a final method or a final class; the lookup as `HiddenFace` threw nothing). Green, `stack-bug20-dev.log`,
+  "Dev run 6".
+- **Verification**: red, `stack-bug20-red.log`: "Red run 1" (on 47810264: the three interface calls returned `null`,
+  the processor's proxy extended `StatefulService`), "Red run 2" (the weaver of 47810264 rewrote the proxy), "Red run
+  4" (`vauban:generate` wrote a subclass of the bean; "Red run 3" failed on the test's resource name). Green,
+  `stack-bug20-dev.log`, "Dev run 4" and "Dev run 5".
 - **Found by**: the check that review round 3 of BUG-20261118-19 asked for first, `stack-bug19-dev.log`, "Dev run 3".
 
 ## BUG-20261118-19 — A bean that inherits a final method passes the proxyability checks

@@ -288,24 +288,45 @@ final class InterceptorBeanWrapper {
     }
 
     /**
-     * The client proxy of {@code bean}, looked up as {@code requested}: refused when that type is a class a proxy cannot
-     * stand for, one with a final method, neither private nor static, of its own or of a superclass (CDI 4.1 §3.10,
-     * BUG-20261118-19). The type decides, not the bean class: a bean whose class inherits a final method is looked up
-     * as an interface it implements.
+     * The client proxy of {@code bean}, looked up as {@code requested}: refused when that type is a class a proxy
+     * cannot stand for, one with a final method, neither private nor static, of its own or of a superclass (CDI 4.1
+     * §3.10, BUG-20261118-19), or a type its client proxy is no instance of (BUG-20261118-20). The type decides, not
+     * the bean class: a bean whose class inherits a final method is looked up as an interface it implements.
      */
     <T> T getOrCreateProxy(ManagedBean<T> bean, java.lang.reflect.Type requested) {
         var raw = requested instanceof java.lang.reflect.ParameterizedType parameterized
                 ? parameterized.getRawType() : requested;
-        if (raw instanceof Class<?> type && !type.isInterface()) {
-            var finalMethod = firstFinalMethod(type);
-            if (finalMethod != null) {
-                throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean "
-                        + bean.getBeanClass().getName() + " is looked up as " + type.getName()
-                        + ", which has final method " + finalMethod.getName());
-            }
+        if (!(raw instanceof Class<?> type)) {
+            return getOrCreateProxy(bean);
         }
-        return getOrCreateProxy(bean);
+        var finalMethod = type.isInterface() ? java.util.Optional.<Method>empty() : FINAL_METHODS.get(type);
+        if (finalMethod.isPresent()) {
+            throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean "
+                    + bean.getBeanClass().getName() + " is looked up as " + type.getName()
+                    + ", which has final method " + finalMethod.get().getName());
+        }
+        T proxy = getOrCreateProxy(bean);
+        if (!type.isInstance(proxy)) {
+            // The proxy of a bean whose class has a final method extends the nearest class above it that
+            // a proxy can extend, and implements the interfaces a proxy in its package can name (BUG-20261118-20): a
+            // class in between, or an interface it cannot name, is not one it stands for.
+            throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean "
+                    + bean.getBeanClass().getName() + " is looked up as " + type.getName()
+                    + ", which its client proxy " + proxy.getClass().getName() + " is no instance of");
+        }
+        return proxy;
     }
+
+    /**
+     * The first final method, neither private nor static, of a class or of its superclasses: the walk of
+     * {@link #getOrCreateProxy(ManagedBean, java.lang.reflect.Type)}, once per requested class.
+     */
+    private static final ClassValue<java.util.Optional<Method>> FINAL_METHODS = new ClassValue<>() {
+        @Override
+        protected java.util.Optional<Method> computeValue(Class<?> type) {
+            return java.util.Optional.ofNullable(firstFinalMethod(type));
+        }
+    };
 
     @SuppressWarnings("unchecked")
     <T> T getOrCreateProxy(ManagedBean<T> bean) {

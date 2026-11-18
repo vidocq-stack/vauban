@@ -80,7 +80,20 @@ final class ClientProxyArtefacts {
         // The index carries the binary name: a nested bean is app.Outer$Inner, and a
         // top-level class may have a '$' in its own name (BUG-20261004-11).
         var proxyTypeElement = TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), proxyBeanFqn);
-        if (proxyTypeElement != null && TypeLookup.hasNonPrivateCtor(proxyTypeElement)) {
+        var beyondFinal = proxyTypeElement == null ? java.util.Optional.<ClientProxyShape>empty()
+                : ClientProxyShapeFromElements.beyondFinalMethod(proxyTypeElement, processingEnv.getElementUtils(),
+                        processingEnv.getTypeUtils(), omitted -> output.warnOmitted(omitted, proxyTypeElement));
+        if (beyondFinal.isPresent()) {
+            // The bean's class has a final method no subclass can forward: the proxy extends a class above it, which
+            // Java source could not name the proxy after, and implements the bean's interfaces (BUG-20261118-20).
+            var proxyName = proxyBeanFqn + CLIENT_PROXY_SUFFIX;
+            output.generateClass(new GeneratedClass(proxyName,
+                    ClientProxyEmitter.emitAt(beyondFinal.get(), proxyName)));
+            output.noteBytecode(proxyName, "the bean's class has a final method, so the proxy extends "
+                    + beyondFinal.get().beanBinaryName() + " and implements the bean's interfaces (BUG-20261118-20)",
+                    proxyTypeElement);
+            generation.clientProxyFqns.add(proxyName);
+        } else if (proxyTypeElement != null && TypeLookup.hasNonPrivateCtor(proxyTypeElement)) {
             generateSubclassingClientProxy(proxyTypeElement);
             generation.clientProxyFqns.add(proxyBeanFqn + CLIENT_PROXY_SUFFIX);
         } else if (proxyTypeElement != null) {

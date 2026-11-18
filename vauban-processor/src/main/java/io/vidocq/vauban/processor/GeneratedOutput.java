@@ -75,6 +75,13 @@ final class GeneratedOutput {
         }
     }
 
+    /** Records {@code className} as a class file the provider reaches by name, and says why, {@code reason}. */
+    void noteBytecode(String className, String reason, javax.lang.model.element.Element site) {
+        bytecodeClasses.add(className);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "[Vauban] Generated " + className
+                + " as bytecode: " + reason + ".", site);
+    }
+
     /**
      * A class emitted as bytecode because Java source in its package cannot declare the overrides
      * listed in {@code unnameable} (BUG-20261004-09): said at build time, as a note.

@@ -61,6 +61,15 @@ class ProxyLinkWeaverTest {
     }
 
     @Test
+    @DisplayName("retargetProxyConstructor leaves alone a proxy that does not extend its bean (BUG-20261118-20)")
+    void retargetLeavesAProxyBeyondAFinalMethod() {
+        // The proxy of a bean whose class has a final method extends a class above it, here Object, which has no
+        // (ProxyLink) constructor to chain to.
+        var proxy = Fixtures.proxyWithDelegateCtor(BEAN + "_ClientProxy", "java.lang.Object");
+        assertSame(proxy, ProxyLinkWeaver.retargetProxyConstructor(proxy));
+    }
+
+    @Test
     @DisplayName("hasNonPrivateNoArgConstructor sees through access flags")
     void noArgDetection() {
         assertFalse(ProxyLinkWeaver.hasNonPrivateNoArgConstructor(
