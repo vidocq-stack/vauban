@@ -58,6 +58,53 @@ suspected cause, status. Updated on every investigation.
   `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
 - **Found by**: the review of BUG-20261118-04.
 
+## BUG-20261118-11 — The build resolves no parameter of an inherited or a static observer
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`)
+- **Module**: `vauban-core` (`BeanDiscovery`, new `ObserverInjectionPoints`, `DeploymentValidator`),
+  `vauban-processor` (`VaubanProcessor`)
+- **Symptom**: a bean that inherits `on(@Observes Pung pung, Tool tool)` from a superclass, with two beans of type
+  `Tool`, or that declares that observer static, compiles without an error, and the start then refuses it
+  (`Observer method ...: ambiguous dependency for parameter arg1`). An instance observer the bean class declares fails
+  the build, as it should.
+- **Repro**: in `vauban-processor`,
+  `VetoedInterceptorCompileTimeTest#anInheritedOrStaticObserversUnresolvableParameterFailsTheBuildAndTheStart`.
+- **Cause** (proved): the build resolves the observer parameters through the bean's injection points, and
+  `BeanDiscovery.addObserverInjectionPoints` reads the instance observers the bean class declares only. The start
+  checks every observer the container registers (`VaubanContainer.validateObserverParameters`), a static one and an
+  inherited one included (BUG-20261117-26). The review of BUG-20261117-30 read it as "`DeploymentValidator` has no
+  observer pass": it has one for the declared instance observers, through the injection points.
+- **Fix**: `BeanDiscovery.otherObserverInjectionPoints` (in the new `ObserverInjectionPoints`) gives, for a bean class,
+  the parameters of its static observers and of the observers it inherits, the superclass's type variables read as the
+  bean class gives them (`IndexClassValidator.typeArguments`, now public). Inherited observers are found by the start's
+  rules (`ObserverDisposerDiscovery.getAllInheritedMethods`): a private superclass method is not inherited, and a method
+  a class below declares with the same name and erased parameter types overrides it, an observer or not. A parameter
+  left a type variable is the definition rules' (CDI 4.1, 5.2.3); `EventMetadata` is no injection point. A superclass
+  the processor's index does not hold, one without a bean-defining annotation, is read from the compiler's elements.
+  `DeploymentValidator.otherObserverInjectionPoints` resolves them like the bean's own, for its managed bean, and the
+  processor adds their types to the dependency types: a type no bean of the compilation declares leaves the start to
+  decide with a warning, as for a declared observer.
+- **Who sees the change**: an application whose inherited or static observer has a parameter no bean satisfies, or
+  more than one does, now fails the build where it failed the start.
+- **Verification**: red on the main code of "generic class scope added by an extension" (`stack-l3-red.log`,
+  "BUG-20261118-11 red, run 3": the build succeeded). Green: `stack-l3-green.log`, "BUG-20261118-11 fix, run 4"
+  (vauban-processor 390 tests, 16 skipped) and "BUG-20261118-11 fix: ObserverInjectionPointsTest"; the whole reactor
+  (vauban-core 1654 tests, 13 skipped),
+  `stack-l3-b11-full.log`.
+- **Review round 2**: the build matched an inherited observer by name against the observers below only, and read a
+  private superclass observer; the start skips a private method and overrides on name and erased parameters, observer
+  or not, so the build refused what the start accepts. Red: `stack-l3-red.log`, "BUG-20261118-11 review round 2 red"
+  and "... red, run 2" (`ObserverInjectionPointsTest#anObserverIsInheritedAsTheStartFindsIt`, and
+  `VetoedInterceptorCompileTimeTest#anObserverTheStartDoesNotInheritIsNoErrorAtBuildAtStartAndFrozen`: an ambiguous
+  `Tool` at build). Green: `stack-l3-green.log`, "BUG-20261118-11 review round 2 fix, run 2".
+- **Review round 3**: an override of a generic superclass's observer, `BridgedToolListener extends
+  GenericToolListenerBase<Tool>` declaring `on(Pung, Tool)` over `on(@Observes Pung, T)`, is one at start through
+  javac's bridge `on(Pung, Object)`; the compiler's elements have no bridge, and the build resolved `Tool`. The build
+  substitutes the type arguments before erasing, as the compiler compares an override. Red: `stack-l3-red.log`,
+  "BUG-20261118-11 review round 3 red". Green: `stack-l3-green.log`, "BUG-20261118-11 review round 3 fix".
+- **Found by**: the review round 1 of the `stack/l3-container` lane.
+
 ## BUG-20261118-06 — The processor misses a type-use-only annotation on a constructor
 
 - **Date**: 2026-11-18

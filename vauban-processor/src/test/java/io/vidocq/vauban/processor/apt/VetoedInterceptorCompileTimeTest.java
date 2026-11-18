@@ -1373,13 +1373,132 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
-     * Compiles {@code sources} and lists {@link BeanTypeRecorder} as their extension: the start refuses the
-     * deployment with a {@code DeploymentException}, with the extension run at start, and after the build froze it.
+     * The build fails on the parameter of an inherited or a static observer that no bean satisfies, or more than one
+     * does, as the start does: it resolved the parameters of the instance observers a bean class declares only
+     * (BUG-20261118-11). Two beans are tools: {@code InheritedToolListener} inherits {@code on(@Observes Pung, Tool)},
+     * and {@code StaticToolListener} declares it static. {@code InheritedPungHolderListener} inherits
+     * {@code on(@Observes Pung, Holder<Pung>)}, and the only holder is a {@code Holder<String>}: a type no bean of this
+     * compilation declares, it leaves the start to decide with a warning, as for a declared observer. The parameters
+     * the container provides, and one of a superclass's type variable the bean class gives {@code String}, are none.
+     */
+    @Test
+    @DisplayName("an inherited or static observer's unresolvable parameter fails the build and the start")
+    void anInheritedOrStaticObserversUnresolvableParameterFailsTheBuildAndTheStart() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Holder", "public interface Holder<H> {\n}");
+        putType(sources, "TextHolder", DEPENDENT + "public class TextHolder implements Holder<String> {\n}");
+        putType(sources, "Pung", "public class Pung {\n}");
+        putType(sources, "Tool", "public interface Tool {\n}");
+        putType(sources, "Hammer", DEPENDENT + "public class Hammer implements Tool {\n}");
+        putType(sources, "Saw", DEPENDENT + "public class Saw implements Tool {\n}");
+        putType(sources, "StaticToolListener", DEPENDENT + """
+                public class StaticToolListener {
+                    static void on(@jakarta.enterprise.event.Observes Pung pung, Tool tool) {
+                    }
+                }""");
+        putType(sources, "ToolListenerBase", """
+                public abstract class ToolListenerBase {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, Tool tool) {
+                    }
+                }""");
+        putType(sources, "InheritedToolListener", DEPENDENT
+                + "public class InheritedToolListener extends ToolListenerBase {\n}");
+        putType(sources, "PungHolderListenerBase", """
+                public abstract class PungHolderListenerBase {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, Holder<Pung> holder) {
+                    }
+                }""");
+        putType(sources, "InheritedPungHolderListener", DEPENDENT
+                + "public class InheritedPungHolderListener extends PungHolderListenerBase {\n}");
+        putType(sources, "HolderListenerBase", """
+                public abstract class HolderListenerBase<X> {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, Holder<X> holder,
+                            jakarta.enterprise.inject.spi.BeanManager manager,
+                            jakarta.enterprise.inject.Instance<Tool> tools) {
+                    }
+                }""");
+        putType(sources, "TextHolderListener", DEPENDENT
+                + "public class TextHolderListener extends HolderListenerBase<String> {\n}");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertFalse(built.success(), "the build succeeded");
+        var reported = built.messages().stream().filter(m -> m.contains("[Vauban]")).sorted().toList();
+        assertAll(() -> assertEquals(3, reported.size(), () -> String.join("\n", reported)),
+                () -> assertTrue(reported.get(0).startsWith("ERROR: [Vauban] Ambiguous dependency: parameter 1 of"
+                        + " InheritedToolListener.on("), reported.get(0)),
+                () -> assertTrue(reported.get(1).startsWith("ERROR: [Vauban] Ambiguous dependency: parameter 1 of"
+                        + " StaticToolListener.on("), reported.get(1)),
+                () -> assertTrue(reported.get(2).startsWith("WARNING: [Vauban] Unsatisfied dependency: parameter 1 of"
+                        + " InheritedPungHolderListener.on("), reported.get(2)));
+        for (var refusal : startRefusalsRunAndFrozen(sources)) {
+            assertTrue(refusal.contains("dependency for parameter arg1 of type vi.types."), refusal);
+        }
+    }
+
+    /**
+     * The build finds the inherited observers the start finds: {@code SilentToolListener} overrides
+     * {@code on(Pung, Tool)} without {@code @Observes}, {@code PrivateToolListenerBase}'s observer is private, and
+     * {@code BridgedToolListener} overrides {@code GenericToolListenerBase<Tool>}'s {@code on(Pung, T)}, which the
+     * start sees through javac's bridge {@code on(Pung, Object)}, so none is an observer of its bean, and two beans
+     * of type {@code Tool} are no error. The build resolved them and refused what the start accepts (BUG-20261118-11,
+     * review rounds 2 and 3).
+     */
+    @Test
+    @DisplayName("an observer the start does not inherit is no error at build, at start and frozen")
+    void anObserverTheStartDoesNotInheritIsNoErrorAtBuildAtStartAndFrozen() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Pung", "public class Pung {\n}");
+        putType(sources, "Tool", "public interface Tool {\n}");
+        putType(sources, "Hammer", DEPENDENT + "public class Hammer implements Tool {\n}");
+        putType(sources, "Saw", DEPENDENT + "public class Saw implements Tool {\n}");
+        putType(sources, "ToolListenerBase", """
+                public abstract class ToolListenerBase {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, Tool tool) {
+                    }
+                }""");
+        putType(sources, "SilentToolListener", DEPENDENT + """
+                public class SilentToolListener extends ToolListenerBase {
+                    @Override
+                    void on(Pung pung, Tool tool) {
+                    }
+                }""");
+        putType(sources, "PrivateToolListenerBase", """
+                public abstract class PrivateToolListenerBase {
+                    private void on(@jakarta.enterprise.event.Observes Pung pung, Tool tool) {
+                    }
+                }""");
+        putType(sources, "PrivateToolListener", DEPENDENT
+                + "public class PrivateToolListener extends PrivateToolListenerBase {\n}");
+        putType(sources, "GenericToolListenerBase", """
+                public abstract class GenericToolListenerBase<T> {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, T tool) {
+                    }
+                }""");
+        putType(sources, "BridgedToolListener", DEPENDENT + """
+                public class BridgedToolListener extends GenericToolListenerBase<Tool> {
+                    @Override
+                    void on(Pung pung, Tool tool) {
+                    }
+                }""");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        assertTrue(built.messages().stream().noneMatch(m -> m.startsWith("ERROR") || m.startsWith("WARNING")),
+                () -> String.join("\n", built.messages()));
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN);
+        assertFalse(seen.start().isEmpty(), "the extension saw no bean");
+    }
+
+    /**
+     * Compiles {@code sources}, the build's deployment validation off, and lists {@link BeanTypeRecorder} as their
+     * extension: the start refuses the deployment with a {@code DeploymentException}, with the extension run at
+     * start, and after the build froze it.
      *
      * @return the two messages, extensions run then frozen
      */
     private List<String> startRefusalsRunAndFrozen(Map<String, String> sources) throws Exception {
-        var result = compile(sources);
+        var result = ProcessorCompiler.compile(workDir, sources, List.of("-Avauban.validation=false"));
+        assertTrue(result.success(), () -> "compilation failed: " + result.messages());
         registerExtension(result, BeanTypeRecorder.class);
         String run;
         try (var loader = loader(result)) {

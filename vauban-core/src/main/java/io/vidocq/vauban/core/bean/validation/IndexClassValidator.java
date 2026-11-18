@@ -481,7 +481,7 @@ public final class IndexClassValidator {
      * variables are, or kept as it is when the class below is the one validated ({@code own}). A raw superclass has
      * its type variables erased: none is given.
      */
-    private static Map<String, TypeInfo> typeArguments(ClassInfo superClass, TypeInfo generic,
+    public static Map<String, TypeInfo> typeArguments(ClassInfo superClass, TypeInfo generic,
             Map<String, TypeInfo> below, boolean own) {
         if (!(generic instanceof TypeInfo.ParameterizedType(_, var arguments))
                 || arguments.size() != superClass.typeParameters().size()) {

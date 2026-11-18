@@ -31,6 +31,7 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -71,6 +72,12 @@ public final class DeploymentValidator {
     private Set<String> loadTimeUnwoven = Set.of();
     private String loadTimeUnwovenReason;
 
+    /**
+     * By bean class, the injection points of the observers its managed bean's own leave out: a static observer's,
+     * an inherited observer's (BUG-20261118-11).
+     */
+    private Map<DotName, List<InjectionPointInfo>> otherObserverPoints = Map.of();
+
     /** Reflection-only fallback — proxyability checks are blind to unloadable classes. */
     public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver) {
         this(beans, resolver, null);
@@ -85,6 +92,15 @@ public final class DeploymentValidator {
         this.beans = List.copyOf(beans);
         this.resolver = Objects.requireNonNull(resolver);
         this.index = index;
+    }
+
+    /**
+     * Declares, by bean class, the injection points of the observers its managed bean's own leave out, resolved
+     * like them; returns {@code this}.
+     */
+    public DeploymentValidator otherObserverInjectionPoints(Map<DotName, List<InjectionPointInfo>> points) {
+        this.otherObserverPoints = Map.copyOf(points);
+        return this;
     }
 
     /** Declares classes that will be woven at load time; returns {@code this}. */
@@ -187,6 +203,13 @@ public final class DeploymentValidator {
                 // (CDI 4.1, 5.2.3): looked up by its erasure, it was reported unsatisfied or ambiguous
                 // (BUG-20261117-29)
                 validateResolution(ip, bean, errors);
+            }
+        }
+        if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+            for (var ip : otherObserverPoints.getOrDefault(bean.beanClass(), List.of())) {
+                if (!isBuiltInType(ip)) {
+                    validateResolution(ip, bean, errors);
+                }
             }
         }
     }

@@ -1403,7 +1403,7 @@ public final class BeanDiscovery {
     }
 
     /** The erased type name, as {@link Class#getTypeName()} spells it, or {@code null} when it cannot be told. */
-    private static String erasedName(TypeInfo type) {
+    static String erasedName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name.value();
             case TypeInfo.ParameterizedType(var raw, _) -> raw.value();
@@ -1416,6 +1416,18 @@ public final class BeanDiscovery {
                     bounds.isEmpty() ? JAVA_LANG_OBJECT : erasedName(bounds.getFirst());
             default -> null;
         };
+    }
+
+    /**
+     * The injection points of the observers of {@code beanClass} its bean's injection points leave out: the
+     * parameters of a static observer it declares, and of an observer it inherits, which the start resolves too
+     * (BUG-20261118-11).
+     *
+     * @param outside describes a superclass the index does not hold, or finds none
+     */
+    public List<InjectionPointInfo> otherObserverInjectionPoints(ClassInfo beanClass,
+            java.util.function.Function<DotName, Optional<ClassInfo>> outside) {
+        return new ObserverInjectionPoints(this, outside).of(beanClass);
     }
 
     List<InjectionPointInfo> discoverInjectionPoints(ClassInfo classInfo) {
@@ -1544,7 +1556,7 @@ public final class BeanDiscovery {
      *
      * @param methodName the method's name in the description, {@code null} for a constructor
      */
-    private InjectionPointInfo parameterInjectionPoint(ClassInfo classInfo, MethodInfo method,
+    InjectionPointInfo parameterInjectionPoint(ClassInfo classInfo, MethodInfo method,
             String methodName, int index, TypeInfo requiredType, InjectionPointInfo.InjectionKind kind) {
         var annotations = method.parameters().get(index).annotations();
         return new InjectionPointInfo(
@@ -1555,7 +1567,7 @@ public final class BeanDiscovery {
                         method.parameters().stream().map(ParameterInfo::type).toList()));
     }
 
-    private static boolean hasObserverAnnotation(List<AnnotationInfo> annotations) {
+    static boolean hasObserverAnnotation(List<AnnotationInfo> annotations) {
         for (var ann : annotations) {
             if (ann.name().equals(OBSERVES) || ann.name().equals(OBSERVES_ASYNC)) {
                 return true;

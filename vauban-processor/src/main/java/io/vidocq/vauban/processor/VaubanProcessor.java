@@ -25,6 +25,7 @@ import io.vidocq.vauban.processor.codegen.proxy.ClientProxyShapeFromElements;
 import io.vidocq.vauban.processor.codegen.provider.ComponentProviderGenerator;
 import io.vidocq.vauban.core.ProcessorAccess;
 import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
+import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
@@ -647,14 +648,17 @@ public class VaubanProcessor extends AbstractProcessor {
         // Injection points may target beans that live in a dependency. Such a type is absent from
         // this compilation's index — but javac can see it, so resolve it lazily rather than
         // rejecting a deployment the runtime container resolves without trouble (vauban#23).
-        var dependencyTypes = resolveDependencyBeans(beans, indexBuilder, scanner, discoveryResult);
+        // The observers the beans' own injection points leave out: a static one, an inherited one (BUG-20261118-11)
+        var observerPoints = otherObserverInjectionPoints(beans, discovery, index, scanner);
+        var dependencyTypes = resolveDependencyBeans(beans, observerPoints, indexBuilder, scanner, discoveryResult);
         if (dependencyTypes.indexGrew()) {
             index = indexBuilder.build();
         }
 
         warnUnloadableBces();
 
-        if (reportValidationErrors(validateDeployment(beans, index, discoveryResult), dependencyTypes)) {
+        var validationErrors = validateDeployment(beans, observerPoints, index, discoveryResult);
+        if (reportValidationErrors(validationErrors, dependencyTypes)) {
             return true;
         }
         reportDefinitionErrors(beans, index, scanner);
@@ -791,6 +795,27 @@ public class VaubanProcessor extends AbstractProcessor {
     }
 
     /**
+     * By managed bean class, the injection points of the observers its own leave out (BUG-20261118-11): a superclass
+     * the index does not hold, one without a bean-defining annotation, is read from the compiler's elements.
+     */
+    private Map<DotName, List<InjectionPointInfo>> otherObserverInjectionPoints(List<BeanDescriptor> beans,
+            BeanDiscovery discovery, io.vidocq.vauban.indexer.VaubanIndex index, ElementScanner scanner) {
+        java.util.function.Function<DotName, Optional<io.vidocq.vauban.indexer.model.ClassInfo>> outside =
+                name -> Optional.ofNullable(
+                        TypeLookup.typeElementByBinaryName(processingEnv.getElementUtils(), name.value()))
+                        .map(scanner::scan);
+        var points = new HashMap<DotName, List<InjectionPointInfo>>();
+        for (var bean : beans) {
+            if (bean.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                index.getClassByName(bean.beanClass())
+                        .map(beanClass -> discovery.otherObserverInjectionPoints(beanClass, outside))
+                        .filter(found -> !found.isEmpty()).ifPresent(found -> points.put(bean.beanClass(), found));
+            }
+        }
+        return points;
+    }
+
+    /**
      * Validates the deployment — unless explicitly skipped (cf. APT options on the class javadoc).
      * The runtime container always re-validates on container start; this only silences the
      * compile-time check for projects whose beans depend on BCE-produced injections that
@@ -799,7 +824,8 @@ public class VaubanProcessor extends AbstractProcessor {
      * the APT classpath).
      */
     private List<DeploymentValidator.ValidationError> validateDeployment(List<BeanDescriptor> beans,
-            io.vidocq.vauban.indexer.VaubanIndex index, BceProcessor.DiscoveryResult discoveryResult) {
+            Map<DotName, List<InjectionPointInfo>> observerPoints, io.vidocq.vauban.indexer.VaubanIndex index,
+            BceProcessor.DiscoveryResult discoveryResult) {
         if (!validationEnabled()) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                     "[Vauban] Static deployment validation skipped (vauban.validation=false). "
@@ -816,7 +842,7 @@ public class VaubanProcessor extends AbstractProcessor {
         candidates.addAll(archiveBeans);
         var resolver = new BeanResolver(candidates, List.of(), assignability,
                 new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
-        var validator = new DeploymentValidator(beans, resolver, index);
+        var validator = new DeploymentValidator(beans, resolver, index).otherObserverInjectionPoints(observerPoints);
         return validator.validate();
     }
 
@@ -1708,21 +1734,20 @@ public class VaubanProcessor extends AbstractProcessor {
      * here — its own module already ships those, and emitting them again would split the package.
      *
      * @param beans           the discovered beans; grown in place with the dependency beans found
+     * @param observerPoints  the injection points of each bean class's static and inherited observers
      * @param indexBuilder    the accumulated index, enriched in place
      * @param scanner         element scanner used to turn a {@code TypeElement} into a ClassInfo
      * @param discoveryResult BCE discovery result to replay on the second discovery pass, or null
      * @return what was resolved, and what has to be deferred to the runtime container
      */
     private DependencyTypes resolveDependencyBeans(List<BeanDescriptor> beans,
+                                                   Map<DotName, List<InjectionPointInfo>> observerPoints,
                                                    IndexBuilder indexBuilder,
                                                    ElementScanner scanner,
                                                    BceProcessor.DiscoveryResult discoveryResult) {
         Set<DotName> required = new LinkedHashSet<>();
-        for (var bean : beans) {
-            for (var ip : bean.injectionPoints()) {
-                collectClassNames(ip.requiredType(), required);
-            }
-        }
+        beans.forEach(bean -> collectRequiredClassNames(bean.injectionPoints(), required));
+        observerPoints.values().forEach(points -> collectRequiredClassNames(points, required));
 
         var elements = processingEnv.getElementUtils();
         Set<DotName> added = new LinkedHashSet<>();
@@ -1755,6 +1780,13 @@ public class VaubanProcessor extends AbstractProcessor {
             archiveClasses = archives.classes();
         }
         return new DependencyTypes(true, deferred, archiveClasses);
+    }
+
+    /** The classes the required types of {@code points} name, added to {@code required}. */
+    private static void collectRequiredClassNames(List<InjectionPointInfo> points, Set<DotName> required) {
+        for (var ip : points) {
+            collectClassNames(ip.requiredType(), required);
+        }
     }
 
     /** What the bean archive modules contributed: the deferred types they satisfy, and their classes. */
