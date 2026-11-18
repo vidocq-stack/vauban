@@ -41,7 +41,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The members of an enum, as an extension sees them at start: an enum's constructor has the parameters its source
- * declares, not the name and the ordinal javac adds (BUG-20261117-58).
+ * declares, not the name and the ordinal javac adds (BUG-20261117-58); its constants are among its fields, with
+ * their annotations, as in the processor (BUG-20261117-59).
  */
 @DisplayName("The members of an enum at start")
 class BceEnumMembersTest {
@@ -91,6 +92,15 @@ class BceEnumMembersTest {
                             lines.accept(parameters(constructor, parameter -> marks(parameter.type().annotations()
                                     .size()) + parameter.type()));
                         }).toList()));
+    }
+
+    @Test
+    @DisplayName("an enum's constants are among its fields, with their annotations")
+    void anEnumsConstantsAreFields() {
+        assertEquals(List.of("LOW 16409 1", "HIGH 16409 0"), seenAtStart(Level.class, type -> type.fields().stream()
+                .filter(field -> field.declaringClass().name().equals(type.name()) && field.isStatic()
+                        && field.type().isClass() && field.type().asClass().declaration().name().equals(type.name()))
+                .map(field -> field.name() + " " + field.modifiers() + " " + field.annotations().size()).toList()));
     }
 
     private static String parameters(MethodInfo constructor, Function<ParameterInfo, String> describe) {

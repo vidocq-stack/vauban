@@ -115,9 +115,9 @@ public final class ElementScanner {
         if (typeElement.getKind() == ElementKind.ANNOTATION_TYPE) accessFlags |= 0x2000 | 0x0200; // ACC_ANNOTATION | ACC_INTERFACE
         if (typeElement.getKind() == ElementKind.ENUM) accessFlags |= 0x4000; // ACC_ENUM
 
-        // Fields
+        // Fields, an enum's constants among them, as the class file has them (BUG-20261117-59)
         var fields = typeElement.getEnclosedElements().stream()
-                .filter(e -> e.getKind() == ElementKind.FIELD)
+                .filter(e -> e.getKind() == ElementKind.FIELD || e.getKind() == ElementKind.ENUM_CONSTANT)
                 .map(e -> scanField((VariableElement) e))
                 .toList();
 
@@ -234,7 +234,8 @@ public final class ElementScanner {
     private FieldInfo scanField(VariableElement field) {
         var name = field.getSimpleName().toString();
         var type = typeMirrorToTypeInfo(field.asType());
-        var accessFlags = modifiersToFlags(field.getModifiers());
+        var accessFlags = modifiersToFlags(field.getModifiers())
+                | (field.getKind() == ElementKind.ENUM_CONSTANT ? ClassFile.ACC_ENUM : 0);
         var annotations = scanAnnotations(field);
         return new FieldInfo(name, type, accessFlags, annotations,
                 typeAnnotations().type(field.asType(), Target.FIELD, 0).found());

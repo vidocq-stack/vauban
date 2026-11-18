@@ -80,7 +80,7 @@ class ElementScannerTypeAnnotationsTest {
                 }
             }
             enum Level {
-                LOW("low");
+                @B LOW("low"), HIGH("high");
                 Level(@B String label) {
                 }
             }
@@ -228,6 +228,25 @@ class ElementScannerTypeAnnotationsTest {
     void enumConstructorParameters() {
         assertEquals(parameters(PROCESSOR.get("Level")), parameters(BYTECODE.get("Level")));
         assertEquals("[ClassType[name=java.lang.String]]", parameters(BYTECODE.get("Level")));
+    }
+
+    /**
+     * BUG-20261117-59: an enum's constants are among its fields in both indexes, with their annotations and their
+     * flags ({@code public static final}, {@code ACC_ENUM}), before the fields the enum declares.
+     */
+    @Test
+    @DisplayName("an enum's constants are fields in both indexes (BUG-20261117-59)")
+    void enumConstantsAreFields() {
+        assertEquals(fields(BYTECODE.get("Level")), fields(PROCESSOR.get("Level")));
+        assertEquals("[LOW 16409 [B], HIGH 16409 []]", fields(PROCESSOR.get("Level")));
+    }
+
+    /** The fields of a class, but the array of its constants javac adds. */
+    private static String fields(ClassInfo type) {
+        return type.fields().stream().filter(field -> !field.name().equals("$VALUES"))
+                .map(field -> field.name() + " " + field.accessFlags() + " " + field.annotations().stream()
+                        .map(annotation -> annotation.name().simpleName()).toList())
+                .toList().toString();
     }
 
     private static String parameters(ClassInfo type) {

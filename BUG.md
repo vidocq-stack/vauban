@@ -632,6 +632,29 @@ suspected cause, status. Updated on every investigation.
   type parameters, so that a method's `<T>` shadows the class's `T` with its own bounds and their annotations.
 - **Found by**: the language model TCK probe (BUG-20261117-40, `vauban-tickets/40.md`, group 1).
 
+## BUG-20261117-59 — In the processor, an enum's constants are missing from its fields
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-processor` (`apt.ElementScanner`)
+- **Symptom**: in the processor, `ClassInfo.fields()` of an enum leaves out its constants, which the language model
+  counts among its fields ("implicitly declared" `public static final` fields) and the bytecode scan records at
+  start and frozen. An extension that looks a constant up by name, or reads its annotations, finds nothing at build.
+  The language model TCK fails `EnumMembers:253` and `:244` in the processor ("No declaration of field 'FOO'"; ticket
+  40, group 11).
+- **Repro**: `ElementScannerTypeAnnotationsTest#enumConstantsAreFields` in `vauban-processor`, red on b6f10a59
+  (`stack-l2c-red.log`, "RED BUG-20261117-59 on b6f10a59"): `[]` for `[LOW 16409 [B], HIGH 16409 []]`.
+- **Cause**: `ElementScanner.scan` kept the enclosed elements of kind `FIELD` only; javax.lang.model gives an enum
+  constant the kind `ENUM_CONSTANT`.
+- **Fix**: the scan keeps `ENUM_CONSTANT` elements as fields too, with the class file's `ACC_ENUM` flag beside
+  `public static final`, so that both indexes record the same fields, annotations and flags. The frozen record is
+  computed from the bytecode index, which had them: it does not change.
+- **Verification**: `stack-l2c-dev.log`, "BUG-59 fix: core, processor, maven-plugin tests" (green); at start,
+  `BceEnumMembersTest#anEnumsConstantsAreFields` shows the same constants.
+- **Found by**: the language model TCK probe (BUG-20261117-40, `vauban-tickets/40.md`, group 11).
+
+---
+
 ## BUG-20261117-58 — At start, an enum's constructor keeps the name and the ordinal javac adds
 
 - **Date**: 2026-11-18
