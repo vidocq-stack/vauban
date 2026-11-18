@@ -109,6 +109,7 @@ public final class VaubanAnnotationInfo implements jakarta.enterprise.lang.model
             // An annotation built without an index, as a test builds one: nothing describes its type.
             return written;
         }
+        ReadClasses.note(indexAnnotation.name());
         var type = lookup.find(indexAnnotation.name()).filter(ClassInfo::isAnnotation);
         if (type.isEmpty()) {
             return written;

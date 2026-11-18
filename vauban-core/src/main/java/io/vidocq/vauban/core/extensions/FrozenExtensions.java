@@ -68,10 +68,15 @@ import java.util.TreeSet;
  * @param enhancements    the annotations {@code @Enhancement} added, by target, as
  *                        {@link EnhancementPatchSerializer#additions} gives them
  * @param synthetic       the synthetic beans and observers, as {@link SyntheticMetadataSerializer} writes them
+ * @param read            the classes beyond the bean classes the extensions read the content of, annotation types
+ *                        and {@code package-info} classes, each by binary name with the checksum of what they showed,
+ *                        {@link #ABSENT} for one no class file described (BUG-20261118-29); empty for a record written
+ *                        before it kept them. Outside the fingerprint: the start compares them when the record has
+ *                        them, so that an older record keeps its fingerprint and stays valid.
  */
 public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment deployment, List<String> extensions,
         Set<String> startExtensions, FrozenExtensions.Discovery discovery, Map<String, List<AnnotationInfo>> enhancements,
-        Properties synthetic) {
+        Properties synthetic, SortedMap<String, String> read) {
 
     public static final String PATH = "META-INF/vauban-frozen-extensions.properties";
     public static final String ENHANCEMENTS_PATH = "META-INF/vauban-frozen-enhancements.properties";
@@ -91,6 +96,10 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
     private static final String KEY_FINGERPRINT = "fingerprint";
     private static final String KEY_SETTINGS = "settings";
     private static final String CLASS = "class.";
+    private static final String READ_PREFIX = "read.";
+
+    /** The checksum of a class the extensions read that no class file described. */
+    public static final String ABSENT = "-";
     private static final String EXTENSION = "extension";
     private static final String START = "start";
     private static final String SCANNED = "scanned";
@@ -216,6 +225,30 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
     public FrozenExtensions {
         extensions = List.copyOf(extensions);
         startExtensions = Set.copyOf(startExtensions);
+        read = Collections.unmodifiableSortedMap(new TreeMap<>(read));
+    }
+
+    /** A record that keeps no class the extensions read beyond the bean classes. */
+    public FrozenExtensions(String fingerprint, Deployment deployment, List<String> extensions,
+            Set<String> startExtensions, Discovery discovery, Map<String, List<AnnotationInfo>> enhancements,
+            Properties synthetic) {
+        this(fingerprint, deployment, extensions, startExtensions, discovery, enhancements, synthetic,
+                new TreeMap<>());
+    }
+
+    /**
+     * The classes the extensions read whose checksum is not {@code now}'s, sorted by name: {@code now} gives the
+     * checksum of a class at start, {@link #ABSENT} when no class file describes it. Empty when none changed, or when
+     * the record keeps none.
+     */
+    public List<String> readClassesChanged(java.util.function.UnaryOperator<String> now) {
+        var changed = new ArrayList<String>();
+        read.forEach((name, checksum) -> {
+            if (!checksum.equals(now.apply(name))) {
+                changed.add(name);
+            }
+        });
+        return changed;
     }
 
     // ---- reading ----
@@ -275,7 +308,8 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
             enhancements = EnhancementPatchSerializer.read(in);
         }
         return new FrozenExtensions(fingerprint, deploymentOf(main), indexed(main, EXTENSION),
-                Set.copyOf(indexed(main, START)), discovery, enhancements, load(sibling(location, SYNTHETIC_PATH)));
+                Set.copyOf(indexed(main, START)), discovery, enhancements, load(sibling(location, SYNTHETIC_PATH)),
+                prefixed(main, READ_PREFIX));
     }
 
     /** The deployment a record keeps: {@link Deployment#UNKNOWN} for a record written before it kept one. */
@@ -284,13 +318,18 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
         if (settings == null) {
             return Deployment.UNKNOWN;
         }
-        var classes = new TreeMap<String, String>();
-        for (String key : main.stringPropertyNames()) {
-            if (key.startsWith(CLASS)) {
-                classes.put(key.substring(CLASS.length()), main.getProperty(key));
+        return new Deployment(settings, prefixed(main, CLASS));
+    }
+
+    /** The entries of {@code properties} whose key starts with {@code prefix}, by the rest of the key. */
+    private static SortedMap<String, String> prefixed(Properties properties, String prefix) {
+        var entries = new TreeMap<String, String>();
+        for (String key : properties.stringPropertyNames()) {
+            if (key.startsWith(prefix)) {
+                entries.put(key.substring(prefix.length()), properties.getProperty(key));
             }
         }
-        return new Deployment(settings, classes);
+        return entries;
     }
 
     private static Properties load(URL url) throws IOException {
@@ -372,6 +411,7 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
             line(out, KEY_SETTINGS, deployment.settings());
             deployment.classes().forEach((name, checksum) -> line(out, CLASS + name, checksum));
         }
+        read.forEach((name, checksum) -> line(out, READ_PREFIX + name, checksum));
         lines(out, EXTENSION, extensions);
         lines(out, START, new TreeSet<>(startExtensions));
         lines(out, SCANNED, discovery.scannedClasses());

@@ -56,6 +56,8 @@ import static io.vidocq.vauban.core.extensions.internal.DeploymentFailures.failu
 public final class VaubanContainerBuilder {
 
     private static final System.Logger LOG = System.getLogger(VaubanContainerBuilder.class.getName());
+    private static final String CLASS_FILE = ".class";
+    private static final String RUN_AT_START = "The extensions run at start: {0}.";
 
     /** The validation errors CDI reports as a {@code DeploymentException}: ambiguous or unsatisfied dependencies. */
     private static final Set<DeploymentValidator.ValidationError.Kind> DEPLOYMENT_ERROR_KINDS = java.util.EnumSet.of(
@@ -646,7 +648,8 @@ public final class VaubanContainerBuilder {
         try {
             io.vidocq.vauban.api.ExtensionPhase.atBuildTime(() ->
                     io.vidocq.vauban.core.extensions.ExtensionAsks.recordingInto(capture.asked,
-                            () -> build(capture)));
+                            () -> io.vidocq.vauban.core.langmodel.ReadClasses.recordingInto(capture.read,
+                                    () -> build(capture))));
             var frozen = capture.frozen(startExtensions);
             frozen.write(output);
             return new FrozenExtensions.Outcome(true, null, frozen.extensions(),
@@ -677,6 +680,10 @@ public final class VaubanContainerBuilder {
 
         /** The extensions that asked whether they run at build time. */
         final Set<Class<?>> asked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /** The classes beyond the bean classes whose content the language model read (BUG-20261118-29). */
+        final Set<DotName> read = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /** The loader the extensions read the classes outside the index through. */
+        private ClassLoader loader;
         private DeploymentFingerprint fingerprint;
         private List<Class<?>> extensions = List.of();
         private BceProcessor.DiscoveryResult discovery;
@@ -686,8 +693,10 @@ public final class VaubanContainerBuilder {
         private boolean ranAtCompile;
 
         void captured(DeploymentFingerprint fingerprint, List<Class<?>> extensions, BceProcessor.DiscoveryResult discovery,
-                Map<DotName, List<VaubanClassConfig>> enhancements, BceProcessor.Result result, boolean ranAtCompile) {
+                Map<DotName, List<VaubanClassConfig>> enhancements, BceProcessor.Result result, boolean ranAtCompile,
+                ClassLoader loader) {
             this.fingerprint = fingerprint;
+            this.loader = loader;
             this.extensions = extensions;
             this.discovery = discovery;
             this.enhancements = enhancements;
@@ -744,7 +753,23 @@ public final class VaubanContainerBuilder {
                     extensions.stream().map(Class::getName).toList(), atStart,
                     ExtensionDiscovery.of(discovery).named(contexts),
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.additions(frozenModifications),
-                    synthetic);
+                    synthetic, readChecksums());
+        }
+
+        /**
+         * The checksum of each class the extensions read beyond the bean classes, as the start will compute it. A
+         * class of the JDK is left out: the record already stands for the JDK the build runs on (BUG-20261117-31).
+         */
+        private java.util.SortedMap<String, String> readChecksums() {
+            var classFiles = io.vidocq.vauban.core.langmodel.IndexLookup.classFiles(loader);
+            var platform = ClassLoader.getPlatformClassLoader();
+            var checksums = new java.util.TreeMap<String, String>();
+            for (DotName name : read) {
+                if (platform.getResource(name.value().replace('.', '/') + CLASS_FILE) == null) {
+                    checksums.put(name.value(), readChecksum(classFiles, name.value()));
+                }
+            }
+            return checksums;
         }
 
         private static boolean runsAtStart(Class<?> extension, Set<String> atStart) {
@@ -762,7 +787,7 @@ public final class VaubanContainerBuilder {
         var found = FrozenExtensions.find(loader);
         if (found.frozen() == null) {
             if (found.note() != null) {
-                LOG.log(System.Logger.Level.DEBUG, "The extensions run at start: {0}.", found.note());
+                LOG.log(System.Logger.Level.DEBUG, RUN_AT_START, found.note());
             }
             return found;
         }
@@ -774,10 +799,29 @@ public final class VaubanContainerBuilder {
                             ? "fingerprint " + found.frozen().fingerprint() + ", this deployment " + value
                                     + ", a bean class was added, removed or recompiled since the build that wrote it"
                             : differences);
-            LOG.log(System.Logger.Level.DEBUG, "The extensions run at start: {0}.", note);
+            LOG.log(System.Logger.Level.DEBUG, RUN_AT_START, note);
+            return new FrozenExtensions.Found(null, note);
+        }
+        var classFiles = io.vidocq.vauban.core.langmodel.IndexLookup.classFiles(loader);
+        var changed = found.frozen().readClassesChanged(name -> readChecksum(classFiles, name));
+        if (!changed.isEmpty()) {
+            String note = "the record of the frozen extensions (" + FrozenExtensions.PATH + ") was written when "
+                    + "classes the extensions read were different: " + String.join(", ", changed)
+                    + " changed since the build that wrote it";
+            LOG.log(System.Logger.Level.DEBUG, RUN_AT_START, note);
             return new FrozenExtensions.Found(null, note);
         }
         return found;
+    }
+
+    /**
+     * The checksum of what the class file {@code classFiles} finds for {@code name} shows the extensions, or
+     * {@link FrozenExtensions#ABSENT} when none describes it (BUG-20261118-29).
+     */
+    private static String readChecksum(java.util.function.Function<DotName, java.util.Optional<ClassInfo>> classFiles,
+            String name) {
+        return classFiles.apply(DotName.of(name)).map(model -> Long.toHexString(ClassChecksums.ofModel(model)))
+                .orElse(FrozenExtensions.ABSENT);
     }
 
     /**
@@ -1030,7 +1074,7 @@ public final class VaubanContainerBuilder {
             if (capture != null) {
                 // The build stops here: what the extensions did is all it wants.
                 capture.captured(fingerprint, bceClasses, discoveryResult, combinedEnhMods, bceResult,
-                        plan.ranAtCompile());
+                        plan.ranAtCompile(), discoveryClassLoader);
                 return null;
             }
             if (frozen != null) {
@@ -1201,7 +1245,7 @@ public final class VaubanContainerBuilder {
 
     /** The class file of {@code clazz}, empty when its loader has none among its resources. */
     private static byte[] classFileOf(Class<?> clazz) {
-        String resource = clazz.getName().replace('.', '/') + ".class";
+        String resource = clazz.getName().replace('.', '/') + CLASS_FILE;
         try (var is = clazz.getClassLoader().getResourceAsStream(resource)) {
             return is == null ? new byte[0] : is.readAllBytes();
         } catch (IOException e) {
@@ -1234,7 +1278,7 @@ public final class VaubanContainerBuilder {
 
     private static void indexClassResource(String className, ClassLoader loader, IndexBuilder indexBuilder)
             throws IOException {
-        String resource = className.replace('.', '/') + ".class";
+        String resource = className.replace('.', '/') + CLASS_FILE;
         try (var is = loader.getResourceAsStream(resource)) {
             if (is != null) {
                 indexBuilder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(is.readAllBytes()));

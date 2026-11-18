@@ -138,6 +138,36 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-29 — The frozen record does not see a change to annotation defaults or to a `package-info`
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.ReadClasses`, `langmodel.VaubanAnnotationInfo`,
+  `langmodel.declarations.VaubanPackageInfo`, `extensions.FrozenExtensions`, `container.VaubanContainerBuilder`)
+- **Symptom**: since BUG-20261117-55 and BUG-20261117-57 an extension reads the default values an annotation type
+  declares and the annotations of a `package-info`. The fingerprint of the frozen record counts the bean classes
+  alone, by their model: a change to a default of an annotation type, or to a `package-info`, left it as it was, and
+  the start loaded a record that the extensions would now write otherwise.
+- **Repro**: `FrozenReadClassesTest` in `vauban-core`. A library `lib` (`@Ranked` with `rank() default 1`, a
+  `package-info` annotated `@Tag("one")`) is written as class files, the bean class `lib.Holder` (`@Ranked`, no rank)
+  once; the extension records `rank` and the tag in a synthetic bean. Frozen on that library, then started on one
+  whose default is `2`, or whose tag is `two`: red on 6b2403e2 (`stack-l1b-bug1829.log`, "RED (4)"), the record stood
+  (`the record is stale: the extensions run ==> expected: <true> but was: <false>`).
+- **Cause**: `DeploymentFingerprint` holds the bean classes and the extensions; annotation types and `package-info`
+  are neither.
+- **Fix**: additive, outside the fingerprint. While a build freezes the extensions, the language model notes the
+  classes it reads for them beyond the bean classes (`ReadClasses`, a `ScopedValue` bound around the capture):
+  the annotation types whose defaults it merges, and the `package-info` classes whose annotations it gives, found or
+  not. The record keeps each one's model checksum (`ClassChecksums.ofModel`, from its class file through the
+  deployment's loader, `-` for none) under a new key, `read.<binary name>`; a class of the JDK is left out, as the
+  record already stands for the JDK of the build (BUG-20261117-31). A start whose fingerprint matches compares those
+  checksums when the record has them, and runs the extensions when one differs, with a note naming the classes.
+  `format` stays `1` and `DeploymentFingerprint.value()` does not change: a record written before keeps its
+  fingerprint and stays valid (`aRecordWithoutTheClassesReadStaysValid`).
+- **Verification**: `stack-l1b-bug1829.log`, "GREEN on 6b2403e2 + BUG-29 fold": `FrozenReadClassesTest` 4 of 4, the
+  frozen-record tests 26 of 26; the module tests of the review round.
+- **Found by**: the review of BUG-20261117-55 and BUG-20261117-57.
+
 ## BUG-20261118-28 — The processor shows class- and source-retained annotations
 
 - **Date**: 2026-11-18

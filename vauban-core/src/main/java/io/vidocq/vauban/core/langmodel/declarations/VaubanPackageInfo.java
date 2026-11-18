@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.langmodel.declarations;
 
 import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
+import io.vidocq.vauban.core.langmodel.ReadClasses;
 import io.vidocq.vauban.core.langmodel.RepeatableAnnotations;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo;
@@ -82,7 +83,9 @@ public final class VaubanPackageInfo implements jakarta.enterprise.lang.model.de
 
     @Override
     public Collection<AnnotationInfo> annotations() {
-        return lookup.find(PackageInfos.of(packageName)).map(ClassInfo::annotations).orElse(List.of()).stream()
+        var packageInfo = PackageInfos.of(packageName);
+        ReadClasses.note(packageInfo);
+        return lookup.find(packageInfo).map(ClassInfo::annotations).orElse(List.of()).stream()
                 .<AnnotationInfo>map(annotation -> new VaubanAnnotationInfo(annotation, lookup))
                 .toList();
     }
