@@ -398,7 +398,7 @@ final class InterceptorBeanWrapper {
         runtimeGeneration.generated(interfaceProxyKind(bean), beanClass.getName());
         java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
         for (var t : bean.getTypes()) {
-            if (t instanceof Class<?> c && c.isInterface() && c != Object.class) {
+            if (rawClassOf(t) instanceof Class<?> c && c.isInterface()) {
                 ifaceSet.add(c);
             }
         }
@@ -665,11 +665,18 @@ final class InterceptorBeanWrapper {
         }
     }
 
+    /**
+     * The class a producer's client proxy is made of: its first bean type that is a class, else its first interface,
+     * read raw, so that a parameterized type counts as its class ({@code ArrayList<String>} as {@code ArrayList},
+     * {@code Supplier<String>} as {@code Supplier}); {@code Object} aside. A managed bean's is its bean class. A
+     * parameterized type was skipped: the proxy was one of a class above it, {@code RandomAccess}, or of the class that
+     * declares the producer, which the injection point could not take (BUG-20261117-18).
+     */
     static Class<?> resolveProxyTargetClass(ManagedBean<?> bean) {
         if (isProducer(bean)) {
             // First pass: prefer a concrete (non-interface) type
             for (var type : bean.getTypes()) {
-                if (type instanceof Class<?> c && c != Object.class && !c.isInterface()) {
+                if (rawClassOf(type) instanceof Class<?> c && !c.isInterface()) {
                     return c;
                 }
             }
@@ -677,12 +684,22 @@ final class InterceptorBeanWrapper {
             // (e.g. JsonWebToken). Return the interface so getOrCreateProxy() can detect it
             // and create a java.lang.reflect.Proxy instead of a subclass proxy.
             for (var type : bean.getTypes()) {
-                if (type instanceof Class<?> c && c != Object.class) {
+                if (rawClassOf(type) instanceof Class<?> c) {
                     return c;
                 }
             }
         }
         return bean.getBeanClass();
+    }
+
+    /** The class {@code type} names, raw for a parameterized type; {@code null} for {@code Object} and any other. */
+    private static Class<?> rawClassOf(java.lang.reflect.Type type) {
+        Class<?> named = switch (type) {
+            case Class<?> c -> c;
+            case java.lang.reflect.ParameterizedType p when p.getRawType() instanceof Class<?> raw -> raw;
+            default -> null;
+        };
+        return named == Object.class ? null : named;
     }
 
     /** Whether {@code annotation} is an interceptor binding, declared as one or made one by an extension. */

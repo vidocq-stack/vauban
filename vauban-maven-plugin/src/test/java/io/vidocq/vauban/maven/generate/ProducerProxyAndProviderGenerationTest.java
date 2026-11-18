@@ -34,6 +34,8 @@ import io.vidocq.vauban.maven.generate.abstractmeter.Meter;
 import io.vidocq.vauban.maven.generate.abstractproduced.Instruments;
 import io.vidocq.vauban.maven.generate.finalproduced.Readings;
 import io.vidocq.vauban.maven.generate.finalreading.Reading;
+import io.vidocq.vauban.maven.generate.parameterized.Box;
+import io.vidocq.vauban.maven.generate.parameterized.Shelves;
 import io.vidocq.vauban.maven.generate.paths.Gadget;
 import io.vidocq.vauban.maven.generate.paths.Hidden;
 import io.vidocq.vauban.maven.generate.paths.Workshop;
@@ -174,6 +176,29 @@ class ProducerProxyAndProviderGenerationTest {
             var proxies = files.map(file -> file.getFileName().toString())
                     .filter(name -> name.startsWith("Reading$$")).toList();
             assertEquals(List.of(), proxies);
+        }
+    }
+
+    /**
+     * BUG-20261117-18: a producer of {@code Box<Integer>} has no bean type that names a class without type arguments.
+     * The plugin read none and wrote no proxy, so the container generated one at run time; it now reads the type raw,
+     * as the container does, and writes the proxy of {@code Box} in the producer's package.
+     */
+    @Test
+    void aProducerOfAParameterizedTypeGetsTheProxyOfItsClass() throws Exception {
+        var classes = copyPackage(Shelves.class, tmp.resolve("classes"));
+        var output = tmp.resolve("output");
+
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(), classes, output, withoutHidden()));
+
+        var proxies = proxyFiles(packageDir(output, Shelves.class)).stream()
+                .filter(name -> name.startsWith("Box$$")).toList();
+        assertEquals(1, proxies.size(), proxies + " " + result.warnings());
+        var proxyFqn = Shelves.class.getPackageName() + "." + proxies.getFirst().replace(".class", "");
+        try (var loader = new URLClassLoader(new URL[] {output.toUri().toURL()}, getClass().getClassLoader())) {
+            var forwarded = (Box<?>) loader.loadClass(proxyFqn).getConstructor(Supplier.class)
+                    .newInstance((Supplier<?>) () -> new Box<>(7));
+            assertEquals(7, forwarded.first());
         }
     }
 

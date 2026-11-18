@@ -435,11 +435,17 @@ public final class VaubanGenerator {
     /**
      * The produced concrete class of a producer bean, loaded via {@code cl}, or {@code null} when
      * the produced type is an interface (reflect.Proxy at runtime) or cannot be loaded. Mirrors the
-     * runtime {@code InterceptorBeanWrapper.resolveProxyTargetClass}: first concrete bean type.
+     * runtime {@code InterceptorBeanWrapper.resolveProxyTargetClass}: first concrete bean type, a parameterized type
+     * read raw ({@code Box<Integer>} as {@code Box}), which it skipped (BUG-20261117-18).
      */
     private static Class<?> resolveProducedClass(BeanDescriptor bean, ClassLoader cl) {
         for (var t : bean.types()) {
-            if (t instanceof TypeInfo.ClassType(var name) && !"java.lang.Object".equals(name.value())) {
+            var name = switch (t) {
+                case TypeInfo.ClassType(var raw) -> raw;
+                case TypeInfo.ParameterizedType(var raw, _) -> raw;
+                default -> null;
+            };
+            if (name != null && !"java.lang.Object".equals(name.value())) {
                 var concrete = concreteClass(name.value(), cl);
                 if (concrete.isPresent()) {
                     return concrete.get();

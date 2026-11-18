@@ -5,6 +5,25 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-24 — A normal-scoped producer of a JDK class with package-private methods is refused; Weld deploys it
+
+- **Date**: 2026-11-18
+- **Status**: OPEN (a Vauban limitation that departs from Weld; not lifted in the client proxy lane, review round 9)
+- **Module**: `vauban-core` (`InterceptorBeanWrapper.createProxy`, `ProducerProxyEligibility`), `vauban-processor`,
+  `vauban-maven-plugin`
+- **Symptom**: `@Produces @RequestScoped ArrayList<String> names()` injected as `List<String>`: the call throws
+  `DeploymentException: No client proxy can be generated for java.util.ArrayList, ... (PACKAGE_PRIVATE_VIRTUALS)`.
+  CDI 4.1 §3.10 finds `ArrayList` proxyable (no final non-private instance method, a public no-argument
+  constructor), and Weld 5.1.7 deploys it by defining its proxy outside `java.*`.
+- **Repro**: `InterfaceClientProxyTest#aNormalScopedProducerOfAJdkClassWithPackagePrivateMethodsInjects`, disabled; red
+  when enabled (`stack-bug1824-red.log`, "Red run 1": the `DeploymentException` above, 1 error of 6). Today's answer
+  is pinned by `#aNormalScopedProducerOfAJdkClassWithPackagePrivateMethodsFailsWithTheRemedy`.
+- **Cause**: Vauban cannot define a class in a package of the JDK, and a proxy in the producer's package cannot
+  override the package-private methods of `java.util.ArrayList`: a call to one would run on the proxy's own,
+  uninitialised state. Weld accepts that risk. Since BUG-20261117-18 the producer is judged by its raw class; before,
+  it got a proxy of `RandomAccess`, which no `List` injection point took.
+- **Found by**: the review of the BUG-20261117-18 fix (round 8, I-1).
+
 ## BUG-20261118-23 — `@Enhancement` gets `null` for `Messages` and `Types`, `@Synthesis` for `Messages`
 
 - **Date**: 2026-11-18
@@ -2136,7 +2155,8 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-18 — The client proxy of a normal-scoped producer of a parameterized type is not one of that type
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, the BUG-20261117-18 commit of the client proxy lane): the three paths read a
+  parameterized bean type raw
 - **Module**: `vauban-core` (`InterceptorBeanWrapper.resolveProxyTargetClass`), `vauban-processor`
   (`ClientProxyArtefacts`)
 - **Symptom**: `@Produces @RequestScoped Supplier<String> greeting()` in an `@ApplicationScoped GreetingProducer`, and
@@ -2161,6 +2181,25 @@ suspected cause, status. Updated on every investigation.
   container proxies the class that declares the producer.
 - **Found by**: the review of BUG-20261117-15 (fix round 2), which asked to confirm or rule it out; the two other
   cases by the review of fix round 3 (M-5).
+- **Red runs** (2026-11-18, `stack-bug1718-red.log`): run 1, the container on `Supplier<String>`, `ArrayList<String>`
+  and `@Typed(Repo.class) Box<String>`: 2 errors of 4, `UnproxyableResolutionException` (the proxy of the declaring
+  class, then a `java.lang.reflect.Proxy` of `RandomAccess`, is no `Supplier`, no `List`); run 2, `Box<Integer>` in place
+  of `ArrayList<String>`: 2 errors of 4; run 3, the processor: no proxy of `Box` nor of `Repo`, 2 failures of 3; run 4,
+  `vauban:generate`: no proxy of `Box`, 1 failure of 11.
+- **Fix**: `InterceptorBeanWrapper.resolveProxyTargetClass` (and the interfaces of its `java.lang.reflect.Proxy`
+  fallback), `ClientProxyArtefacts.producedTypeCandidates` and `VaubanGenerator.resolveProducedClass` read a
+  `ParameterizedType` as its raw class, so the three pick the produced class, raw, else the first interface, in the
+  same order as before. A `@Typed(Repo.class)` producer of `Box<String>` gets the proxy of `Repo` on every path. The
+  processor generated it when the entry was written, from the raw `@Typed` types; on the base of this fix it
+  generated none (red run 3). A producer of `ArrayList<String>` is now proxied as
+  `ArrayList`, which Vauban refuses (`PACKAGE_PRIVATE_VIRTUALS`): it cannot define a class in `java.util`, and a proxy
+  in the producer's package cannot override `ArrayList`'s package-private methods. The failure names the remedy;
+  before, its proxy of `RandomAccess` was no `List`. CDI 4.1 §3.10 allows such a producer and Weld deploys it: a
+  Vauban limitation that departs from Weld, tracked as BUG-20261118-24 and kept in this stack (review round 9).
+- **Tests**: `InterfaceClientProxyTest#aNormalScopedProducerOfAParameterizedInterfaceInjectsAsAProxyOfIt` (enabled)
+  and `#aNormalScopedProducerOfAParameterizedClassOrTypedInterfaceInjectsAsItsType`,
+  `ProducedTypeProxyTest#aProducerOfAParameterizedTypeGetsTheProxyOfItsRawType`,
+  `ProducerProxyAndProviderGenerationTest#aProducerOfAParameterizedTypeGetsTheProxyOfItsClass`.
 
 ## BUG-20261117-17 — A type argument of a produced type that is not a class is lost in the types above it
 

@@ -428,14 +428,22 @@ final class ClientProxyArtefacts {
         }
     }
 
-    /** The elements of the bean's class types, {@code Object} aside, that {@code accepted} keeps. */
+    /**
+     * The elements of the bean's class types, read raw, {@code Object} aside, that {@code accepted} keeps. A
+     * parameterized type counts as its class, as the container reads it: {@code Box<Integer>} as {@code Box}. It was
+     * skipped, and a producer of it got no proxy, or the proxy of a class above it (BUG-20261117-18).
+     */
     private List<TypeElement> producedTypeCandidates(BeanDescriptor bean, Predicate<TypeElement> accepted) {
         var elements = processingEnv.getElementUtils();
         var candidates = new ArrayList<TypeElement>();
         for (var t : bean.types()) {
+            var name = switch (t) {
+                case TypeInfo.ClassType(DotName raw) -> raw.value();
+                case TypeInfo.ParameterizedType(DotName raw, _) -> raw.value();
+                default -> JAVA_LANG_OBJECT;
+            };
             // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).
-            var te = t instanceof TypeInfo.ClassType(DotName name) && !JAVA_LANG_OBJECT.equals(name.value())
-                    ? TypeLookup.typeElementByBinaryName(elements, name.value()) : null;
+            var te = JAVA_LANG_OBJECT.equals(name) ? null : TypeLookup.typeElementByBinaryName(elements, name);
             if (te != null && accepted.test(te)) {
                 candidates.add(te);
             }

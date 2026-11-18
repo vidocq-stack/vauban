@@ -108,8 +108,6 @@ class InterfaceClientProxyTest {
      * .resolveProxyTargetClass}): the injection point of {@code Supplier<String>} could not take the proxy
      * (BUG-20261117-18).
      */
-    @org.junit.jupiter.api.Disabled("BUG-20261117-18: OPEN, the proxy of a producer of a parameterized type is one"
-            + " of the class that declares the producer")
     @Test
     @DisplayName("a normal-scoped producer of a parameterized interface injects as a proxy of that interface")
     void aNormalScopedProducerOfAParameterizedInterfaceInjectsAsAProxyOfIt() {
@@ -121,6 +119,136 @@ class InterfaceClientProxyTest {
             GreetingConsumer consumer = container.select(GreetingConsumer.class);
 
             container.requestContext().runInScope(() -> assertEquals("hello", consumer.greet()));
+        }
+    }
+
+    /** A generic interface, and a class of it the producers below produce. */
+    public interface Repo<T> {
+        T first();
+    }
+
+    public static class Box<T> implements Repo<T> {
+        private final T value;
+
+        public Box(T value) {
+            this.value = value;
+        }
+
+        @Override
+        public T first() {
+            return value;
+        }
+    }
+
+    @ApplicationScoped
+    public static class ListAndRepoProducer {
+        @Produces
+        @RequestScoped
+        public Box<Integer> count() {
+            return new Box<>(7);
+        }
+
+        @Produces
+        @RequestScoped
+        @jakarta.enterprise.inject.Typed(Repo.class)
+        public Box<String> repo() {
+            return new Box<>("grace");
+        }
+    }
+
+    @ApplicationScoped
+    public static class ListAndRepoConsumer {
+        @Inject
+        Repo<Integer> count;
+
+        @Inject
+        Repo<String> repo;
+
+        public String read() {
+            return count.first() + " " + repo.first();
+        }
+    }
+
+    /**
+     * The proxy of a producer of {@code Box<Integer>}, whose bean types are all parameterized, and of a
+     * {@code @Typed(Repo.class)} producer of {@code Box<String>}, whose only type is {@code Repo<String>}, was one of
+     * the class that declares the producer, and no {@code Repo} (BUG-20261117-18).
+     */
+    @Test
+    @DisplayName("a producer of a parameterized class, or @Typed to a parameterized interface, injects as its type")
+    void aNormalScopedProducerOfAParameterizedClassOrTypedInterfaceInjectsAsItsType() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(ListAndRepoProducer.class)
+                .addBeanClass(ListAndRepoConsumer.class)
+                .build()) {
+
+            ListAndRepoConsumer consumer = container.select(ListAndRepoConsumer.class);
+
+            container.requestContext().runInScope(() -> assertEquals("7 grace", consumer.read()));
+        }
+    }
+
+    @ApplicationScoped
+    public static class NamesProducer {
+        @Produces
+        @RequestScoped
+        public java.util.ArrayList<String> names() {
+            return new java.util.ArrayList<>(java.util.List.of("ada"));
+        }
+    }
+
+    @ApplicationScoped
+    public static class NamesConsumer {
+        @Inject
+        java.util.List<String> names;
+
+        public String first() {
+            return names.getFirst();
+        }
+    }
+
+    /**
+     * A normal-scoped producer of {@code ArrayList<String>} is proxyable (CDI 4.1, 3.10), and Weld deploys it. Vauban
+     * cannot define a class in {@code java.util}, and a proxy in the producer's package cannot override
+     * {@code ArrayList}'s package-private methods: it refuses the producer (BUG-20261118-24).
+     */
+    @org.junit.jupiter.api.Disabled("BUG-20261118-24: OPEN, a normal-scoped producer of a JDK class with"
+            + " package-private methods is refused; Weld deploys it")
+    @Test
+    @DisplayName("a normal-scoped producer of ArrayList<String> injects as a List")
+    void aNormalScopedProducerOfAJdkClassWithPackagePrivateMethodsInjects() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(NamesProducer.class)
+                .addBeanClass(NamesConsumer.class)
+                .build()) {
+
+            NamesConsumer consumer = container.select(NamesConsumer.class);
+
+            container.requestContext().runInScope(() -> assertEquals("ada", consumer.first()));
+        }
+    }
+
+    /**
+     * Today's answer to that producer (BUG-20261118-24): the proxy of {@code ArrayList}, its raw produced class since
+     * BUG-20261117-18, cannot be generated, and the failure names the remedy.
+     */
+    @Test
+    @DisplayName("a normal-scoped producer of ArrayList<String> fails with the remedy")
+    void aNormalScopedProducerOfAJdkClassWithPackagePrivateMethodsFailsWithTheRemedy() {
+        try (var container = VaubanContainer.builder()
+                .addBeanClass(NamesProducer.class)
+                .addBeanClass(NamesConsumer.class)
+                .build()) {
+
+            NamesConsumer consumer = container.select(NamesConsumer.class);
+
+            var failure = assertThrows(jakarta.enterprise.inject.spi.DeploymentException.class,
+                    () -> container.requestContext().runInScope(consumer::first));
+            assertEquals("No client proxy can be generated for java.util.ArrayList, produced by "
+                    + NamesProducer.class.getName() + " with the normal scope @RequestScoped: Vauban cannot define a"
+                    + " class in package java.util (a package of the JDK), and a proxy in the producer's package needs"
+                    + " a fully public type (PACKAGE_PRIVATE_VIRTUALS). Declare the producer @Singleton or @Dependent,"
+                    + " which need no client proxy, or produce an interface type.", failure.getMessage());
         }
     }
 

@@ -73,6 +73,25 @@ class ProducedTypeProxyTest {
             addInterfaceHierarchy(sources, root);
         }
         addTypedInterfaces(sources);
+        sources.put("app/g/Repo.java", """
+                package app.g;
+                public interface Repo<T> {
+                    T first();
+                }
+                """);
+        sources.put("app/g/Box.java", """
+                package app.g;
+                public class Box<T> implements Repo<T> {
+                    private final T value;
+                    public Box(T value) {
+                        this.value = value;
+                    }
+                    @Override
+                    public T first() {
+                        return value;
+                    }
+                }
+                """);
         sources.put("app/Producers.java", """
                 package app;
                 import jakarta.enterprise.context.ApplicationScoped;
@@ -98,6 +117,11 @@ class ProducedTypeProxyTest {
                     @Produces @ApplicationScoped @jakarta.inject.Named("twin")
                     @jakarta.enterprise.inject.Typed({app.t.T1.class, app.t.T2.class})
                     app.t.Made twin() { return new app.t.Made(); }
+                    @Produces @ApplicationScoped
+                    app.g.Box<Integer> count() { return new app.g.Box<>(7); }
+                    @Produces @ApplicationScoped
+                    @jakarta.enterprise.inject.Typed(app.g.Repo.class)
+                    app.g.Box<String> repo() { return new app.g.Box<>("grace"); }
                     @Produces
                     String[] labels() { return new String[0]; }
                     @Produces
@@ -172,8 +196,9 @@ class ProducedTypeProxyTest {
     void eachProducerGetsTheProxyOfTheTypeItProduces() {
         assertTrue(result.success(), () -> String.join("\n", result.messages()));
 
-        assertEquals(Set.of("app.c.A8_ClientProxy", "app.c.B8_ClientProxy", "app.i.J8_ClientProxy",
-                "app.i.K8_ClientProxy", "app.t.T2_ClientProxy", "app.t.T8_ClientProxy"), proxyKeys(),
+        assertEquals(Set.of("app.c.A8_ClientProxy", "app.c.B8_ClientProxy", "app.g.Box_ClientProxy",
+                "app.g.Repo_ClientProxy", "app.i.J8_ClientProxy", "app.i.K8_ClientProxy", "app.t.T2_ClientProxy",
+                "app.t.T8_ClientProxy"), proxyKeys(),
                 () -> String.join("\n", result.messages()));
     }
 
@@ -204,12 +229,73 @@ class ProducedTypeProxyTest {
         }
     }
 
+    /**
+     * A producer of a parameterized type, {@code Box<Integer>}, has no bean type that names a class without type
+     * arguments: the processor generated no proxy, and the container proxied the class that declares the producer,
+     * which no {@code Repo} injection point takes. With {@code @Typed(Repo.class)} the processor generated the proxy of
+     * {@code Repo}, the container the one of the declaring class (BUG-20261117-18). Both now proxy the produced class,
+     * raw, or the {@code @Typed} interface, and the container uses the processor's.
+     */
+    @Test
+    @DisplayName("a producer of a parameterized type gets the proxy of its class, or of its @Typed interface")
+    void aProducerOfAParameterizedTypeGetsTheProxyOfItsRawType() throws Exception {
+        assertTrue(proxyKeys().containsAll(Set.of("app.g.Box_ClientProxy", "app.g.Repo_ClientProxy")),
+                () -> String.join("\n", result.messages()));
+
+        try (var loader = new URLClassLoader(new URL[] {result.classes().toUri().toURL()},
+                getClass().getClassLoader()); var container = VaubanContainer.builder().classLoader(loader)
+                .scanClasspath().build()) {
+            var manager = container.getBeanManager();
+            var repo = loader.loadClass("app.g.Repo");
+
+            assertAll(() -> assertBuildTimeProxy(manager, manager.resolve(manager.getBeans(
+                            parameterized(repo, Integer.class))), parameterized(repo, Integer.class)),
+                    () -> assertBuildTimeProxy(manager, manager.resolve(manager.getBeans(
+                            parameterized(repo, String.class))), parameterized(repo, String.class)));
+        }
+    }
+
+    /** {@code raw<argument>}, as a type the bean manager resolves. */
+    private static java.lang.reflect.ParameterizedType parameterized(Class<?> raw, Class<?> argument) {
+        return new java.lang.reflect.ParameterizedType() {
+            @Override
+            public java.lang.reflect.Type[] getActualTypeArguments() {
+                return new java.lang.reflect.Type[] {argument};
+            }
+
+            @Override
+            public java.lang.reflect.Type getRawType() {
+                return raw;
+            }
+
+            @Override
+            public java.lang.reflect.Type getOwnerType() {
+                return null;
+            }
+
+            @Override
+            public boolean equals(Object other) {
+                return other instanceof java.lang.reflect.ParameterizedType that && raw.equals(that.getRawType())
+                        && that.getOwnerType() == null
+                        && java.util.Arrays.equals(getActualTypeArguments(), that.getActualTypeArguments());
+            }
+
+            @Override
+            public int hashCode() {
+                return java.util.Arrays.hashCode(getActualTypeArguments()) ^ raw.hashCode();
+            }
+        };
+    }
+
     private static void assertBuildTimeProxy(jakarta.enterprise.inject.spi.BeanManager manager,
-            jakarta.enterprise.inject.spi.Bean<?> bean, Class<?> type) {
+            jakarta.enterprise.inject.spi.Bean<?> bean, java.lang.reflect.Type type) {
         var reference = manager.getReference(bean, type, manager.createCreationalContext(bean));
+        Class<?> raw = type instanceof java.lang.reflect.ParameterizedType p
+                ? (Class<?>) p.getRawType() : (Class<?>) type;
 
         assertFalse(java.lang.reflect.Proxy.isProxyClass(reference.getClass()),
-                () -> "the container fell back to a java.lang.reflect.Proxy: no build-time proxy of " + type.getName());
-        assertTrue(type.isInstance(reference), reference.getClass()::getName);
+                () -> "the container fell back to a java.lang.reflect.Proxy: no build-time proxy of "
+                        + type.getTypeName());
+        assertTrue(raw.isInstance(reference), reference.getClass()::getName);
     }
 }
