@@ -88,12 +88,7 @@ public final class InterceptorManager {
 
     public void registerEnhancedBindings(String beanClassName, List<java.lang.annotation.Annotation> annotations) {
         if (annotations != null && !annotations.isEmpty()) {
-            var bindings = enhancedBindings.get(beanClassName);
-            if (bindings == null) {
-                bindings = new ArrayList<>();
-                enhancedBindings.put(beanClassName, bindings);
-            }
-            bindings.addAll(annotations);
+            enhancedBindings.computeIfAbsent(beanClassName, _ -> new ArrayList<>()).addAll(annotations);
             // Boot-time, before any invocation — but a binding added after a chain was worked out
             // would make it stale, and nothing else would say so.
             chainCache.clear();

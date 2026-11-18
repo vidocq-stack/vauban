@@ -351,12 +351,7 @@ public final class DeploymentValidator {
         var nameMap = new java.util.HashMap<String, List<BeanDescriptor>>();
         for (var bean : beans) {
             if (bean.name() != null) {
-                var named = nameMap.get(bean.name());
-                if (named == null) {
-                    named = new ArrayList<>();
-                    nameMap.put(bean.name(), named);
-                }
-                named.add(bean);
+                nameMap.computeIfAbsent(bean.name(), _ -> new ArrayList<>()).add(bean);
             }
         }
         for (var entry : nameMap.entrySet()) {

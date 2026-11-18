@@ -931,14 +931,12 @@ public final class VaubanContainer implements AutoCloseable {
         beanLifecycle.callPostConstruct(instance, descriptor, ctx);
     }
 
-    /** Registers a context of the container itself, while the constructor runs: no other thread sees the map yet. */
+    /**
+     * Registers a context of the container itself. One lambda for the four built-in contexts: the map is concurrent,
+     * and its lists have an identity, so computeIfAbsent stays.
+     */
     private void addBuiltInContext(Class<? extends Annotation> scope, Context context) {
-        var scoped = contexts.get(scope);
-        if (scoped == null) {
-            scoped = new java.util.ArrayList<>();
-            contexts.put(scope, scoped);
-        }
-        scoped.add(context);
+        contexts.computeIfAbsent(scope, _ -> new java.util.ArrayList<>()).add(context);
     }
 
     private BeanFactory<?> createManagedBeanFactory(BeanDescriptor descriptor,

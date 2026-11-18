@@ -72,13 +72,7 @@ final class ProcessedArchives {
         if (url == null) {
             return false;
         }
-        var spelling = url.toExternalForm();
-        var answer = answers.get(spelling);
-        if (answer == null) {
-            answer = locations.contains(location(spelling));
-            answers.put(spelling, answer);
-        }
-        return answer;
+        return answers.computeIfAbsent(url.toExternalForm(), spelling -> locations.contains(location(spelling)));
     }
 
     boolean isEmpty() {

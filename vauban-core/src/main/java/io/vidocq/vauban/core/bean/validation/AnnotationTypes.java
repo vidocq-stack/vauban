@@ -99,6 +99,9 @@ final class AnnotationTypes {
     }
 
     /** The annotation type {@code name}, or empty when it is neither indexed nor loadable. */
+    // The validator of the start reads it, one thread: computeIfAbsent's method reference would spin a class at every
+    // start (vauban#347)
+    @SuppressWarnings("java:S3824")
     Optional<Meta> meta(DotName name) {
         var meta = metas.get(name);
         if (meta == null) {

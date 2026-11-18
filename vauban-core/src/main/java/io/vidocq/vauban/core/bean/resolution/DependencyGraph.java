@@ -45,6 +45,9 @@ public final class DependencyGraph {
         adjacency.putIfAbsent(bean.id(), new LinkedHashSet<>());
     }
 
+    // Filled by the validation of the start, one thread: computeIfAbsent's lambda would spin a class at every start
+    // (vauban#347)
+    @SuppressWarnings("java:S3824")
     public void addDependency(BeanId from, BeanId to) {
         var dependencies = adjacency.get(from);
         if (dependencies == null) {

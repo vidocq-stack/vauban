@@ -323,6 +323,8 @@ public final class VaubanLayerFactory {
     }
 
     /** The providers of {@code service} in {@code merged}, an empty set added there when it has none yet. */
+    // A local map of the start, one thread: computeIfAbsent's lambda would spin a class at every start (vauban#347)
+    @SuppressWarnings("java:S3824")
     private static Set<String> providersOf(Map<String, LinkedHashSet<String>> merged, String service) {
         var providers = merged.get(service);
         if (providers == null) {

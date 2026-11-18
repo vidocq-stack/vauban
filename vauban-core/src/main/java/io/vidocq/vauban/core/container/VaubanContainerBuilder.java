@@ -438,12 +438,7 @@ public final class VaubanContainerBuilder {
     private static void mergeEnhancementPatch(Map<String, List<AnnotationInfo>> patch,
             Map<DotName, List<AnnotationInfo>> merged) {
         for (var entry : patch.entrySet()) {
-            var target = DotName.of(entry.getKey());
-            var list = merged.get(target);
-            if (list == null) {
-                list = new ArrayList<>();
-                merged.put(target, list);
-            }
+            var list = merged.computeIfAbsent(DotName.of(entry.getKey()), _ -> new ArrayList<>());
             for (var ann : entry.getValue()) {
                 if (!list.contains(ann)) list.add(ann);
             }
@@ -1690,12 +1685,7 @@ public final class VaubanContainerBuilder {
     private static void addEnhancements(Map<DotName, List<VaubanClassConfig>> combined,
             Map<DotName, List<VaubanClassConfig>> added) {
         for (var entry : added.entrySet()) {
-            var configs = combined.get(entry.getKey());
-            if (configs == null) {
-                configs = new ArrayList<>();
-                combined.put(entry.getKey(), configs);
-            }
-            configs.addAll(entry.getValue());
+            combined.computeIfAbsent(entry.getKey(), _ -> new ArrayList<>()).addAll(entry.getValue());
         }
     }
 
@@ -1951,9 +1941,7 @@ public final class VaubanContainerBuilder {
         frozenEntries.addAll(io.vidocq.vauban.core.extensions.FrozenContexts.read(discoveryClassLoader));
         for (var frozen : frozenEntries) {
             var key = frozen.scope() + ";" + frozen.contextClass();
-            if (!contextRegistrations.containsKey(key)) {
-                contextRegistrations.put(key, loadFrozenContext(frozen, discoveryClassLoader));
-            }
+            contextRegistrations.computeIfAbsent(key, _ -> loadFrozenContext(frozen, discoveryClassLoader));
         }
         return contextRegistrations;
     }

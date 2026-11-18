@@ -49,7 +49,8 @@ Every published number (README, commit, post) must point to an entry here.
   frozen-record path): started in 169.6 / 207.2 / 173.3 ms, idle classes 1497 / 1898 / 1644.
 - **Probe**: `StartLoadsFewClassesModulePathTest` (`vauban-module-it`) counts the hidden classes of Vauban a start of
   `StartProbe` loads (an application layer, a container, a lookup through the `BeanManager`): 323 on `bd38e952`
-  (291 lambdas, 32 `switch` on types), 57 with the change (27 lambdas, 30 `switch` on types).
+  (291 lambdas, 32 `switch` on types), 58 with the change (28 lambdas, 30 `switch` on types; the 28th is the
+  `computeIfAbsent` the container keeps on its concurrent map of contexts).
 - **Last step of the change** (the built-in beans' factories and the `BeanManager`'s type matching, 10 lambdas on the
   bench's lookup path), after the campaign above: same command, 3 starts, class counts only (load average 17 to 38,
   no time quoted): 1620 classes at idle instead of 1628, 1984 after traffic instead of 1992, `vauban-core` 149 classes

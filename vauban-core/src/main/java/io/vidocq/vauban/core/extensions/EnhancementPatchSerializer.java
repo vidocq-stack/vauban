@@ -163,12 +163,8 @@ public final class EnhancementPatchSerializer {
         var name = owner(target);
         var indexed = index.getClassByName(name);
         if (indexed.isEmpty()) return;
-        var config = configs.get(name);
-        if (config == null) {
-            config = new VaubanClassConfig(
-                    new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexed.get(), lookup));
-            configs.put(name, config);
-        }
+        var config = configs.computeIfAbsent(name, _ -> new VaubanClassConfig(
+                new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexed.get(), lookup)));
         restore(config, parts, target, annotations, lookup);
     }
 
