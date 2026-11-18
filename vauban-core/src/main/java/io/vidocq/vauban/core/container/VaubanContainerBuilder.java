@@ -741,32 +741,9 @@ public final class VaubanContainerBuilder {
             asked.forEach(extension -> atStart.add(extension.getName()));
             extensions.stream().map(Class::getName).filter(namedForStart::contains).forEach(atStart::add);
 
-            // An extension that removes annotations runs again at each start: a record of additions cannot say
-            // what it did (vauban#343).
-            enhancements.forEach((target, configs) -> {
-                for (var config : configs) {
-                    var source = config.getSourceBce();
-                    if (source != null && !atStart.contains(source.getName()) && config.removesAnnotations()) {
-                        startReasons.putIfAbsent(source.getName(), "it removes annotations from " + target
-                                + " in @Enhancement, which a record of additions cannot say");
-                    }
-                }
-            });
-            atStart.addAll(startReasons.keySet());
-
+            removalsToStart(atStart);
             var synthetic = syntheticOf(atStart, output);
-
-            // What @Enhancement did, of the extensions that stay frozen. A configuration the frozen files of an
-            // archive gave has no extension: the start reads those files itself.
-            var frozenModifications = new LinkedHashMap<DotName, List<VaubanClassConfig>>();
-            enhancements.forEach((target, configs) -> {
-                for (var config : configs) {
-                    var source = config.getSourceBce();
-                    if (source != null && !atStart.contains(source.getName())) {
-                        frozenModifications.computeIfAbsent(target, _ -> new ArrayList<>()).add(config);
-                    }
-                }
-            });
+            var frozenModifications = frozenModifications(atStart);
 
             var contexts = io.vidocq.vauban.core.extensions.FrozenContexts.of(
                     discovery.metaAnnotations().getCustomContexts());
@@ -775,6 +752,38 @@ public final class VaubanContainerBuilder {
                     ExtensionDiscovery.of(discovery).named(contexts),
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.additions(frozenModifications),
                     synthetic, readChecksums());
+        }
+
+        /**
+         * Adds to {@code atStart} each extension that removes annotations in {@code @Enhancement}: a record of
+         * additions cannot say what it did, so it runs again at each start (vauban#343).
+         */
+        private void removalsToStart(Set<String> atStart) {
+            enhancements.forEach((target, configs) -> configs.stream()
+                    .filter(VaubanClassConfig::removesAnnotations)
+                    .map(VaubanClassConfig::getSourceBce)
+                    .filter(source -> source != null && !atStart.contains(source.getName()))
+                    .forEach(source -> startReasons.putIfAbsent(source.getName(), "it removes annotations from "
+                            + target + " in @Enhancement, which a record of additions cannot say")));
+            atStart.addAll(startReasons.keySet());
+        }
+
+        /**
+         * What {@code @Enhancement} did, of the extensions that stay frozen. A configuration the frozen files of an
+         * archive gave has no extension: the start reads those files itself.
+         */
+        private Map<DotName, List<VaubanClassConfig>> frozenModifications(Set<String> atStart) {
+            var frozenModifications = new LinkedHashMap<DotName, List<VaubanClassConfig>>();
+            enhancements.forEach((target, configs) -> {
+                var kept = configs.stream()
+                        .filter(config -> config.getSourceBce() != null
+                                && !atStart.contains(config.getSourceBce().getName()))
+                        .toList();
+                if (!kept.isEmpty()) {
+                    frozenModifications.put(target, kept);
+                }
+            });
+            return frozenModifications;
         }
 
         /**
