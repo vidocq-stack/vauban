@@ -3426,6 +3426,17 @@ suspected cause, status. Updated on every investigation.
 - **Next**: drop the fallback, or keep the classes `@Enhancement` made beans only (`beansAfterEnhancement` already
   adds them), and check the CDI Lite TCK and the bricks' `@Registration` methods again. It changes what extensions
   see at start, so it gets its own change.
+- **CDI Lite TCK** (2026-11-18, lane L4): dropping the fallback failed
+  `org.jboss.cdi.tck.tests.build.compatible.extensions.priority.PriorityTest` ("Incorrect invocation order of extension
+  methods"). Its deployment holds no bean and no interceptor for Vauban (`PriorityTest` and the extension, under an
+  empty `beans.xml`), yet its `@Registration(types = Object.class)` method with a `BeanInfo` parameter must be called:
+  the fallback gave it `PriorityTest`, a class that is no bean. Debug runs, `<scratchpad>/session-swap/stack-l4-08b-debug.log`,
+  "Debug run 1" and "Debug run 2" (`beans=[]`, `interceptors=[]`, no target); the TCK failure, `stack-l4-08b-red.log`,
+  "Red run 2". The implementations the TCK runs on give a `BeanInfo` to their built-in beans: Vauban has no
+  `BeanDescriptor` for them. The fallback stays until it does; the fix of lane L4 was taken out of the stack.
+- **Next (updated)**: describe the built-in beans (`BeanManager`, `Event`, `Instance`, `InjectionPoint`, ...) as beans
+  that `@Registration` is given, in the processor, at start and frozen alike, then drop the fallback; the CDI Lite TCK
+  `PriorityTest` is the check.
 - **Found by**: the review of BUG-20261117-02.
 
 ## BUG-20261117-05 — `@Registration` over observers matches the class that declares them, not the observed event type
