@@ -48,8 +48,13 @@ Every published number (README, commit, post) must point to an entry here.
   An earlier campaign of 7 rounds the same afternoon (load average about 8.7, before the second pass of loops on the
   frozen-record path): started in 169.6 / 207.2 / 173.3 ms, idle classes 1497 / 1898 / 1644.
 - **Probe**: `StartLoadsFewClassesModulePathTest` (`vauban-module-it`) counts the hidden classes of Vauban a start of
-  `StartProbe` loads (an application layer, then a container): 308 on `bd38e952` (278 lambdas, 30 `switch` on types),
-  55 with the change (27 lambdas, 28 `switch` on types).
+  `StartProbe` loads (an application layer, a container, a lookup through the `BeanManager`): 323 on `bd38e952`
+  (291 lambdas, 32 `switch` on types), 57 with the change (27 lambdas, 30 `switch` on types).
+- **Last step of the change** (the built-in beans' factories and the `BeanManager`'s type matching, 10 lambdas on the
+  bench's lookup path), after the campaign above: same command, 3 starts, class counts only (load average 17 to 38,
+  no time quoted): 1620 classes at idle instead of 1628, 1984 after traffic instead of 1992, `vauban-core` 149 classes
+  and 48 hidden classes instead of 146 and 58. The record is still accepted (`cdi extensions  2 extensions frozen at
+  build`, with `-Dvidocq.startup.report=detailed`).
 - **Memory, the +21 MB of RSS the bench saw**: with `-Xmn600m` (no young collection before idle), 3 starts each, eden
   used at idle is 39 / 51 / 43 MB and RSS 111 / 144 / 117 MB. With `-XX:NativeMemoryTracking=summary`, 2 starts each,
   the committed native memory differs by the compiler's arena chunks (8 / 14 / 7 MB) and 1 MB of code cache and

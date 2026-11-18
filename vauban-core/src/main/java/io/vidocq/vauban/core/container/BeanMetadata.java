@@ -52,10 +52,28 @@ final class BeanMetadata {
     /** The three beans, among the container's built-in ones. */
     static List<Bean<?>> builtInBeans() {
         return List.of(
-                new BuiltInBean<>(Bean.class, Set.of(Bean.class), BeanMetadata::injectedInto),
-                new BuiltInBean<>(Interceptor.class, Set.of(Interceptor.class), () -> boundOrNull(INTERCEPTOR)),
-                new BuiltInBean<>(Bean.class, Set.of(Bean.class), () -> boundOrNull(INTERCEPTED),
+                new BuiltInBean<>(Bean.class, Set.of(Bean.class), new Factory(null)),
+                new BuiltInBean<>(Interceptor.class, Set.of(Interceptor.class), new Factory(INTERCEPTOR)),
+                new BuiltInBean<>(Bean.class, Set.of(Bean.class), new Factory(INTERCEPTED),
                         Set.of(INTERCEPTED_LITERAL)));
+    }
+
+    /**
+     * The factory of the three beans: what {@code bound} is bound to, or, with no value, the bean the injection point
+     * being injected belongs to. One class where a lambda each spun three at the first lookup of a bean (vauban#347).
+     */
+    private static final class Factory implements Supplier<Object> {
+
+        private final ScopedValue<?> bound;
+
+        Factory(ScopedValue<?> bound) {
+            this.bound = bound;
+        }
+
+        @Override
+        public Object get() {
+            return bound == null ? injectedInto() : boundOrNull(bound);
+        }
     }
 
     /** {@code @Intercepted}, which the API gives no literal of. */

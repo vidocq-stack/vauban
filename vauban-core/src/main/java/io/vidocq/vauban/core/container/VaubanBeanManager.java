@@ -158,29 +158,55 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
     private List<Bean<?>> getBuiltInBeans() {
         if (builtInBeans == null) {
             var all = new ArrayList<Bean<?>>(List.of(
-                new BuiltInBean<>(BeanManager.class,
-                    Set.of(BeanManager.class, jakarta.enterprise.inject.spi.BeanContainer.class),
-                    () -> this),
-                new BuiltInBean<>(Event.class,
-                    Set.of(Event.class, Object.class),
-                    this::getEvent),
+                builtIn(BeanManager.class,
+                    Set.of(BeanManager.class, jakarta.enterprise.inject.spi.BeanContainer.class)),
+                builtIn(Event.class, Set.of(Event.class, Object.class)),
                 // CDI 4.1 §5.6.2: the built-in bean of type Instance<X> is of type Provider<X> too (BUG-20261116-10)
-                new BuiltInBean<>(Instance.class,
-                    Set.of(Instance.class, jakarta.inject.Provider.class),
-                    this::createInstance),
-                new BuiltInBean<>(InjectionPoint.class,
-                    Set.of(InjectionPoint.class),
-                    VaubanContainer::getCurrentInjectionPoint),
+                builtIn(Instance.class, Set.of(Instance.class, jakarta.inject.Provider.class)),
+                builtIn(InjectionPoint.class, Set.of(InjectionPoint.class)),
                 // CDI 4.1 §6.5.8: @Dependent, one controller per lookup (Vidocq/vauban#147).
-                new BuiltInBean<>(jakarta.enterprise.context.control.RequestContextController.class,
-                    Set.of(jakarta.enterprise.context.control.RequestContextController.class, Object.class),
-                    () -> new io.vidocq.vauban.core.context.VaubanRequestContextController(container.requestContext()))
+                builtIn(jakarta.enterprise.context.control.RequestContextController.class,
+                    Set.of(jakarta.enterprise.context.control.RequestContextController.class, Object.class))
             ));
             // CDI 4.1, 5.5.8: Bean, Interceptor and @Intercepted Bean (BUG-20261117-47)
             all.addAll(BeanMetadata.builtInBeans());
             builtInBeans = List.copyOf(all);
         }
         return builtInBeans;
+    }
+
+    private BuiltInBean<?> builtIn(Class<?> beanClass, Set<Type> types) {
+        return new BuiltInBean<>(beanClass, types, new BuiltInFactory(beanClass));
+    }
+
+    /**
+     * The factory of a built-in bean of this manager, chosen by the bean's class: one class for the five, where a
+     * lambda each spun five classes at the first lookup of a bean (vauban#347).
+     */
+    private final class BuiltInFactory implements java.util.function.Supplier<Object> {
+
+        private final Class<?> beanClass;
+
+        BuiltInFactory(Class<?> beanClass) {
+            this.beanClass = beanClass;
+        }
+
+        @Override
+        public Object get() {
+            if (beanClass == BeanManager.class) {
+                return VaubanBeanManager.this;
+            }
+            if (beanClass == Event.class) {
+                return getEvent();
+            }
+            if (beanClass == Instance.class) {
+                return createInstance();
+            }
+            if (beanClass == InjectionPoint.class) {
+                return VaubanContainer.getCurrentInjectionPoint();
+            }
+            return new io.vidocq.vauban.core.context.VaubanRequestContextController(container.requestContext());
+        }
     }
 
     // --- Functional methods ---
@@ -1009,13 +1035,42 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
      * life of the container ({@link #convertedTypes}).
      */
     private Predicate<Type> deploymentTypesMatching(Type requiredType) {
-        if (!isRequiredType(requiredType)) {
-            return requiredType::equals;
+        return new DeploymentTypesMatching(requiredType,
+                isRequiredType(requiredType) ? TypeInfoUtils.fromReflectType(boxed(requiredType)) : null);
+    }
+
+    /**
+     * {@link #deploymentTypesMatching(Type)}: a named class, where a lambda spun one at the first lookup of a bean
+     * (vauban#347).
+     */
+    private final class DeploymentTypesMatching implements Predicate<Type> {
+
+        private final Type requiredType;
+        /** The required type converted, or {@code null} when it is not a required type: only equality matches it. */
+        private final TypeInfo required;
+
+        DeploymentTypesMatching(Type requiredType, TypeInfo required) {
+            this.requiredType = requiredType;
+            this.required = required;
         }
-        var rules = container.assignability();
-        var required = TypeInfoUtils.fromReflectType(boxed(requiredType));
-        return beanType -> beanType.equals(requiredType) || rules.beanTypeMatches(
-                convertedTypes.computeIfAbsent(boxed(beanType), TypeInfoUtils::fromReflectType), required);
+
+        @Override
+        public boolean test(Type beanType) {
+            return beanType.equals(requiredType)
+                    || required != null && container.assignability().beanTypeMatches(converted(beanType), required);
+        }
+    }
+
+    /** {@code beanType} converted, once for the life of the container. */
+    private TypeInfo converted(Type beanType) {
+        var key = boxed(beanType);
+        var converted = convertedTypes.get(key);
+        if (converted == null) {
+            // Two threads may convert the same type: the answer is the same, and a lambda would spin a class
+            converted = TypeInfoUtils.fromReflectType(key);
+            convertedTypes.put(key, converted);
+        }
+        return converted;
     }
 
     /**

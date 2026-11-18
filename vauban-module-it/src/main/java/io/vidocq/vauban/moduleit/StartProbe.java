@@ -66,7 +66,12 @@ public final class StartProbe {
                 .addBeanClass(GenericScopedService.class)
                 .addBeanClass(DollarProducers.class)
                 .build()) {
-            System.out.println("started: " + container.select(Collaborator.class).hello());
+            // A REST or Servlet layer looks its beans up through the BeanManager, as Cassini does
+            var manager = container.getBeanManager();
+            var bean = manager.resolve(manager.getBeans(Collaborator.class));
+            var collaborator = (Collaborator) manager.getReference(bean, Collaborator.class,
+                    manager.createCreationalContext(bean));
+            System.out.println("started: " + collaborator.hello());
         }
     }
 

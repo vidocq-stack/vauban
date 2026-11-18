@@ -904,7 +904,7 @@ The `ApplicationContext` is built in memory, without opening any package.
 
 A lambda, a method reference and a `switch` on types are hidden classes the JVM spins the first time the line runs. Each one costs about twice the loading of a class from a jar, and no CDS archive holds it. Between the 2026-10-28 and 2026-11-18 snapshots, the start of a small REST application loaded some 290 more classes, more than half of them the container's lambdas, and started about 20 % slower (vauban#347, `BENCH.md`).
 
-So the code that every start runs (the index scan, the validation of the bean classes, discovery, the application layer) is written with loops. The rest of the code keeps its streams where they read better. `StartLoadsFewClassesModulePathTest` (`vauban-module-it`) holds the line:
+So the code that every start runs (the index scan, the validation of the bean classes, discovery, the application layer, the first lookup of a bean through the `BeanManager`) is written with loops. The rest of the code keeps its streams where they read better. `StartLoadsFewClassesModulePathTest` (`vauban-module-it`) holds the line:
 
 * it starts an application layer and a container in a JVM of its own, on the module path;
 * it counts the hidden classes whose host is a class of Vauban against a budget, and its failure message names each host;

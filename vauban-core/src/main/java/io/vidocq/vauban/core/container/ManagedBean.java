@@ -29,7 +29,6 @@ import jakarta.enterprise.inject.spi.PassivationCapable;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
-import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -439,14 +438,23 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
     }
 
     private static boolean anyHasTypeVariableNotIn(Type[] types, Set<java.lang.reflect.TypeVariable<?>> allowed) {
-        return Arrays.stream(types).anyMatch(type -> hasTypeVariableNotIn(type, allowed));
+        for (var type : types) {
+            if (hasTypeVariableNotIn(type, allowed)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether a type argument of {@code type} is a wildcard, or a parameterized type that has one, at any depth. */
     private static boolean hasWildcard(java.lang.reflect.ParameterizedType type) {
-        return Arrays.stream(type.getActualTypeArguments()).anyMatch(
-                argument -> argument instanceof java.lang.reflect.WildcardType
-                        || argument instanceof java.lang.reflect.ParameterizedType nested && hasWildcard(nested));
+        for (var argument : type.getActualTypeArguments()) {
+            if (argument instanceof java.lang.reflect.WildcardType
+                    || argument instanceof java.lang.reflect.ParameterizedType nested && hasWildcard(nested)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The type variables {@code type} has, itself or among its type arguments, at any depth. */

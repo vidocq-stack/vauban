@@ -86,9 +86,11 @@ public final class TypeInfoUtils {
     private static TypeInfo fromParameterizedType(java.lang.reflect.ParameterizedType pt,
             Set<java.lang.reflect.TypeVariable<?>> converting) {
         Class<?> raw = (Class<?>) pt.getRawType();
-        List<TypeInfo> args = Arrays.stream(pt.getActualTypeArguments())
-                .map(argument -> fromReflectType(argument, converting))
-                .toList();
+        var arguments = new java.util.ArrayList<TypeInfo>();
+        for (var argument : pt.getActualTypeArguments()) {
+            arguments.add(fromReflectType(argument, converting));
+        }
+        List<TypeInfo> args = java.util.Collections.unmodifiableList(arguments);
         // The enclosing type, where it is parameterized, as the index reads it (BUG-20261117-21)
         var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType parameterized
                 ? fromParameterizedType(parameterized, converting) : null;
