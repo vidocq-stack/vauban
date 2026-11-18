@@ -26,7 +26,6 @@ import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
-import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.TypeParameterElement;
@@ -85,9 +84,15 @@ final class MirrorTypeAnnotations {
         return this;
     }
 
-    /** Reads the types of {@code parameters}, each at its position. */
-    MirrorTypeAnnotations parameters(List<? extends VariableElement> parameters) {
-        return types(parameters.stream().map(Element::asType).toList(), Target.PARAMETER);
+    /**
+     * Reads the types of {@code parameters}, each at its position among the parameters the index records, after
+     * {@code offset} it adds before them: the outer instance of an inner class's constructor (BUG-20261118-33).
+     */
+    MirrorTypeAnnotations parameters(List<? extends VariableElement> parameters, int offset) {
+        for (int i = 0; i < parameters.size(); i++) {
+            type(parameters.get(i).asType(), Target.PARAMETER, i + offset);
+        }
+        return this;
     }
 
     /**

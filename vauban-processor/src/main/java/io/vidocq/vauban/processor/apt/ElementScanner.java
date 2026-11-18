@@ -35,6 +35,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.TypeParameterElement;
@@ -246,6 +247,12 @@ public final class ElementScanner {
         var returnType = typeMirrorToTypeInfo(method.getReturnType());
 
         var parameters = new ArrayList<ParameterInfo>();
+        // The outer instance of an inner class's constructor, which javac marks mandated and the language model counts
+        // as implicitly declared: the bytecode scan records it first, named argN for want of one (BUG-20261118-33).
+        var outer = outerInstance(method);
+        if (outer != null) {
+            parameters.add(new ParameterInfo("arg0", outer, List.of()));
+        }
         for (var param : method.getParameters()) {
             parameters.add(new ParameterInfo(
                     param.getSimpleName().toString(),
@@ -263,7 +270,8 @@ public final class ElementScanner {
         var defaultValue = method.getDefaultValue() == null ? null : convertAnnotationValue(method.getDefaultValue());
 
         var typeAnnotations = typeAnnotations().type(method.getReturnType(), Target.RETURN, 0)
-                .parameters(method.getParameters()).types(method.getThrownTypes(), Target.THROWS)
+                .parameters(method.getParameters(), parameters.size() - method.getParameters().size())
+                .types(method.getThrownTypes(), Target.THROWS)
                 .typeParameters(method.getTypeParameters());
         if (MirrorTypeAnnotations.isPresent(method.getReceiverType())) {
             typeAnnotations.type(method.getReceiverType(), Target.RECEIVER, 0);
@@ -274,6 +282,22 @@ public final class ElementScanner {
 
         return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,
                 new TypeParameterReader(method).typeParameters(), typeAnnotations.found());
+    }
+
+    /**
+     * The type of the outer instance a constructor takes first: the erasure of the class that encloses an inner member
+     * class, as its descriptor names it; {@code null} for any other method.
+     */
+    private TypeInfo outerInstance(ExecutableElement method) {
+        if (method.getKind() != ElementKind.CONSTRUCTOR
+                || !(method.getEnclosingElement() instanceof TypeElement type)
+                || type.getNestingKind() != NestingKind.MEMBER
+                || type.getModifiers().contains(Modifier.STATIC) || !type.getKind().isClass()
+                || type.getKind() == ElementKind.ENUM || type.getKind() == ElementKind.RECORD
+                || !(type.getEnclosingElement() instanceof TypeElement enclosing)) {
+            return null;
+        }
+        return new TypeInfo.ClassType(binaryName(enclosing));
     }
 
     private List<AnnotationInfo> scanAnnotations(Element element) {

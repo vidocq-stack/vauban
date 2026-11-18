@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-33 — In the processor, an inner class's constructor lacks its outer instance
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-processor` (`apt.ElementScanner`, `apt.MirrorTypeAnnotations`)
+- **Symptom**: for `class Outer { class Inner { Inner(String name) {} } }`, `MethodInfo.parameters()` of `Inner`'s
+  constructor is `[String]` in the processor and `[Outer, String]` at start and frozen; a type annotation on `name` is
+  at position 0 in the processor, 1 at start. The language model asks for the parameters "declared or implicitly
+  declared": the outer instance of an inner member class's constructor is implicitly declared (JLS 8.8.1), and javac
+  marks it mandated.
+- **Repro**: `ElementScannerTypeAnnotationsTest#innerConstructorParameters` and `#constructorParameters` in
+  `vauban-processor`, red on 814faacf (`stack-l2c-red.log`, "RED BUG-20261118-33 on 814faacf ... (types only)"):
+  `[String]` for `[Outer, String]`, `PARAMETER 0` for `PARAMETER 1`.
+- **Cause**: `ElementScanner.scanMethod` took the parameters javax.lang.model gives, the declared ones only.
+- **Fix**: the processor adds the outer instance first to the constructor of an inner member class, of the erasure of
+  the enclosing class, as the descriptor names it, named `arg0`: the source gives it no name, and the language model
+  names a parameter it has no name for `argN`. `MirrorTypeAnnotations.parameters` numbers the declared parameters
+  after it. The frozen record, computed from the bytecode index, does not change.
+- **The name** (review round 2): compiled with `-parameters`, javac writes `this$0` for the outer instance, which the
+  start shows; the processor keeps `arg0`. It cannot know whether the class it compiles gets `-parameters`: a
+  processor reads the `-A` options only (`ProcessingEnvironment.getOptions()`), not javac's own. Without the option the
+  two agree, as for every declared parameter the other way round. Documented in `migration.adoc`.
+- **Verification**: `stack-l2c-dev.log`, "BUG-20261118-33 fix: core, processor, maven-plugin tests" (green).
+- **Found by**: the review of batch C (round 1, item 4).
+
+---
+
 ## BUG-20261118-32 — At start, a local class's constructor shows its captured values, misplaced
 
 - **Date**: 2026-11-18

@@ -214,10 +214,15 @@ class ElementScannerTypeAnnotationsTest {
                         .get(TYPE_USE_ONLY_CONSTRUCTOR));
     }
 
+    /**
+     * BUG-20261118-33: an inner class's constructor has the outer instance first in both indexes, which javac marks
+     * mandated and the language model counts as implicitly declared, named {@code arg0} where the class file gives
+     * no name; a type annotation numbers it.
+     */
     @Test
     @DisplayName("a constructor numbers its parameters in the parameters each index records")
     void constructorParameters() {
-        assertEquals("[PARAMETER 0 0 [] A{}]", described(method(PROCESSOR.get("Outer.Inner"), "<init>")));
+        assertEquals("[PARAMETER 1 0 [] A{}]", described(method(PROCESSOR.get("Outer.Inner"), "<init>")));
         assertEquals("[PARAMETER 1 0 [] A{}]", described(method(BYTECODE.get("Outer.Inner"), "<init>")));
         assertEquals("[PARAMETER 0 0 [] B{}]", described(method(PROCESSOR.get("Level"), "<init>")));
         assertEquals("[PARAMETER 0 0 [] B{}]", described(method(BYTECODE.get("Level"), "<init>")));
@@ -228,6 +233,16 @@ class ElementScannerTypeAnnotationsTest {
     void enumConstructorParameters() {
         assertEquals(parameters(PROCESSOR.get("Level")), parameters(BYTECODE.get("Level")));
         assertEquals("[ClassType[name=java.lang.String]]", parameters(BYTECODE.get("Level")));
+    }
+
+    @Test
+    @DisplayName("an inner class's constructor has the outer instance first in both indexes (BUG-20261118-33)")
+    void innerConstructorParameters() {
+        assertEquals(parameters(BYTECODE.get("Outer.Inner")), parameters(PROCESSOR.get("Outer.Inner")));
+        assertEquals("[ClassType[name=app.Outer], ClassType[name=java.lang.String]]",
+                parameters(PROCESSOR.get("Outer.Inner")));
+        assertEquals("arg0", PROCESSOR.get("Outer.Inner").methods().stream().filter(MethodInfo::isConstructor)
+                .findFirst().orElseThrow().parameters().getFirst().name());
     }
 
     /**
