@@ -43,6 +43,7 @@ import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.inject.spi.PassivationCapable;
 import jakarta.enterprise.lang.model.AnnotationInfo;
+import jakarta.enterprise.lang.model.AnnotationMember;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.WildcardType;
@@ -66,6 +67,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -3569,6 +3571,105 @@ class VetoedInterceptorCompileTimeTest {
                     () -> assertTrue(afterTheFreeze.getMessage().contains(failure), afterTheFreeze.getMessage()));
             return started;
         }
+    }
+
+    /** The class whose annotations {@link AnnotationMemberRecorder} reads (BUG-20261117-55). */
+    private static final String DEFAULTED = TYPES + "Defaulted";
+
+    /**
+     * Records, in {@code @Synthesis}, the members of each annotation of {@link #DEFAULTED}, and of each annotation
+     * nested in them, as {@link #membersOf} writes them (BUG-20261117-55).
+     */
+    public static class AnnotationMemberRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(DEFAULTED);
+        }
+
+        @Synthesis
+        public void members(Types types) {
+            for (var annotation : types.ofClass(DEFAULTED).declaration().annotations()) {
+                SEEN.add(membersOf(annotation));
+                annotation.members().values().stream().filter(AnnotationMember::isNestedAnnotation)
+                        .forEach(member -> SEEN.add("nested " + membersOf(member.asNestedAnnotation())));
+            }
+        }
+    }
+
+    /**
+     * {@code annotation} by its simple name, whether it has the member {@code rank}, and each member it shows,
+     * sorted, each read back through {@code member(name)}.
+     */
+    private static String membersOf(AnnotationInfo annotation) {
+        var members = new TreeMap<>(annotation.members()).keySet().stream()
+                .map(name -> name + "=" + memberText(annotation.member(name))).collect(Collectors.joining(" "));
+        return "@" + simpleName(annotation.name()) + " rank " + annotation.hasMember("rank") + ": " + members;
+    }
+
+    /** A member value: a string or an int as written, an array element by element, a nested annotation by name. */
+    private static String memberText(AnnotationMember member) {
+        return switch (member.kind()) {
+            case STRING -> member.asString();
+            case INT -> String.valueOf(member.asInt());
+            case ARRAY -> member.asArray().stream().map(VetoedInterceptorCompileTimeTest::memberText).toList()
+                    .toString();
+            case NESTED_ANNOTATION -> "@" + simpleName(member.asNestedAnnotation().name());
+            default -> member.kind().toString();
+        };
+    }
+
+    private static String simpleName(String binaryName) {
+        return binaryName.substring(binaryName.lastIndexOf('.') + 1);
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, with the annotations {@code vi.types.Labelled}, whose members {@code rank} and
+     * {@code tags} declare defaults, and {@code vi.types.Paired}, whose member {@code second} defaults to a nested
+     * {@code @Labelled}; and {@code vi.types.Defaulted}, annotated with both, writing no member that has a default
+     * but one in a nested annotation.
+     */
+    private static Map<String, String> withAnnotationDefaults() {
+        var sources = withAVetoedPackage();
+        var runtime = "@java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)\n";
+        putType(sources, "Labelled", runtime + """
+                public @interface Labelled {
+                    String value();
+                    int rank() default 3;
+                    String[] tags() default {"a", "b"};
+                }""");
+        putType(sources, "Paired", runtime + """
+                public @interface Paired {
+                    Labelled first();
+                    Labelled second() default @Labelled("q");
+                }""");
+        putType(sources, "Defaulted", """
+                @Labelled("x")
+                @Paired(first = @Labelled(value = "p", rank = 7))
+                public class Defaulted {
+                }""");
+        return sources;
+    }
+
+    /**
+     * An annotation shows the members it does not write with the defaults its type declares, through
+     * {@code members()}, {@code member(name)} and {@code hasMember(name)}, a nested annotation too, in the processor,
+     * at start and frozen. It showed the members it writes alone (BUG-20261117-55).
+     */
+    @Test
+    @DisplayName("an extension sees the default values of an annotation in the processor, at start and frozen")
+    void anExtensionSeesTheDefaultValuesOfAnAnnotationInTheProcessorAtStartAndFrozen() throws Exception {
+        var expected = sorted(List.of("@Labelled rank true: rank=3 tags=[a, b] value=x",
+                "@Paired rank false: first=@Labelled second=@Labelled",
+                "nested @Labelled rank true: rank=7 tags=[a, b] value=p",
+                "nested @Labelled rank true: rank=3 tags=[a, b] value=q"));
+
+        var seen = seenThreeWays(withAnnotationDefaults(), AnnotationMemberRecorder.class,
+                AnnotationMemberRecorder.SEEN);
+
+        seen.assertEachIs(expected);
     }
 
     // ---- helpers ----

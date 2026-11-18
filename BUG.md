@@ -819,6 +819,31 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-55 — An annotation of the language model lacks its default values
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.VaubanAnnotationInfo`)
+- **Symptom**: `AnnotationInfo.members()`, `member(name)` and `hasMember(name)` showed the members an annotation
+  writes alone, in the processor, at start and frozen: for `@Labelled("x")` with `int rank() default 3`,
+  `hasMember("rank")` was `false` and `member("rank")` `null`, where reflection gives 3. A nested annotation too. The
+  official language model TCK fails 135 checks on it (vauban#336, group 7, `AnnotationInstances`). Vidocq's bricks
+  re-apply each default themselves (Kerckhoffs, Noether, Mansart, Foy).
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheDefaultValuesOfAnAnnotationInTheProcessorAtStart...`
+  in `vauban-processor`, red on 7af75cc1 the three ways (`stack-l1b-bug55.log`, "RED on 7af75cc1": `@Labelled rank
+  false: value=x`); `VaubanAnnotationInfoTest` in `vauban-core`.
+- **Cause**: `VaubanAnnotationInfo` read the members the index records for the annotation, the written ones. The
+  defaults are in the index too, on the methods of the annotation type (`MethodInfo.defaultValue()`, from the
+  `AnnotationDefault` attribute at start, from `ExecutableElement.getDefaultValue()` in the processor), and nothing
+  read them.
+- **Fix**: `VaubanAnnotationInfo` shows each member of the annotation type that the annotation does not write, with
+  its declared default, read once from the type as the language model describes it (`IndexLookup.find`). A type
+  nothing describes gives the written members alone, as before. The index form of the annotation, which the
+  container compares, stays as written (`indexAnnotation()`, `LangModelAnnotations.toIndex`); the index and the
+  frozen record do not change.
+- **Verification**: `stack-l1b-bug55.log`, "GREEN on 7af75cc1 + BUG-55 fix" and "BUG-55 module tests: core,
+  processor, maven-plugin" (core 1650, processor 401, plugin 168, green).
+
 ## BUG-20261117-54 — A constructor's `name()` is `<init>` and its `returnType()` is `void`
 
 - **Date**: 2026-11-17

@@ -19,16 +19,21 @@
  */
 package io.vidocq.vauban.core.langmodel;
 
+import io.vidocq.vauban.core.annotation.AnnotationTypeInfo;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
+import io.vidocq.vauban.indexer.model.AnnotationValue;
+import io.vidocq.vauban.indexer.model.ClassInfo;
 import jakarta.enterprise.lang.model.AnnotationMember;
 
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.Map;
 
 public final class VaubanAnnotationInfo implements jakarta.enterprise.lang.model.AnnotationInfo {
 
     private final io.vidocq.vauban.indexer.model.AnnotationInfo indexAnnotation;
     private final IndexLookup lookup;
+    /** The members with the defaults of the annotation type, read the first time a member is asked for. */
+    private Map<String, AnnotationValue> values;
 
     public VaubanAnnotationInfo(io.vidocq.vauban.indexer.model.AnnotationInfo indexAnnotation, IndexLookup lookup) {
         this.indexAnnotation = indexAnnotation;
@@ -65,19 +70,55 @@ public final class VaubanAnnotationInfo implements jakarta.enterprise.lang.model
 
     @Override
     public boolean hasMember(String name) {
-        return indexAnnotation.hasMember(name);
+        return values().containsKey(name);
     }
 
     @Override
     public AnnotationMember member(String name) {
-        var value = indexAnnotation.member(name);
+        var value = values().get(name);
         return value != null ? new VaubanAnnotationMember(value, lookup) : null;
     }
 
     @Override
     public Map<String, AnnotationMember> members() {
-        var result = new LinkedHashMap<String, AnnotationMember>();
-        indexAnnotation.members().forEach((k, v) -> result.put(k, new VaubanAnnotationMember(v, lookup)));
+        var result = new HashMap<String, AnnotationMember>();
+        values().forEach((k, v) -> result.put(k, new VaubanAnnotationMember(v, lookup)));
+        return Map.copyOf(result);
+    }
+
+    /**
+     * The members this annotation writes, and each other member of its type with the default the type declares, as
+     * reflection shows an annotation (BUG-20261117-55). The index records the members an annotation writes, and the
+     * defaults on its type's methods; a type nothing describes gives the written members alone. Immutable, so that
+     * the unsynchronized first read publishes it whole to every thread. Read on first access: a read outside an
+     * extension phase, at start, finds an annotation type outside the index described by nothing, and shows the
+     * written members alone.
+     */
+    private Map<String, AnnotationValue> values() {
+        var known = values;
+        if (known == null) {
+            known = withDefaults();
+            values = known;
+        }
+        return known;
+    }
+
+    private Map<String, AnnotationValue> withDefaults() {
+        var written = indexAnnotation.members();
+        if (lookup == null) {
+            // An annotation built without an index, as a test builds one: nothing describes its type.
+            return written;
+        }
+        var type = lookup.find(indexAnnotation.name()).filter(ClassInfo::isAnnotation);
+        if (type.isEmpty()) {
+            return written;
+        }
+        var result = new HashMap<>(written);
+        for (var member : AnnotationTypeInfo.of(type.get()).members()) {
+            if (member.defaultValue() != null) {
+                result.putIfAbsent(member.name(), member.defaultValue());
+            }
+        }
         return Map.copyOf(result);
     }
 
