@@ -143,7 +143,7 @@ class ClassFileScannerTypeAnnotationsTest {
     @DisplayName("a constructor's parameter by its position in the parameters the index records, implicit ones first")
     void constructorParametersAfterTheImplicitOnes() throws IOException {
         assertEquals("[PARAMETER 1 0 [] A, PARAMETER 2 0 [] B]", described(method(Outer.Inner.class, "<init>")));
-        assertEquals("[PARAMETER 2 0 [] A]", described(method(Level.class, "<init>")));
+        assertEquals("[PARAMETER 0 0 [] A]", described(method(Level.class, "<init>")));
     }
 
     @Test

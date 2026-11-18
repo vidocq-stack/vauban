@@ -34,6 +34,7 @@ import java.lang.classfile.*;
 import java.lang.classfile.attribute.*;
 import java.lang.classfile.constantpool.*;
 import java.lang.constant.ClassDesc;
+import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.util.*;
 
@@ -70,7 +71,7 @@ public final class ClassFileScanner {
         var signature = classSignature(cm);
         var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
         List<TypeVariable> typeParameters = signature.map(ClassTypeParameters::of).orElse(List.of());
-        var members = new Members(name, classParameters,
+        var members = new Members(name, (cm.flags().flagsMask() & ClassFile.ACC_ENUM) != 0, classParameters,
                 TypeAnnotationReader.of(cm, ClassFileScanner::buildAnnotationInfo),
                 TypeAnnotationReader.receiver(name, typeParameters));
 
@@ -106,8 +107,11 @@ public final class ClassFileScanner {
      * What a field or a method is read against: the type parameters of its class, the reader of its type annotations,
      * and the receiver type of the class's methods.
      */
-    private record Members(DotName className, List<Signature.TypeParam> classParameters,
+    private record Members(DotName className, boolean enumClass, List<Signature.TypeParam> classParameters,
                            TypeAnnotationReader typeAnnotations, TypeInfo receiver) {}
+
+    /** The parameters an enum's constructor takes before those its source declares: the name and the ordinal. */
+    private static final int ENUM_CONSTRUCTOR_PREFIX = 2;
 
     /** The annotations on the supertypes of a class, its type parameters and their bounds (BUG-20261117-60). */
     private static List<TypeAnnotationInfo> classTypeAnnotations(ClassModel cm, Members members,
@@ -222,8 +226,13 @@ public final class ClassFileScanner {
         var generic = methodTypes(mm, members.classParameters());
         var returnType = generic.map(ClassTypeParameters.MethodTypes::result)
                 .orElseGet(() -> parseTypeFromDesc(methodType.returnType()));
+        int implicit = generic.map(types -> methodType.parameterCount() - types.parameters().size())
+                .orElseGet(() -> leadingImplicitParameters(mm, members));
+        // An enum's constructor takes the name and the ordinal of its constant first, which its source does not
+        // declare: the index records the parameters the source declares, as the processor does (BUG-20261117-58).
+        int dropped = members.enumClass() && ConstantDescs.INIT_NAME.equals(name) ? implicit : 0;
         var parameters = buildParameters(mm, methodType,
-                generic.map(ClassTypeParameters.MethodTypes::parameters).orElse(null));
+                generic.map(ClassTypeParameters.MethodTypes::parameters).orElse(null), dropped);
         // The thrown types as the method declares them, when its signature names them: a type variable among them,
         // which the Exceptions attribute erases (BUG-20261117-52).
         var exceptionTypes = generic.map(ClassTypeParameters.MethodTypes::exceptions)
@@ -237,10 +246,9 @@ public final class ClassFileScanner {
             var typeParameters = generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(List.of());
             var methodParameters = mm.findAttribute(Attributes.signature())
                     .map(signature -> signature.asMethodSignature().typeParameters()).orElse(List.of());
-            int offset = generic.map(types -> methodType.parameterCount() - types.parameters().size())
-                    .orElseGet(() -> leadingImplicitParameters(mm, members));
-            var shape = new MethodShape("<init>".equals(name) ? members.receiver() : returnType,
-                    parameters.stream().map(ParameterInfo::type).toList(), offset, exceptionTypes, typeParameters,
+            var shape = new MethodShape(ConstantDescs.INIT_NAME.equals(name) ? members.receiver() : returnType,
+                    parameters.stream().map(ParameterInfo::type).toList(), implicit - dropped, exceptionTypes,
+                    typeParameters,
                     methodParameters, members.receiver());
             typeAnnotations = members.typeAnnotations().read(mm, annotation -> placed(annotation, shape));
         }
@@ -285,14 +293,20 @@ public final class ClassFileScanner {
      * instance of an inner class's constructor. A type annotation numbers the parameters the source declares. The
      * {@code MethodParameters} attribute marks them, synthetic or mandated, where javac writes it: for an inner
      * class's constructor since Java 21. Without it, a constructor of a class the {@code InnerClasses} attribute names
-     * an inner member class takes its outer instance first, as javac has always compiled it; a local or anonymous
-     * class's constructor, whose captured values javac before Java 21 does not mark either, is read as declaring them.
+     * an inner member class takes its outer instance first, as javac has always compiled it, and an enum's constructor
+     * the name and the ordinal of its constant (BUG-20261117-58); a local or anonymous class's constructor, whose
+     * captured values javac before Java 21 does not mark either, is read as declaring them.
      */
     private static int leadingImplicitParameters(MethodModel mm, Members members) {
         var attribute = mm.findAttribute(Attributes.methodParameters());
         if (attribute.isEmpty()) {
-            return "<init>".equals(mm.methodName().stringValue())
-                    && members.typeAnnotations().isInnerMember(members.className()) ? 1 : 0;
+            if (!ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue())) {
+                return 0;
+            }
+            if (members.enumClass()) {
+                return Math.min(ENUM_CONSTRUCTOR_PREFIX, mm.methodTypeSymbol().parameterCount());
+            }
+            return members.typeAnnotations().isInnerMember(members.className()) ? 1 : 0;
         }
         var described = attribute.get().parameters();
         int count = 0;
@@ -313,21 +327,28 @@ public final class ClassFileScanner {
         return null;
     }
 
-    /** {@code generic}: the method's generic parameter types, or {@code null} to take the descriptor's. */
+    /**
+     * The parameters of a method, from the {@code dropped}-th of its descriptor on; {@code generic}: its generic
+     * parameter types, or {@code null} to take the descriptor's. A
+     * {@code RuntimeVisibleParameterAnnotations} attribute that counts fewer parameters than the descriptor, as javac
+     * writes it for an enum's constructor, annotates the last ones: those the source declares.
+     */
     private static List<ParameterInfo> buildParameters(MethodModel mm, MethodTypeDesc methodType,
-            List<TypeInfo> generic) {
+            List<TypeInfo> generic, int dropped) {
         var paramNames = extractParameterNames(mm);
         var paramAnnotations = extractParameterAnnotations(mm);
         var params = new ArrayList<ParameterInfo>();
+        int count = methodType.parameterCount();
         // The signature leaves out a constructor's synthetic leading parameters: its types are the last ones.
-        int synthetic = generic == null ? methodType.parameterCount() : methodType.parameterCount() - generic.size();
+        int synthetic = generic == null ? count : count - generic.size();
+        int unannotated = Math.max(0, count - paramAnnotations.size());
 
-        for (int i = 0; i < methodType.parameterCount(); i++) {
+        for (int i = dropped; i < count; i++) {
             var type = generic == null || i < synthetic
                     ? parseTypeFromDesc(methodType.parameterType(i))
                     : generic.get(i - synthetic);
             var paramName = i < paramNames.size() ? paramNames.get(i) : "arg" + i;
-            var annots = i < paramAnnotations.size() ? paramAnnotations.get(i) : List.<AnnotationInfo>of();
+            var annots = i >= unannotated ? paramAnnotations.get(i - unannotated) : List.<AnnotationInfo>of();
             params.add(new ParameterInfo(paramName, type, annots));
         }
         return params;

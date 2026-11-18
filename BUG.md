@@ -610,6 +610,37 @@ suspected cause, status. Updated on every investigation.
   type parameters, so that a method's `<T>` shadows the class's `T` with its own bounds and their annotations.
 - **Found by**: the language model TCK probe (BUG-20261117-40, `vauban-tickets/40.md`, group 1).
 
+## BUG-20261117-58 — At start, an enum's constructor keeps the name and the ordinal javac adds
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`)
+- **Symptom**: at start and frozen, the constructor `Level(String label, boolean flag)` of an enum has four
+  `parameters()`: `(String, int, String, boolean)`, the name and the ordinal of its constant first, which its source
+  does not declare; the processor gives two. The annotations of the declared parameters land on the first ones: an
+  annotation of `label` is on the synthetic `name`. A type annotation of `label` was numbered `2`. The language model
+  TCK fails `EnumMembers:246` at start (`assertConstructor(clazz, BOOLEAN, ...)` reads the first parameter, a
+  `String`: "Not a primitive"; ticket 40, group 10).
+- **Repro**: `EnumConstructorParametersTest` in `vauban-indexer` (an enum javac 25 compiles, and one without
+  `Signature` nor `MethodParameters` on its constructor, as javac before Java 21 writes it), and
+  `BceEnumMembersTest#anEnumConstructorHasItsDeclaredParameters` in `vauban-core`, red on 7af75cc1
+  (`stack-l2c-red.log`, "RED BUG-20261117-58 on 7af75cc1" and "RED BUG-20261117-58 at start on 7af75cc1").
+- **Cause**: `ClassFileScanner.buildParameters` recorded every parameter of the descriptor, and read the
+  `RuntimeVisibleParameterAnnotations` attribute by descriptor position, where javac writes it for the parameters
+  the source declares only.
+- **Fix**: an enum's constructor drops its leading parameters the source does not declare: the difference between
+  its descriptor and its `Signature`, those its `MethodParameters` marks synthetic, or, with neither attribute, the
+  two of an enum (`ACC_ENUM`). A `RuntimeVisibleParameterAnnotations` attribute that counts fewer parameters than the
+  descriptor annotates the last ones. A type annotation numbers the parameters the index records, as the processor
+  does. The frozen record's checksum of an enum changes with its parameters: a record an earlier Vauban wrote is
+  refused for it, and the start runs the extensions again.
+- **Verification**: `stack-l2c-dev.log`, "BUG-58 fix: indexer, core, processor, maven-plugin tests" (green) and
+  "BUG-58: processor agreement test" (`ElementScannerTypeAnnotationsTest#enumConstructorParameters`: the processor
+  and the bytecode scan record the same parameters).
+- **Found by**: the language model TCK probe (BUG-20261117-40, `vauban-tickets/40.md`, group 10).
+
+---
+
 ## BUG-20261117-54 — A constructor's `name()` is `<init>` and its `returnType()` is `void`
 
 - **Date**: 2026-11-17

@@ -220,7 +220,19 @@ class ElementScannerTypeAnnotationsTest {
         assertEquals("[PARAMETER 0 0 [] A{}]", described(method(PROCESSOR.get("Outer.Inner"), "<init>")));
         assertEquals("[PARAMETER 1 0 [] A{}]", described(method(BYTECODE.get("Outer.Inner"), "<init>")));
         assertEquals("[PARAMETER 0 0 [] B{}]", described(method(PROCESSOR.get("Level"), "<init>")));
-        assertEquals("[PARAMETER 2 0 [] B{}]", described(method(BYTECODE.get("Level"), "<init>")));
+        assertEquals("[PARAMETER 0 0 [] B{}]", described(method(BYTECODE.get("Level"), "<init>")));
+    }
+
+    @Test
+    @DisplayName("an enum's constructor has the parameters its source declares in both indexes (BUG-20261117-58)")
+    void enumConstructorParameters() {
+        assertEquals(parameters(PROCESSOR.get("Level")), parameters(BYTECODE.get("Level")));
+        assertEquals("[ClassType[name=java.lang.String]]", parameters(BYTECODE.get("Level")));
+    }
+
+    private static String parameters(ClassInfo type) {
+        return type.methods().stream().filter(MethodInfo::isConstructor).findFirst().orElseThrow().parameters()
+                .stream().map(parameter -> parameter.type().toString()).toList().toString();
     }
 
     private static List<TypeAnnotationInfo> field(ClassInfo type, String name) {
