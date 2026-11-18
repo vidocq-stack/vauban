@@ -138,6 +138,30 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-30 — The frozen record does not see a change to a class outside the index the extensions read
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.IndexLookup.find`, `langmodel.ReadClasses`)
+- **Symptom**: the known limit of BUG-20261117-31. An extension reads a class outside the index from its class file,
+  a bean's superclass in a library say; the record's fingerprint counts the bean classes alone, so a start on
+  another version of that library loaded a record its extensions would now write otherwise.
+- **Repro**: `FrozenReadClassesTest#aChangedClassOutsideTheIndexRefusesTheRecord` in `vauban-core`: `lib.Holder`
+  extends `lib.Base`, outside the index; the extension records the number of `Base`'s fields. Frozen with one field,
+  started with two: red on 35c21b77 (`stack-l1b-bug1830.log`, "RED on 35c21b77"), the record stood.
+- **Cause**: BUG-20261117-31 left those classes out of the record: fingerprinting them would read their class files
+  at start, and which ones the extensions reach is only known by running them.
+- **Fix**: the mechanism of BUG-20261118-29. `IndexLookup.find` notes each class it looks up outside the deployment
+  while a freeze records (`ReadClasses`), so the set is the one the extensions reached, found or not; the record keeps
+  their checksums under `read.<name>`, the JDK's classes left out, and the start compares them. Format, fingerprint
+  and older records unchanged.
+- **Cost**: a start of a frozen deployment now reads and checksums the class file of each class the record names,
+  once: the classes outside the index its extensions read, beyond the JDK's. Not measured; a deployment whose
+  extensions walk a large library pays one parse per class they reached.
+- **Verification**: `stack-l1b-bug1830.log`, "GREEN on 35c21b77 + BUG-30": `FrozenReadClassesTest` 5 of 5, with the
+  frozen-record tests and `BceUnindexedClassTest`, 32 of 32.
+- **Found by**: the review of BUG-20261118-29, which asked whether the same mechanism lifts BUG-20261117-31's limit.
+
 ## BUG-20261118-29 — The frozen record does not see a change to annotation defaults or to a `package-info`
 
 - **Date**: 2026-11-18
@@ -1924,7 +1948,8 @@ suspected cause, status. Updated on every investigation.
   describes, a bean's superclass in a jar). Fingerprinting them would read at start
   the very class files the freeze spares, and the set is only known by running the extensions. If an application
   ever starts on another version of a jar its extensions read, the frozen record is stale for it, as it already is for
-  those classes.
+  those classes. **Lifted by BUG-20261118-30** (2026-11-18): the freeze notes each class it describes this way, the
+  set the extensions actually reached, and the start compares their checksums, the JDK's classes left out.
 - **Who sees the change**: an extension at start or frozen, and in the processor for a JDK class, now reads type
   parameters, supertypes, members and annotations where it read a stub, for every class a class file or the
   compilation describes; for one nothing describes, every path keeps its old answer.

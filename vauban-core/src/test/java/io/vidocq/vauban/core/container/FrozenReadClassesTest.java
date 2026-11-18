@@ -83,7 +83,10 @@ class FrozenReadClassesTest {
         ReadingExtension.RUNS.set(0);
     }
 
-    /** Records what it reads of {@code lib.Holder}: its {@code @Ranked} rank, its package's {@code @Tag}. */
+    /**
+     * Records what it reads of {@code lib.Holder}: its {@code @Ranked} rank, its package's {@code @Tag}, and the
+     * fields of its superclass {@code lib.Base}, a class outside the index.
+     */
     public static class ReadingExtension implements BuildCompatibleExtension {
         static final AtomicInteger RUNS = new AtomicInteger();
         private final List<String> seen = new ArrayList<>();
@@ -108,6 +111,7 @@ class FrozenReadClassesTest {
             for (AnnotationInfo annotation : type.packageInfo().annotations()) {
                 seen.add("tag " + annotation.value().asString());
             }
+            seen.add("fields " + type.superClassDeclaration().fields().size());
         }
 
         @Synthesis
@@ -120,41 +124,54 @@ class FrozenReadClassesTest {
     @Test
     @DisplayName("a changed annotation default refuses the record, and the start reads the new default")
     void aChangedAnnotationDefaultRefusesTheRecord() throws Exception {
-        writeLibrary(built, 1, "one");
-        writeLibrary(changed, 2, "one");
+        writeLibrary(built, 1, "one", 1);
+        writeLibrary(changed, 2, "one", 1);
 
-        assertEquals("rank 1, deprecated, tag one", startedAfterAFreeze());
+        assertEquals("rank 1, deprecated, tag one, fields 1", startedAfterAFreeze());
     }
 
     @Test
     @DisplayName("a changed package-info refuses the record, and the start reads the new annotation")
     void aChangedPackageInfoRefusesTheRecord() throws Exception {
-        writeLibrary(built, 1, "one");
-        writeLibrary(changed, 1, "two");
+        writeLibrary(built, 1, "one", 1);
+        writeLibrary(changed, 1, "two", 1);
 
-        assertEquals("rank 1, deprecated, tag one", startedAfterAFreeze());
+        assertEquals("rank 1, deprecated, tag one, fields 1", startedAfterAFreeze());
+    }
+
+    /**
+     * A class outside the index the extensions read, the bean class's superclass from a library, changed since the
+     * build: the record is refused (BUG-20261118-30, the limit BUG-20261117-31 named).
+     */
+    @Test
+    @DisplayName("a changed class outside the index refuses the record, and the start reads the new class")
+    void aChangedClassOutsideTheIndexRefusesTheRecord() throws Exception {
+        writeLibrary(built, 1, "one", 1);
+        writeLibrary(changed, 1, "one", 2);
+
+        assertEquals("rank 1, deprecated, tag one, fields 1", startedAfterAFreeze());
     }
 
     @Test
     @DisplayName("an unchanged library keeps the record")
     void anUnchangedLibraryKeepsTheRecord() throws Exception {
-        writeLibrary(built, 1, "one");
-        writeLibrary(changed, 1, "one");
+        writeLibrary(built, 1, "one", 1);
+        writeLibrary(changed, 1, "one", 1);
 
         assertTrue(freeze(), "frozen");
         ReadingExtension.RUNS.set(0);
         try (var container = deployment(changed).build()) {
             assertEquals(0, ReadingExtension.RUNS.get(), "the record stands");
             assertTrue(container.extensionsAtStart().frozen());
-            assertEquals("rank 1, deprecated, tag one", container.select(Greeting.class).text());
+            assertEquals("rank 1, deprecated, tag one, fields 1", container.select(Greeting.class).text());
         }
     }
 
     @Test
     @DisplayName("a record written before it kept the classes read stays valid: format and fingerprint unchanged")
     void aRecordWithoutTheClassesReadStaysValid() throws Exception {
-        writeLibrary(built, 1, "one");
-        writeLibrary(changed, 2, "two");
+        writeLibrary(built, 1, "one", 1);
+        writeLibrary(changed, 2, "two", 2);
         assertTrue(freeze(), "frozen");
         Path recordFile = output.resolve(FrozenExtensions.PATH);
         List<String> lines = Files.readAllLines(recordFile);
@@ -169,7 +186,7 @@ class FrozenReadClassesTest {
         try (var container = deployment(changed).build()) {
             assertEquals(0, ReadingExtension.RUNS.get(), "the older record is used, as before");
             assertTrue(container.extensionsAtStart().frozen());
-            assertEquals("rank 1, deprecated, tag one", container.select(Greeting.class).text());
+            assertEquals("rank 1, deprecated, tag one, fields 1", container.select(Greeting.class).text());
         }
     }
 
@@ -222,34 +239,48 @@ class FrozenReadClassesTest {
     }
 
     /**
-     * Writes {@code lib.Ranked}, whose {@code rank} defaults to {@code rank}, {@code lib.Tag}, and the package
-     * {@code lib} annotated {@code @Tag(tag)}, into {@code into}; for {@link #built}, also {@code lib.Holder},
-     * annotated {@code @Ranked} without a rank and {@code @Deprecated}, into {@code holder} below it. Class files,
-     * as javac writes them for this source:
+     * Writes {@code lib.Ranked}, whose {@code rank} defaults to {@code rank}, {@code lib.Tag}, the package {@code lib}
+     * annotated {@code @Tag(tag)} and {@code lib.Base} with {@code fields} fields, into {@code into}; for
+     * {@link #built}, also {@code lib.Holder}, annotated {@code @Ranked} without a rank and {@code @Deprecated}, into
+     * {@code holder} below it. Class files, as javac writes them for this source:
      * <pre>{@code
      * @Retention(RUNTIME) public @interface Ranked { int rank() default <rank>; }
      * @Retention(RUNTIME) public @interface Tag { String value(); }
      * @Tag("<tag>") package lib;
-     * @Ranked @Deprecated public class Holder {}
+     * public class Base { public int f0; ... }
+     * @Ranked @Deprecated public class Holder extends Base {}
      * }</pre>
      */
-    private void writeLibrary(Path into, int rank, String tag) throws IOException {
+    private void writeLibrary(Path into, int rank, String tag, int fields) throws IOException {
         write(into, "Ranked", annotationType("Ranked", ConstantDescs.CD_int, AnnotationValue.ofInt(rank)));
         write(into, "Tag", annotationType("Tag", ConstantDescs.CD_String, null));
         write(into, "package-info", ClassFile.of().build(ClassDesc.of("lib.package-info"), type -> type
                 .withFlags(ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT | ClassFile.ACC_SYNTHETIC)
                 .with(RuntimeVisibleAnnotationsAttribute.of(Annotation.of(ClassDesc.of("lib.Tag"),
                         AnnotationElement.ofString("value", tag))))));
+        write(into, "Base", plainClass("lib.Base", ConstantDescs.CD_Object, type -> {
+            for (int i = 0; i < fields; i++) {
+                type.withField("f" + i, ConstantDescs.CD_int, ClassFile.ACC_PUBLIC);
+            }
+        }));
         if (into.equals(built)) {
-            write(into.resolve("holder"), "Holder", ClassFile.of().build(ClassDesc.of(HOLDER), type -> type
-                    .withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER)
+            write(into.resolve("holder"), "Holder", plainClass(HOLDER, ClassDesc.of("lib.Base"), type -> type
                     .with(RuntimeVisibleAnnotationsAttribute.of(Annotation.of(ClassDesc.of("lib.Ranked")),
-                            Annotation.of(ClassDesc.of(Deprecated.class.getName()))))
+                            Annotation.of(ClassDesc.of(Deprecated.class.getName()))))));
+        }
+    }
+
+    /** A public class {@code name} extending {@code superclass}, with its constructor, and what {@code body} adds. */
+    private static byte[] plainClass(String name, ClassDesc superclass,
+            java.util.function.Consumer<java.lang.classfile.ClassBuilder> body) {
+        return ClassFile.of().build(ClassDesc.of(name), type -> {
+            type.withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_SUPER).withSuperclass(superclass)
                     .withMethodBody(ConstantDescs.INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_PUBLIC, code -> code
                             .aload(0)
-                            .invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
-                            .return_())));
-        }
+                            .invokespecial(superclass, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
+                            .return_());
+            body.accept(type);
+        });
     }
 
     /** A runtime-retained annotation type {@code lib.<name>} with one member, {@code rank} or {@code value}. */

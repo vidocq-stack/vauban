@@ -26,9 +26,10 @@ import java.util.Set;
 
 /**
  * The classes beyond the bean classes whose content the language model read for an extension while a build freezes
- * the extensions (BUG-20261118-29): the annotation types whose default values it gave, and the {@code package-info}
- * classes whose annotations it gave. The record of the frozen extensions keeps their checksums, so that a start on
- * another version of them runs the extensions again. Nothing is noted outside {@link #recordingInto}.
+ * the extensions: the annotation types whose default values it gave, the {@code package-info} classes whose
+ * annotations it gave (BUG-20261118-29), and every class outside the deployment it described from its class file
+ * (BUG-20261118-30). The record of the frozen extensions keeps their checksums, so that a start on another version
+ * of them runs the extensions again. Nothing is noted outside {@link #recordingInto}.
  */
 public final class ReadClasses {
 

@@ -90,11 +90,15 @@ public final class IndexLookup {
      * The class as the language model describes it: as {@link #describe} gives it or, for a class outside the
      * deployment, as the resolver of {@link #whereOutsideDescribedBy} describes it (BUG-20261117-31); empty when
      * nothing describes it. The bean discovery never reads it: a class described here is no bean, and adds nothing to
-     * a bean's types.
+     * a bean's types. A class looked up outside the deployment is noted for the record of a freeze (BUG-20261118-30).
      */
     public Optional<ClassInfo> find(DotName name) {
         var described = describe(name);
-        return described.isPresent() || !OUTSIDE.isBound() ? described : OUTSIDE.get().apply(name);
+        if (described.isPresent() || !OUTSIDE.isBound()) {
+            return described;
+        }
+        ReadClasses.note(name);
+        return OUTSIDE.get().apply(name);
     }
 
     /**
