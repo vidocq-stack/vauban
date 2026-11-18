@@ -5,6 +5,28 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-37 — An invoker the processor described is called through reflection at start
+
+- **Date**: 2026-11-18
+- **Status**: OPEN. Not a defect: the invoker works. It predates batch 2, which moved the invoker's description to
+  the build (BUG-20261117-48) but left its call at start as it was.
+- **Module**: `vauban-core` (`extensions.VaubanInvoker`, `SyntheticParamCodec.readInvoker`), `vauban-processor`
+- **Symptom** (by reading): an invoker the annotation processor built for a bean class it compiles is recorded as
+  names (`InvokerTarget`, the `V:` parameter of `SyntheticParamCodec`). At start, `readInvoker` resolves it with
+  `InvokerTarget.resolve` (`Class.getDeclaredMethod`), and `VaubanInvoker` gets a `MethodHandle` with
+  `MethodHandles.lookup().unreflect(method)` (constructor, l.66; `unreflect`, l.109), calling `invokeWithArguments`,
+  or `Method.invoke` when the module gives no handle. Every invoker of the deployment goes through that reflective
+  path, though the build knew the method, its parameters and its lookups.
+- **What the build could generate**: for each invoker the processor builds, a class written with the Class-File API
+  next to the bean's other generated classes, implementing `jakarta.enterprise.invoke.Invoker`, whose `invoke` casts
+  the target and the arguments and calls the method with `invokevirtual`/`invokeinterface`/`invokestatic`. The
+  instance and argument lookups would become `BeanManager` calls with the bean type and qualifiers resolved at build.
+  The `V:` parameter would then name that class, which the start instantiates instead of calling `getDeclaredMethod`,
+  `unreflect` and `invokeWithArguments`. An invoker built by an extension that runs at start keeps the reflective
+  path.
+- **Repro**: none; nothing fails. `ArchitectureRules` lists `VaubanInvoker` and `InvokerTarget` as reflective.
+- **Found by**: the review of batch 2 (minor M3).
+
 ## BUG-20261118-36 — Two intercepted instances created with one creational context share their interceptor instances
 
 - **Date**: 2026-11-18
