@@ -196,7 +196,9 @@ class EnhancementApplierConfigsTest {
 
         var bean = enhanced(config);
 
-        assertTrue(bean.qualifiers().isEmpty());
+        // No declared qualifier is left: the bean has @Default, as a class that declares none (BUG-20261118-63)
+        assertTrue(bean.qualifiers().stream().anyMatch(QualifierInstance::isDefault), bean.qualifiers().toString());
+        assertTrue(bean.qualifiers().stream().allMatch(q -> q.isDefault() || q.isAny()), bean.qualifiers().toString());
         assertTrue(bean.interceptorBindings().isEmpty());
     }
 

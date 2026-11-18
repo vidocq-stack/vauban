@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
+import io.vidocq.vauban.core.bean.model.ScopeInfo;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
@@ -322,6 +323,11 @@ final class EnhancementApplier {
         }
         var qualifiers = enhanced.qualifiers();
 
+        // A bean that keeps no qualifier has @Default, as discovery gives it to a class that declares none:
+        // removeAllAnnotations took the built-in ones with the declared ones (BUG-20261118-63)
+        if (qualifiers.isEmpty() && configs.stream().anyMatch(VaubanClassConfig::isAllAnnotationsRemoved)) {
+            qualifiers.add(QualifierInstance.DEFAULT);
+        }
         // Re-add @Any if qualifiers were modified and it was there before
         if (!qualifiers.isEmpty() && qualifiers.stream().noneMatch(QualifierInstance::isAny)
                 && bean.qualifiers().stream().anyMatch(QualifierInstance::isAny)) {
@@ -341,11 +347,45 @@ final class EnhancementApplier {
         var priority = priorityAfter(bean, configs);
         return new BeanDescriptor(
                 bean.id(), bean.beanClass(), bean.kind(), bean.types(),
-                qualifiers, bean.scope(), bean.isAlternative(), priority.orElse(0), priority.isPresent(),
+                qualifiers, scopeAfter(bean, configs), bean.isAlternative(), priority.orElse(0), priority.isPresent(),
                 enhanced.injectionPoints(), name, enhanced.interceptorBindings(),
                 bean.constructorBindings(), enhanced.interceptorBindingAnnotations(),
                 enhanced.enhancedInjectionMethods()
         );
+    }
+
+    /**
+     * The scope of a managed bean once the configs ran, in their order: a scope a config adds replaces the one the
+     * class declares when a config removed that one (BUG-20261118-62). Discovery reads the scope from the index, where
+     * the removed annotation still is: a removal exists only here.
+     *
+     * <p>A scope added next to the one the class keeps changes nothing, as before, and neither does a removal no
+     * addition follows. A scope the bean takes from a stereotype is not on the class: only
+     * {@code removeAllAnnotations}, which removes the stereotype as well, takes it.
+     */
+    private static ScopeInfo scopeAfter(BeanDescriptor bean, List<VaubanClassConfig> configs) {
+        var scope = bean.scope();
+        if (bean.kind() != BeanDescriptor.BeanKind.MANAGED || scope == null) {
+            return scope;
+        }
+        var declared = new SimpleAnnotationInfo(scope.annotationName().value(), Map.of());
+        var target = configs.getFirst().info();
+        boolean onTheClass = target == null
+                || target.hasAnnotation(annotation -> declared.name().equals(annotation.name()));
+        boolean removed = false;
+        for (var config : configs) {
+            removed |= config.isAllAnnotationsRemoved() || onTheClass
+                    && config.getRemovePredicates().stream().anyMatch(predicate -> predicate.test(declared));
+            if (removed) {
+                for (var added : config.getAddedAnnotations()) {
+                    var addedScope = BceProcessor.scopeOf(added);
+                    if (addedScope != null) {
+                        return addedScope;
+                    }
+                }
+            }
+        }
+        return scope;
     }
 
     /**

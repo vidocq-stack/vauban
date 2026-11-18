@@ -5,23 +5,41 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-63 — `removeAllAnnotations` in `@Enhancement` leaves a bean no lookup finds: `@Default` is gone
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/enhancement-replaces-scope`
+- **Module**: `vauban-core` (`EnhancementApplier.applyClassConfigs`)
+- **Symptom**: an extension calls `removeAllAnnotations()` on a bean class, then adds a scope. The start reports no
+  problem, and `container.select(Plain.class)` throws `UnsatisfiedResolutionException: No bean found for type`.
+- **Minimal repro**: `EnhancementReplacesScopeTest#aBeanWithoutItsAnnotationsTakesTheScopeAdded`.
+- **Cause**: `removeAllAnnotations` cleared the qualifiers of the descriptor, `@Default` and `@Any` with the
+  declared ones, and nothing gave `@Default` back. CDI gives `@Default` to a bean that declares no qualifier.
+- **Fix**: a bean whose qualifiers are empty after a `removeAllAnnotations` has `@Default`; `@Any` comes back as
+  before. `EnhancementApplierConfigsTest#removingAllAnnotationsDropsQualifiersAndBindings` asserted the empty set
+  and now asserts `@Default`.
+- **Found by**: the tests of BUG-20261118-62.
+
 ## BUG-20261118-62 — At start, an `@Enhancement` that replaces `@Dependent` by `@ApplicationScoped` leaves the bean `@Dependent`
 
 - **Date**: 2026-11-18
-- **Status**: OPEN, not investigated
-- **Module**: `vauban-core` (start path, without the annotation processor)
+- **Status**: FIXED on `fix/enhancement-replaces-scope`
+- **Module**: `vauban-core` (`EnhancementApplier.applyClassConfigs`)
 - **Symptom**: an extension runs `plain.removeAnnotation(a -> a.name().equals(Dependent.class.getName()))` then
-  `plain.addAnnotation(ApplicationScoped.class)` on a `@Dependent` class. At start, two lookups of the bean give two
-  instances: the bean is still `@Dependent`. No error is reported either. The same extension that only adds
-  `@ApplicationScoped` to a class without a scope gets one instance (`FrozenExtensionsTest`, `Promoted`).
-- **Minimal repro**: in `FrozenExtensionsTest`, with no record,
-  `deployment(List.of(Plain.class, RemovingExtension.class)).build()` then
-  `assertSame(container.select(Plain.class), container.select(Plain.class))`: red on `main` bd38e952.
-- **Hypothesised cause**: not proved. The scope of a bean class the start reads may come from the class itself,
-  where `@Dependent` still is, and not from the class as `@Enhancement` left it. A removed `@Priority` is applied
-  (`DeclaredPriorityTest`), so the removal itself reaches the descriptors.
-- **Found by**: the work on vauban#343. It does not depend on the freeze: the start gives the same bean with a
-  record, where the extension runs again at start, and without one. Not checked in the processor.
+  `plain.addAnnotation(ApplicationScoped.class)` on a `@Dependent` class. Two lookups of the bean give two
+  instances: the bean is still `@Dependent`, and no error is reported. The other way, `@ApplicationScoped` replaced
+  by `@Dependent`, kept one instance. An extension that only adds a scope to a class without one was right.
+- **Minimal repro**: `EnhancementReplacesScopeTest`, four cases. Red on `main` bd38e952 for the replacement.
+- **Cause**: the scope an `@Enhancement` adds was read only for a class that was no bean
+  (`BceProcessor.promotedBean`). A class that is a bean already kept the scope discovery read from the index, where
+  the removed annotation still is: `applyClassConfigs` copied `bean.scope()`.
+- **Fix**: `EnhancementApplier.scopeAfter`, as `priorityAfter` does for `@Priority`: when a config removes the scope
+  the class declares, by a predicate or by `removeAllAnnotations`, the scope a config adds from then on is the
+  bean's. Managed beans only: a producer keeps its own scope.
+- **Left as it was**: a scope added next to the one the class keeps changes nothing and is no definition error; a
+  scope removed with none added leaves the bean its scope. A scope taken from a stereotype goes only with
+  `removeAllAnnotations`. Not checked in the annotation processor, which shares `beansAfterEnhancement`.
+- **Found by**: the work on vauban#343. It does not depend on the freeze.
 
 ## BUG-20261118-61 — A second record of frozen extensions on the path turns the freeze off for the whole deployment
 
