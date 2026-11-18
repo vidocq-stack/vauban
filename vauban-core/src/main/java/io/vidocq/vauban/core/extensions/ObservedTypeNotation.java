@@ -37,11 +37,14 @@ import java.util.Map;
  * java.util.List&lt;? extends java.lang.Number&gt; wildcards: ?, ? extends U, ? super L
  * java.util.List&lt;java.lang.String&gt;[]         an array, one [] per dimension; int[] for primitives
  * (N extends java.lang.Number &amp; A)[]         a type variable with its bounds, in parentheses
+ * p.Outer&lt;java.lang.String&gt;$Inner&lt;I&gt;      a member type of a parameterized type, after its owner, as
+ *                                            Type.getTypeName() writes it; p.Outer&lt;S&gt;$Plain has no argument
  * </pre>
  *
  * <p>A class and a parameterized type of classes are written as earlier versions wrote them, so their metadata reads
- * the same. A whole value that is a primitive name reads as a class of that name, as {@code addObserver(int.class)}
- * records it.</p>
+ * the same; the owner of a member type is new notation, which earlier versions never wrote (BUG-20261117-21). A
+ * whole value that is a primitive name reads as a class of that name, as {@code addObserver(int.class)} records
+ * it.</p>
  */
 final class ObservedTypeNotation {
 
@@ -81,10 +84,13 @@ final class ObservedTypeNotation {
         switch (type) {
             case TypeInfo.ClassType(DotName(var name)) -> out.append(name);
             case TypeInfo.PrimitiveType(var kind) -> out.append(kind.name().toLowerCase(Locale.ROOT));
-            case TypeInfo.ParameterizedType(DotName(var rawName), var arguments, _) -> {
-                out.append(rawName).append('<');
-                appendAll(out, arguments, ", ");
-                out.append('>');
+            case TypeInfo.ParameterizedType(DotName(var rawName), var arguments, var owner) -> {
+                appendRawName(out, rawName, owner);
+                if (!arguments.isEmpty()) {
+                    out.append('<');
+                    appendAll(out, arguments, ", ");
+                    out.append('>');
+                }
             }
             case TypeInfo.ArrayType(var component, var dimensions) -> {
                 append(out, component);
@@ -97,6 +103,24 @@ final class ObservedTypeNotation {
                 out.append(')');
             }
             case TypeInfo.VoidType _ -> throw new IllegalArgumentException("void is the type of no event");
+        }
+    }
+
+    /**
+     * The class of a parameterized type, after its owner where it has one: {@code p.Outer<S>$Inner}. It dropped the
+     * owner (BUG-20261117-21).
+     *
+     * @throws IllegalArgumentException for an owner that does not enclose the class
+     */
+    private static void appendRawName(StringBuilder out, String rawName, TypeInfo owner) {
+        if (owner == null) {
+            out.append(rawName);
+        } else if (owner instanceof TypeInfo.ParameterizedType(DotName(var ownerName), _, _)
+                && rawName.startsWith(ownerName + '$')) {
+            append(out, owner);
+            out.append(rawName, ownerName.length(), rawName.length());
+        } else {
+            throw new IllegalArgumentException(owner + " does not enclose " + rawName);
         }
     }
 
@@ -173,19 +197,34 @@ final class ObservedTypeNotation {
         private TypeInfo named(boolean whole) {
             var name = name();
             if (skip("<")) {
-                var arguments = new ArrayList<TypeInfo>();
-                do {
-                    skipSpaces();
-                    arguments.add(type(false));
-                } while (skip(","));
-                expect(">");
-                return new TypeInfo.ParameterizedType(DotName.of(name), arguments);
+                var type = new TypeInfo.ParameterizedType(DotName.of(name), arguments());
+                // A member type after its owner, Outer<S>$Inner<I> or Outer<S>$Plain (BUG-20261117-21)
+                var rawName = new StringBuilder(name);
+                while (!atEnd() && peek() == '$') {
+                    var member = name();
+                    if (member.length() == 1) throw malformed();
+                    rawName.append(member);
+                    type = new TypeInfo.ParameterizedType(DotName.of(rawName.toString()),
+                            skip("<") ? arguments() : List.of(), type);
+                }
+                return type;
             }
             var primitive = PRIMITIVES.get(name);
             if (primitive != null && !(whole && atEnd())) {
                 return new TypeInfo.PrimitiveType(primitive);
             }
             return new TypeInfo.ClassType(DotName.of(name));
+        }
+
+        /** The arguments after {@code <}, through {@code >}. */
+        private List<TypeInfo> arguments() {
+            var arguments = new ArrayList<TypeInfo>();
+            do {
+                skipSpaces();
+                arguments.add(type(false));
+            } while (skip(","));
+            expect(">");
+            return arguments;
         }
 
         private String name() {

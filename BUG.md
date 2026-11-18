@@ -2990,7 +2990,19 @@ suspected cause, status. Updated on every investigation.
   and needs `, _` to compile against this Vauban (a one-line companion). The language model has no owner:
   `LangModelTypeMapper` and `VaubanMethodInfo`'s receiver give none, and `TypeAnnotationReader.receiver` gives the
   receiver of an inner class's methods without its enclosing type, which only the language model reads.
-  `ObservedTypeNotation` writes no owner: its types come from the language model.
+  `ObservedTypeNotation` dropped the owner silently: its types came from the language model, but `write` takes any
+  index type. Since round 2 it writes the owner as `Type.getTypeName()` does, `p.Outer<java.lang.String>$Inner<I>`,
+  and reads it back, and it refuses an owner that does not enclose the type. The notation is additive: earlier
+  versions never wrote a `$` after a `>`, and every earlier record reads the same.
+- **Round 3**: `AnnotationArtefacts.sourceName`, the source the processor writes for an annotation member's type,
+  dropped the owner, `p.Outer.Inner<Integer>`, which javac rejects; it writes `p.Outer<String>.Inner<Integer>`.
+  `AnnotationLiteralRenderingTest#anInnerClassOfAGenericClassIsWrittenAfterItsOwner`, red (`stack-l2d-red.log`, "RED
+  round 3 on 8c3f1926 (+fixups)": `Class<? extends ...OwnedClassMember.Outer.Inner<java.lang.Integer>>`), green in
+  `stack-l2d-r3.log`, "Round 3 (1)". The fix is in the commit of BUG-20261118-47, which last changed that line.
+- **Round 2 red**: `SyntheticMetadataWriteTest#aMemberTypeKeepsItsOwner` and
+  `#anOwnerThatDoesNotEncloseTheTypeHasNoNotation`, red on a278b032 (`stack-l2d-red.log`, "RED round 2 on a278b032
+  (new tests, main of a278b032)"); green with the fix (`stack-l2d-r2.log`, "Round 2 (1)", and the reactor in "Round 2
+  (3)").
 
 ## BUG-20261117-20 — Under a Turkish default locale, a primitive type no longer matches the class named after it
 

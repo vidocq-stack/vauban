@@ -166,10 +166,43 @@ class SyntheticMetadataWriteTest {
                 null, null, 0, false).eventTypeInfo());
     }
 
+    /**
+     * A member type of a parameterized type is written with its owner, as {@code Type.getTypeName()} writes it,
+     * {@code Outer<String>$Inner<Integer>}, and reads back with it; {@code write} dropped the owner (BUG-20261117-21).
+     * An inner class without type parameters reads back as the parameterized type without arguments the index holds
+     * for it (BUG-20261118-47).
+     */
+    @Test
+    void aMemberTypeKeepsItsOwner() {
+        var outerOfString = new TypeInfo.ParameterizedType(DotName.of("com.example.Outer"),
+                List.of(new TypeInfo.ClassType(DotName.of("java.lang.String"))));
+        var inner = new TypeInfo.ParameterizedType(DotName.of("com.example.Outer$Inner"),
+                List.of(new TypeInfo.ClassType(DotName.of("java.lang.Integer"))), outerOfString);
+        var plain = new TypeInfo.ParameterizedType(DotName.of("com.example.Outer$Plain"), List.of(), outerOfString);
+        var listOfPlains = new TypeInfo.ParameterizedType(DotName.of("java.util.List"), List.<TypeInfo>of(plain));
+
+        assertEquals("com.example.Outer<java.lang.String>$Inner<java.lang.Integer>", ObservedTypeNotation.write(inner));
+        assertEquals("java.util.List<com.example.Outer<java.lang.String>$Plain>",
+                ObservedTypeNotation.write(listOfPlains));
+        for (var type : List.of(inner, plain, listOfPlains)) {
+            assertEquals(type, ObservedTypeNotation.read(ObservedTypeNotation.write(type)));
+        }
+    }
+
+    @Test
+    void anOwnerThatDoesNotEncloseTheTypeHasNoNotation() {
+        var stranger = new TypeInfo.ParameterizedType(DotName.of("com.example.Other$Inner"),
+                List.of(new TypeInfo.ClassType(DotName.of("java.lang.Integer"))),
+                new TypeInfo.ParameterizedType(DotName.of("com.example.Outer"),
+                        List.of(new TypeInfo.ClassType(DotName.of("java.lang.String")))));
+
+        assertThrows(IllegalArgumentException.class, () -> ObservedTypeNotation.write(stranger));
+    }
+
     @Test
     void aMalformedObservedTypeIsRefused() {
         for (var name : List.of("java.util.List<java.lang.String", "java.util.List<>", "(N)[]", "[Ljava.lang.String",
-                "java.lang.String]", "")) {
+                "java.lang.String]", "", "com.example.Outer$Plain<>", "com.example.Outer<java.lang.String>$")) {
             var descriptor = new SyntheticObserverDescriptor(name, null, null, null, 0, false);
             assertThrows(IllegalArgumentException.class, descriptor::eventTypeInfo, name);
         }
