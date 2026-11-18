@@ -574,12 +574,10 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
-     * {@code @Registration} sees a class as {@code @Enhancement} left it: the container gives it the {@code @Deprecated}
-     * an extension added, once, though it calls the {@code @Enhancement} method twice (BUG-20261117-08), at start and
-     * frozen. The processor gives it none (BUG-20261117-10).
+     * {@code @Registration} sees a class as {@code @Enhancement} left it, the {@code @Deprecated} an extension added
+     * once, in the three places. The processor gave none (BUG-20261117-10).
      */
     @Test
-    @Disabled("BUG-20261117-10: in the processor, @Registration does not see the annotations @Enhancement added")
     @DisplayName("@Registration sees the annotations @Enhancement added, from the processor, at start and frozen")
     void registrationSeesTheAnnotationsEnhancementAddedFromTheProcessorAtStartAndFrozen() throws Exception {
         var seen = seenThreeWays(withListenerSubtypes(), DeprecatingExtension.class, DeprecatingExtension.SEEN);

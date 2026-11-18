@@ -3231,7 +3231,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-10 — In the processor, `@Registration` does not see the annotations `@Enhancement` added
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-processor` (`VaubanProcessor.runRemainingBcePhases`), `vauban-core` (`VaubanBceBeanInfo.declaringClass`)
 - **Symptom**: an extension that adds `@Deprecated` to a class in `@Enhancement` and reads the class of the bean back
   in `@Registration` (`bean.declaringClass().annotations(...)`) finds it once at start and when the build freezes the
@@ -3257,6 +3257,21 @@ suspected cause, status. Updated on every investigation.
   `vauban-b03-dev.log`, the `PROBE-B10` lines).
 - **Found by**: the probe of the review of BUG-20261117-08 (does an unguarded `addAnnotation` land twice?),
   `vauban-b02-r2-probe.log`.
+- **Cause** (proved): `BceProcessor.process` built one `IndexLookup` over the index it was given and kept it for
+  the phases after `@Enhancement`. At start the container gave it an index it had already enriched with what the
+  enhancement pass added (`VaubanContainerBuilder.enrichIndex`); the processor gave it the compiled index.
+- **Fix**: after the `@Enhancement` phase, `process` reads `@Registration`, `@Synthesis`, `@Validation` and the check
+  of the invokers' lookups through an index with the annotations that phase added (`withEnhancements`), as the
+  container's `enrichIndex` does. It needed BUG-20261117-08: while the container called `@Enhancement` twice, it
+  would have added each annotation twice at start.
+- **TCK**: not covered; the TCK's `changeBeanQualifier` and `changeInterceptorBinding` read the bean metadata, not the
+  `ClassInfo` of `@Registration`.
+- **Verification**: red, `stack-l4-10-red.log`: "Red run 1" (the repro enabled: `@Deprecated x0` in the processor)
+  and "Red run 2" (the same on the BceProcessor of the BUG-20261117-08 commit). Green, `stack-l4-10-dev.log`:
+  "Dev run 1" (the repro and the BUG-20261117-08 test), "Dev run 2" (vauban-core, vauban-processor,
+  vauban-maven-plugin).
+- **Left**: like `enrichIndex`, the enriched index carries the annotations added to a class, not those added to its
+  members.
 
 ## BUG-20261117-09 — An `ObserverInfo` has no observer method, no event parameter, no bean and no qualifier
 

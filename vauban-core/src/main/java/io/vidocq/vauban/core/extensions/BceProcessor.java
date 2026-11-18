@@ -381,7 +381,6 @@ public final class BceProcessor {
                 extensions.put(bceClass, bce != null ? bce : instantiateBce(bceClass));
             });
         }
-        var types = new VaubanTypes(lookup);
         var archiveTypes = typesOf(allArchiveClasses);
 
         // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
@@ -392,13 +391,19 @@ public final class BceProcessor {
             }
         });
 
+        // The later phases read the classes as @Enhancement left them: the processor's language model did not show
+        // the annotations it added, which the container's did through the index it enriched (BUG-20261117-10)
+        var enhancedLookup = allEnhancementMods.isEmpty() ? lookup
+                : new IndexLookup(withEnhancements(index, allEnhancementMods));
+        var types = new VaubanTypes(enhancedLookup);
+
         // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
         // (BUG-20261008-03)
         var enhancedBeans = beansAfterEnhancement(beans, allEnhancementMods, managedBean);
         var invokers = new ArrayList<VaubanInvokerFactory>();
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
                 processRegistration(bce, bceClass, enhancedBeans, observers, interceptorsAsBeans(interceptors,
-                        managedBean), lookup, classLoader, types, deploymentErrors, archiveTypes, invokers));
+                        managedBean), enhancedLookup, classLoader, types, deploymentErrors, archiveTypes, invokers));
 
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
@@ -411,7 +416,7 @@ public final class BceProcessor {
 
         // The looked-up beans of the invokers built, identified among every bean, the synthetic ones included: they
         // were checked in @Registration, before @Synthesis added any (BUG-20261117-39)
-        var invokerLookups = new InvokerLookups(invokers, lookup.index(), classLoader, qualifiers);
+        var invokerLookups = new InvokerLookups(invokers, enhancedLookup.index(), classLoader, qualifiers);
         if (!deferLookups) {
             deploymentErrors.addAll(invokerLookups.errors(withSyntheticBeans(enhancedBeans, allSyntheticBeans)));
         }
@@ -422,6 +427,25 @@ public final class BceProcessor {
 
         return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
                 allEnhancementMods, deploymentErrorCauses, deferLookups ? invokerLookups : InvokerLookups.NONE);
+    }
+
+    /**
+     * {@code index} with the annotations {@code modifications} add to its classes, as the container enriches the index
+     * it discovers the beans of.
+     */
+    static VaubanIndex withEnhancements(VaubanIndex index, Map<DotName, List<VaubanClassConfig>> modifications) {
+        var builder = new io.vidocq.vauban.indexer.IndexBuilder();
+        for (var classInfo : index.getKnownClasses()) {
+            var configs = modifications.get(classInfo.name());
+            if (configs == null) {
+                builder.add(classInfo);
+            } else {
+                var annotations = new ArrayList<>(classInfo.annotations());
+                configs.forEach(config -> annotations.addAll(config.getAddedAnnotationsIndexed()));
+                builder.add(classInfo.withAnnotations(annotations));
+            }
+        }
+        return builder.build();
     }
 
     /** One phase of every extension still taking part, in their order. */
