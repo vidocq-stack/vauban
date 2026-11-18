@@ -25,6 +25,27 @@ suspected cause, status. Updated on every investigation.
   `stack-l4-43-dev.log`, "Dev run 1" (vauban-core, vauban-processor, vauban-maven-plugin).
 - **Found by**: the L4 review.
 
+## BUG-20261118-41 — An `ObserverInfo` gives two overloads that observe one event type the same method
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, lane L4)
+- **Module**: `vauban-core` (`ObserverDescriptor`, `ObserverDisposerDiscovery`, `VaubanBceObserverInfo.observed`)
+- **Symptom**: a class with `hear(BeanManager, @Observes Long)` and `hear(@Observes Long)`: the `ObserverInfo` of both
+  observers gives the first overload as `observerMethod()`, and its second parameter as `eventParameter()`, in the
+  processor, at start and frozen.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anObserverInfoTellsApartOverloadsOfTheSameEventTypeFromTheProcessorAtStartAndFrozen`.
+- **Cause** (proved): `ObserverDescriptor` names the method and the observed event type only, and
+  `VaubanBceObserverInfo.observed` (BUG-20261117-09) took the first method of that name with an observed parameter of
+  that type.
+- **Fix**: `ObserverDescriptor` carries the erased types of the method's parameters (`parameterTypes`, as
+  `BeanDiscovery.erasedParameterTypes` spells them for an indexed method and `Class.getTypeName` for an inherited one
+  read by reflection), as a producer's bean id does for an overloaded method (BUG-20261116-11); `EnhancementApplier`
+  keeps them; `observed` matches them when they are known.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-41-red.log`, "Red run 1" (the three places give `hear of 2 parameters, event at 1`
+  twice). Green, `stack-l4-41-dev.log`, "Dev run 1" (vauban-core, vauban-processor, vauban-maven-plugin).
+- **Found by**: the L4 review.
+
 ## BUG-20261118-37 — An invoker the processor described is called through reflection at start
 
 - **Date**: 2026-11-18
@@ -3320,8 +3341,7 @@ suspected cause, status. Updated on every investigation.
   an overload of another event type is told apart without a new component in `ObserverDescriptor`. The event
   parameter is that parameter, the qualifiers are those it declares (the descriptor's names when the method is not
   found), and `BceProcessor` hands it the managed bean of the declaring class (`declaringBean`). `isSynthetic()` reads
-  the descriptor. Left: two overloads of one name that observe the same event type are not told apart; the first is
-  given.
+  the descriptor. Two overloads of one name that observe the same event type were not told apart: BUG-20261118-41.
 - **TCK**: `RegistrationTest` reads `declaringClass()` of an `ObserverInfo` only.
 - **Verification**: red, `stack-l4-09-red.log`: "Red run 1" (at start, the `NullPointerException` of
   `observerMethod()`) and "Red run 2" (`VetoedInterceptorCompileTimeTest#anObserverInfoGivesItsMethodParameterBeanAndQualifiersFromTheProcessorAtStartAndFrozen`

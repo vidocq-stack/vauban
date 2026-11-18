@@ -35,6 +35,9 @@ import java.util.function.BiConsumer;
  * @param async          true if @ObservesAsync, false if @Observes
  * @param priority       the priority (from @Priority annotation, 0 by default)
  * @param syntheticInvoker if non-null, this observer is synthetic and invoked via this callback (event, qualifiers)
+ * @param parameterTypes the erased types of the method's parameters, as {@code BeanDiscovery.erasedName} spells them
+ *                       ({@code Class.getTypeName} for a class); empty when they are not known. They tell apart two
+ *                       overloads that observe one event type, as a producer's bean id does (BUG-20261118-41)
  */
 public record ObserverDescriptor(
         DotName declaringClass,
@@ -45,12 +48,21 @@ public record ObserverDescriptor(
         int priority,
         String reception,
         String transactionPhase,
-        BiConsumer<Object, java.lang.annotation.Annotation[]> syntheticInvoker
+        BiConsumer<Object, java.lang.annotation.Annotation[]> syntheticInvoker,
+        List<String> parameterTypes
 ) {
     public ObserverDescriptor {
         qualifiers = List.copyOf(qualifiers);
+        parameterTypes = parameterTypes == null ? List.of() : List.copyOf(parameterTypes);
         if (reception == null) reception = "ALWAYS";
         if (transactionPhase == null) transactionPhase = "IN_PROGRESS";
+    }
+
+    public ObserverDescriptor(DotName declaringClass, String methodName, TypeInfo eventType,
+            List<QualifierInstance> qualifiers, boolean async, int priority, String reception,
+            String transactionPhase, BiConsumer<Object, java.lang.annotation.Annotation[]> syntheticInvoker) {
+        this(declaringClass, methodName, eventType, qualifiers, async, priority, reception, transactionPhase,
+                syntheticInvoker, List.of());
     }
 
     public ObserverDescriptor(DotName declaringClass, String methodName, TypeInfo eventType,

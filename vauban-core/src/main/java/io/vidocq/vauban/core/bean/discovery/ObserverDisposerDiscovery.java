@@ -128,7 +128,8 @@ final class ObserverDisposerDiscovery {
         if (eventType == null) eventType = new TypeInfo.ClassType(DotName.of(param.getType().getName()));
         return new ObserverDescriptor(
                 classInfo.name(), method.getName(), eventType,
-                reflectedQualifiers(param), async, priority, reception, transactionPhase);
+                reflectedQualifiers(param), async, priority, reception, transactionPhase, null,
+                java.util.Arrays.stream(method.getParameterTypes()).map(Class::getTypeName).toList());
     }
 
     /** The qualifiers of an observed parameter, {@code @Observes} and {@code @ObservesAsync} left out. */
@@ -229,7 +230,9 @@ final class ObserverDisposerDiscovery {
                 isObservesAsync,
                 priority,
                 reception,
-                transactionPhase
+                transactionPhase,
+                null,
+                BeanDiscovery.erasedParameterTypes(method)
         );
     }
 

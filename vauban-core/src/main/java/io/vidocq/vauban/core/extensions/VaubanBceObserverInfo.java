@@ -131,7 +131,7 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
         Observed erasedMatch = null;
         var erasedEvent = BeanDiscovery.erasedName(descriptor.eventType());
         for (var method : declaring.methods()) {
-            int position = method.name().equals(descriptor.methodName()) ? observedPosition(method) : -1;
+            int position = isNamedMethod(method) ? observedPosition(method) : -1;
             if (position < 0) {
                 continue;
             }
@@ -145,6 +145,18 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
             }
         }
         return Optional.ofNullable(erasedMatch);
+    }
+
+    /**
+     * Whether {@code method} has the observer's name and, when the descriptor knows them, its erased parameter types:
+     * two overloads may observe one event type (BUG-20261118-41).
+     */
+    private boolean isNamedMethod(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        if (!method.name().equals(descriptor.methodName())) {
+            return false;
+        }
+        var expected = descriptor.parameterTypes();
+        return expected.isEmpty() || expected.equals(BeanDiscovery.erasedParameterTypes(method));
     }
 
     /** The position of the {@code @Observes} or {@code @ObservesAsync} parameter of {@code method}; -1 for none. */

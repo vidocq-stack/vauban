@@ -195,7 +195,8 @@ final class EnhancementApplier {
         return new ObserverDescriptor(
                 observer.declaringClass(), observer.methodName(), observer.eventType(),
                 List.copyOf(qualifiers), observer.async(), observer.priority(),
-                observer.reception(), observer.transactionPhase(), observer.syntheticInvoker()
+                observer.reception(), observer.transactionPhase(), observer.syntheticInvoker(),
+                observer.parameterTypes()
         );
     }
 

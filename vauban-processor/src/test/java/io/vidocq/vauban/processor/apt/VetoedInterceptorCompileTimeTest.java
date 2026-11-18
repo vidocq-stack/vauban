@@ -2444,6 +2444,49 @@ class VetoedInterceptorCompileTimeTest {
                 "hear java.lang.String position 0 bean vi.Hearer [vi.Loud]"));
     }
 
+    /** Records the observer method of each observer of {@code vi.Twice}, by its parameter count and event position. */
+    public static class OverloadRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Long.class)
+        public void observers(ObserverInfo observer) {
+            if (observer.declaringClass().name().equals("vi.Twice")) {
+                SEEN.add(observer.observerMethod().name() + " of " + observer.observerMethod().parameters().size()
+                        + " parameters, event at " + observer.observerMethod().parameters()
+                        .indexOf(observer.eventParameter()));
+            }
+        }
+    }
+
+    /**
+     * Two overloads of one name may observe the same event type: the {@code ObserverInfo} of each gives its own method.
+     * The container found the method by its name and event type, and gave both observers the first overload
+     * (BUG-20261118-41).
+     */
+    @Test
+    @DisplayName("an ObserverInfo tells apart two overloads that observe the same event type, everywhere")
+    void anObserverInfoTellsApartOverloadsOfTheSameEventTypeFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Twice.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Twice {
+                    void hear(jakarta.enterprise.inject.spi.BeanManager manager,
+                            @jakarta.enterprise.event.Observes Long number) {
+                        // the first overload, its event parameter second
+                    }
+                    void hear(@jakarta.enterprise.event.Observes Long number) {
+                        // the second overload
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, OverloadRecorder.class, OverloadRecorder.SEEN);
+
+        seen.assertEachIs(List.of("hear of 1 parameters, event at 0", "hear of 2 parameters, event at 1"));
+    }
+
     /** Records the bean types, the qualifiers and the injection points of the interceptor {@code vi.Logger}. */
     public static class InterceptorDescriber implements BuildCompatibleExtension {
 

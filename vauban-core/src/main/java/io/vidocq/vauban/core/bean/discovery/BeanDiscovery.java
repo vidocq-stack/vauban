@@ -1402,6 +1402,14 @@ public final class BeanDiscovery {
         return true;
     }
 
+    /**
+     * The erased types of the parameters of {@code method}, as {@link #erasedName} spells them: what tells apart two
+     * overloads of one name (BUG-20261118-41).
+     */
+    public static List<String> erasedParameterTypes(MethodInfo method) {
+        return method.parameters().stream().map(parameter -> String.valueOf(erasedName(parameter.type()))).toList();
+    }
+
     /** The erased type name, as {@link Class#getTypeName()} spells it, or {@code null} when it cannot be told. */
     public static String erasedName(TypeInfo type) {
         return switch (type) {
