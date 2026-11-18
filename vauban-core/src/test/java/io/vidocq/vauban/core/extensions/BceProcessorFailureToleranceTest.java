@@ -30,6 +30,7 @@ import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
 import jakarta.enterprise.inject.spi.DefinitionException;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import org.junit.jupiter.api.Test;
 
 import java.lang.classfile.ClassFile;
@@ -47,9 +48,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What {@link BceProcessor} tolerates and what it does not: an extension that cannot be instantiated is skipped by the
- * enhancement of the archives, and members whose signature names an absent type are left out; an exception a
- * {@code @Discovery} method throws is a definition error (BUG-20261118-04).
+ * What {@link BceProcessor} tolerates and what it does not: members whose signature names an absent type are left
+ * out; an exception a {@code @Discovery} method throws is a definition error (BUG-20261118-04), and one an extension
+ * throws in the enhancement of the archives, its constructor included, a deployment problem (BUG-20261118-05).
  */
 class BceProcessorFailureToleranceTest {
 
@@ -77,19 +78,28 @@ class BceProcessorFailureToleranceTest {
     }
 
     @Test
-    void anExtensionThatCannotBeBuiltIsSkippedInEveryPhase() {
+    void anExtensionThatCannotBeBuiltFailsEveryPhase() {
         var lookup = lookupWithTarget();
         var loader = getClass().getClassLoader();
+        var extensions = List.<Class<?>>of(FailingConstructor.class);
+        var built = "of " + FailingConstructor.class.getName()
+                + " failed: java.lang.IllegalStateException: cannot be built";
 
-        var discovery = BceProcessor.processDiscovery(List.of(FailingConstructor.class), lookup);
-        var enhancement = BceProcessor.processEnhancementOnly(List.of(FailingConstructor.class), List.of(Object.class),
-                lookup.index(), loader);
-        var replay = BceProcessor.replayEnhancementForTargets(
-                List.of(Map.entry(FailingConstructor.class, Object.class)), lookup.index());
+        var archiveClasses = List.<Class<?>>of(Object.class);
+        var index = lookup.index();
+        var pairs = List.<Map.Entry<Class<?>, Class<?>>>of(Map.entry(FailingConstructor.class, Object.class));
 
-        assertTrue(discovery.bceInstances().isEmpty());
-        assertTrue(enhancement.isEmpty());
-        assertTrue(replay.isEmpty());
+        var discovery = BceProcessor.processDiscovery(extensions, lookup);
+        var enhancement = assertThrows(DeploymentException.class,
+                () -> BceProcessor.processEnhancementOnly(extensions, archiveClasses, index, loader));
+        var replay = assertThrows(DeploymentException.class,
+                () -> BceProcessor.replayEnhancementForTargets(pairs, index));
+
+        assertAll(() -> assertTrue(discovery.bceInstances().isEmpty()),
+                () -> assertEquals(List.of("@Discovery " + built), discovery.definitionErrors()),
+                () -> assertTrue(enhancement.getMessage().contains("@Enhancement " + built), enhancement.getMessage()),
+                () -> assertTrue(replay.getMessage().contains("@Enhancement " + built), replay.getMessage()),
+                () -> assertEquals("cannot be built", replay.getCause().getMessage()));
     }
 
     @Test

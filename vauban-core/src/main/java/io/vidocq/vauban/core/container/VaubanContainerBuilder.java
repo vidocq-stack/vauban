@@ -46,12 +46,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static io.vidocq.vauban.core.extensions.internal.DeploymentFailures.DEFINITION_FAILED;
+import static io.vidocq.vauban.core.extensions.internal.DeploymentFailures.DEPLOYMENT_FAILED;
+import static io.vidocq.vauban.core.extensions.internal.DeploymentFailures.failOn;
+import static io.vidocq.vauban.core.extensions.internal.DeploymentFailures.failOnDeploymentErrors;
+import static io.vidocq.vauban.core.extensions.internal.DeploymentFailures.failureMessage;
+
 public final class VaubanContainerBuilder {
 
     private static final System.Logger LOG = System.getLogger(VaubanContainerBuilder.class.getName());
-
-    private static final String DEFINITION_FAILED = "CDI definition validation failed:\n";
-    private static final String DEPLOYMENT_FAILED = "CDI deployment validation failed:\n";
 
     /** The validation errors CDI reports as a {@code DeploymentException}: ambiguous or unsatisfied dependencies. */
     private static final Set<DeploymentValidator.ValidationError.Kind> DEPLOYMENT_ERROR_KINDS = java.util.EnumSet.of(
@@ -1277,15 +1280,6 @@ public final class VaubanContainerBuilder {
         }
     }
 
-    /** {@code header}, then one {@code "  - error"} line per error. */
-    private static String failureMessage(String header, List<String> errors) {
-        var msg = new StringBuilder(header);
-        for (var error : errors) {
-            msg.append("  - ").append(error).append("\n");
-        }
-        return msg.toString();
-    }
-
     /**
      * The Enhancement modifications of the full extension scan of the unprocessed archives, of the legacy reflective
      * replay (only for targets not covered by the frozen patch) and of the members of the frozen patch.
@@ -1448,30 +1442,6 @@ public final class VaubanContainerBuilder {
         failOn(bceResult.definitionErrors(), List.of(), DEFINITION_FAILED,
                 jakarta.enterprise.inject.spi.DefinitionException::new);
         failOnDeploymentErrors(bceResult.deploymentErrors(), bceResult.deploymentErrorCauses());
-    }
-
-    /** Throws the {@code DeploymentException} of {@code errors}, the first of {@code causes} as its cause. */
-    private static void failOnDeploymentErrors(List<String> errors, List<Throwable> causes) {
-        failOn(errors, causes, DEPLOYMENT_FAILED, jakarta.enterprise.inject.spi.DeploymentException::new);
-    }
-
-    /**
-     * Throws the exception {@code failure} makes of the message of {@code errors} under {@code header}, the first of
-     * {@code causes} as its cause and the others suppressed; nothing when there is no error.
-     */
-    private static void failOn(List<String> errors, List<Throwable> causes, String header,
-                               java.util.function.Function<String, RuntimeException> failure) {
-        if (errors.isEmpty()) {
-            return;
-        }
-        var thrown = failure.apply(failureMessage(header, errors));
-        if (!causes.isEmpty()) {
-            thrown.initCause(causes.getFirst());
-            for (var extra : causes.subList(1, causes.size())) {
-                thrown.addSuppressed(extra);
-            }
-        }
-        throw thrown;
     }
 
     /** Registers the synthetic beans and observers of the extensions, and merges their enhancement modifications. */

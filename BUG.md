@@ -5,6 +5,28 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-05 — An exception of `@Enhancement` is swallowed outside the full extension cycle
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`extensions.BceProcessor.processEnhancementOnly`, `replayEnhancementForTargets`)
+- **Symptom**: an `@Enhancement` method that throws does not fail the deployment on two paths: the enhancement of an
+  unprocessed archive at start and under `vauban:generate` (`processEnhancementOnly`), and the replay of
+  `META-INF/vauban-bce-runtime.list` for a pre-processed jar (`replayEnhancementForTargets`). The start and the
+  generation go on with the archive enhanced as if nothing happened. The full cycle reports the same exception.
+- **Repro**: `BceRuntimeReplayTest$EnhancementFailures` in `vauban-core` (replayed for a pre-processed jar; run over
+  an unprocessed archive, the extension reached through the replay list alone so that the full cycle does not run
+  it) and `EnhancementFailureGenerationTest` in `vauban-maven-plugin`. Red without the fix
+  (`stack-l1-r3-1805.log`, "BUG-18-05 red: core start paths (unprocessed isolated, no service file)" and
+  "BUG-18-05 red: vauban:generate": nothing was thrown).
+- **Cause**: both methods filled error lists, `processEnhancement`'s and the `EnhancementSink`'s, and never read
+  them; their own `catch (Exception _)` dropped a constructor that failed.
+- **Fix**: both throw the `DeploymentException` of their errors, the first exception as its cause, through
+  `extensions.internal.DeploymentFailures.failOnDeploymentErrors` (not exported), the helper the container's later
+  phases now share. A constructor that fails is recorded too (`@Enhancement of <extension> failed: <exception>`).
+  `vauban:generate` fails with it (`MojoExecutionException` "Vauban generation failed").
+- **Found by**: the review of BUG-20261118-04.
+
 ## BUG-20261118-04 — An exception thrown in `@Discovery` is swallowed
 
 - **Date**: 2026-11-18

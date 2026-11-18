@@ -891,6 +891,11 @@ The `ApplicationContext` is built in memory, without opening any package.
   (`@Discovery of com.acme.Ext failed: java.lang.IllegalStateException: ...`); the freeze records
   nothing, and the start that follows fails in turn. The container used to ignore it, and the
   deployment went on without what the method had not registered (BUG-20261118-04).
+* An exception an `@Enhancement` method throws fails the start with a `DeploymentException` on
+  every path: in the full extension cycle, in the enhancement of an archive the processor did not
+  see, and in the replay of `META-INF/vauban-bce-runtime.list` for a pre-processed jar. The
+  enhancement under `vauban:generate` fails the generation the same way. The last two used to drop
+  it (BUG-20261118-05).
 * The build compatible extension phase resolves a bean class across the whole deployment: the
   classes the container holds, the loader set on the builder, then the build's context loader —
   inside a Vauban layer, the layer's loader, which sees the application and the libraries it

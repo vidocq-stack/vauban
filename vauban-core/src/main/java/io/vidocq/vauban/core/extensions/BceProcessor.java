@@ -24,6 +24,7 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.ScopeInfo;
+import io.vidocq.vauban.core.extensions.internal.DeploymentFailures;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.indexer.VaubanIndex;
@@ -55,6 +56,8 @@ public final class BceProcessor {
      * @param index          the current VaubanIndex
      * @param classLoader    ClassLoader for type resolution
      * @return enhancement modifications keyed by class DotName
+     * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension threw, at start as under
+     *         {@code vauban:generate} (BUG-20261118-05)
      */
     public static Map<DotName, List<VaubanClassConfig>> processEnhancementOnly(
             List<Class<?>> bceClasses,
@@ -74,11 +77,12 @@ public final class BceProcessor {
                     processEnhancement(bce, bceClass, List.of(), archiveTypes, lookup, classLoader, errors,
                             errorCauses, modifications);
                 });
-            } catch (Exception _) {
-                // Enhancement-only errors are non-fatal
+            } catch (Exception e) {
+                failedToBuild(bceClass, e, errors, errorCauses);
             }
         }
 
+        DeploymentFailures.failOnDeploymentErrors(errors, errorCauses);
         return modifications;
     }
 
@@ -94,6 +98,7 @@ public final class BceProcessor {
      * @param replayPairs ordered list of (bceClass, targetClass) pairs
      * @param index       current VaubanIndex (must contain {@code targetClass})
      * @return enhancement modifications keyed by target DotName
+     * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension threw (BUG-20261118-05)
      */
     public static Map<DotName, List<VaubanClassConfig>> replayEnhancementForTargets(
             List<Map.Entry<Class<?>, Class<?>>> replayPairs,
@@ -115,12 +120,23 @@ public final class BceProcessor {
                         invokeEnhancement(method, bce, paramKind, targetName, lookup, sink);
                     }
                 });
-            } catch (Exception _) {
-                // Replay errors are non-fatal — skip pair
+            } catch (Exception e) {
+                failedToBuild(bceClass, e, sink.errors(), sink.errorCauses());
             }
         }
 
+        DeploymentFailures.failOnDeploymentErrors(sink.errors(), sink.errorCauses());
         return modifications;
+    }
+
+    /**
+     * Records what an extension threw outside its methods, where {@code processEnhancement} records what they threw:
+     * a constructor that fails is a deployment problem too (BUG-20261118-05).
+     */
+    private static void failedToBuild(Class<?> bceClass, Exception e, List<String> errors, List<Throwable> causes) {
+        var cause = unwrapped(e);
+        errors.add("@Enhancement of " + bceClass.getName() + " failed: " + cause);
+        causes.add(cause);
     }
 
     /**

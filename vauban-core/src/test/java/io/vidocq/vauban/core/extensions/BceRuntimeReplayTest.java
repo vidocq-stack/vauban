@@ -279,6 +279,77 @@ class BceRuntimeReplayTest {
         }
     }
 
+    /** Throws in {@code @Enhancement} for a class whose name ends with {@code B}, and adds the scope otherwise. */
+    public static class ThrowingOnBBce implements BuildCompatibleExtension {
+
+        static final String CAUSE = "no rule for this resource";
+
+        @Enhancement(types = Object.class, withAnnotations = PathLike.class)
+        public void addScope(ClassConfig clazz) {
+            if (clazz.info().name().endsWith("B")) {
+                throw new IllegalStateException(CAUSE);
+            }
+            clazz.addAnnotation(RequestScoped.class);
+        }
+    }
+
+    // ======================================================================
+    // BUG-20261118-05 - an exception of @Enhancement fails the start
+    // ======================================================================
+
+    @Nested
+    @DisplayName("BUG-20261118-05 - an exception of @Enhancement fails the start on every path")
+    class EnhancementFailures {
+
+        @Test
+        @DisplayName("replayed for a pre-processed jar")
+        void anExceptionOfAReplayedEnhancementFailsTheStart() throws Exception {
+            var jar = buildPreProcessedJar(tempDir.resolve("resource.jar"), "app.TestResourceB",
+                    List.of("app.TestResourceB"), List.of(ThrowingOnBBce.class.getName() + ";app.TestResourceB"),
+                    ThrowingOnBBce.class, ThrowingOnBBce.class);
+
+            assertStartFails("replayEnhancementForTargets", jar);
+        }
+
+        /**
+         * The extension reaches the start through the replay list of a pre-processed jar alone, with no service file:
+         * the full extension cycle does not run it, and only the enhancement of the unprocessed archive meets
+         * {@code TestResourceB}.
+         */
+        @Test
+        @DisplayName("run over an unprocessed archive")
+        void anExceptionOfAnEnhancementOfAnUnprocessedArchiveFailsTheStart() throws Exception {
+            var jarA = buildPreProcessedJar(tempDir.resolve("resA.jar"), "app.TestResourceA",
+                    List.of("app.TestResourceA"), List.of(ThrowingOnBBce.class.getName() + ";app.TestResourceA"),
+                    ThrowingOnBBce.class, null);
+            var jarB = buildRawJar(tempDir.resolve("resB.jar"), "app.TestResourceB");
+
+            assertStartFails("processEnhancementOnly", jarA, jarB);
+        }
+
+        /** The start over {@code jars} fails with the extension's exception, thrown by the {@code path} it names. */
+        private void assertStartFails(String path, Path... jars) throws Exception {
+            var urls = new URL[jars.length];
+            for (int i = 0; i < jars.length; i++) {
+                urls[i] = jars[i].toUri().toURL();
+            }
+            try (var cl = new URLClassLoader(urls, getClass().getClassLoader())) {
+                var builder = VaubanContainer.builder().classLoader(cl).scanClasspath()
+                        .addBeanClass(Class.forName("app.TestResourceB", true, cl));
+
+                var thrown = assertThrows(jakarta.enterprise.inject.spi.DeploymentException.class, builder::build);
+
+                var thrownBy = java.util.Arrays.stream(thrown.getStackTrace())
+                        .filter(frame -> frame.getClassName().equals(BceProcessor.class.getName()))
+                        .map(StackTraceElement::getMethodName)
+                        .toList();
+                assertAll(() -> assertTrue(thrown.getMessage().contains(ThrowingOnBBce.CAUSE), thrown.getMessage()),
+                        () -> assertEquals(ThrowingOnBBce.CAUSE, thrown.getCause().getMessage()),
+                        () -> assertEquals(List.of(path), thrownBy, "the path that threw"));
+            }
+        }
+    }
+
     // ======================================================================
     // Test 7 - frozen enhancement patch applied WITHOUT the BCE (no opens)
     // ======================================================================
@@ -416,6 +487,13 @@ class BceRuntimeReplayTest {
                                       List<String> runtimeList,
                                       boolean includeBceClass,
                                       boolean includeService) throws Exception {
+        return buildPreProcessedJar(target, classFqn, beansList, runtimeList,
+                includeBceClass ? TestScopeBce.class : null, includeService ? TestScopeBce.class : null);
+    }
+
+    /** {@link #buildPreProcessedJar(Path, String, List, List, boolean, boolean)} with the extension {@code bce}. */
+    private Path buildPreProcessedJar(Path target, String classFqn, List<String> beansList, List<String> runtimeList,
+                                      Class<?> bceClass, Class<?> service) throws Exception {
         Files.createDirectories(target.getParent());
         try (var fos = Files.newOutputStream(target);
              var jar = new JarOutputStream(fos)) {
@@ -437,16 +515,16 @@ class BceRuntimeReplayTest {
                     + String.join("\n", runtimeList) + "\n";
             writeJarEntry(jar, RUNTIME_LIST_PATH, runtimeContent.getBytes(StandardCharsets.UTF_8));
 
-            if (includeBceClass) {
+            if (bceClass != null) {
                 // Include the BCE class bytecode (loaded from current CL)
-                var bceBytes = loadClassBytes(TestScopeBce.class);
-                writeJarEntry(jar, TestScopeBce.class.getName().replace('.', '/') + ".class",
+                var bceBytes = loadClassBytes(bceClass);
+                writeJarEntry(jar, bceClass.getName().replace('.', '/') + ".class",
                         bceBytes);
             }
 
-            if (includeService) {
+            if (service != null) {
                 writeJarEntry(jar, BCE_SERVICE_PATH,
-                        (TestScopeBce.class.getName() + "\n").getBytes(StandardCharsets.UTF_8));
+                        (service.getName() + "\n").getBytes(StandardCharsets.UTF_8));
             }
         }
         return target;
