@@ -22,18 +22,17 @@ package io.vidocq.vauban.core.annotation;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
-import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -81,7 +80,13 @@ public final class AnnotationTypes {
     public AnnotationTypes(VaubanIndex index, List<ClassLoader> loaders, Map<String, Set<String>> extensionNonbinding,
             List<io.vidocq.vauban.api.VaubanComponentProvider> providers) {
         this.index = index;
-        this.loaders = loaders.stream().filter(Objects::nonNull).distinct().toList();
+        var distinct = new ArrayList<ClassLoader>();
+        for (var loader : loaders) {
+            if (loader != null && !distinct.contains(loader)) {
+                distinct.add(loader);
+            }
+        }
+        this.loaders = List.copyOf(distinct);
         this.extensionNonbinding = extensionNonbinding == null ? Map.of() : Map.copyOf(extensionNonbinding);
         this.providers = providers == null ? List.of() : List.copyOf(providers);
     }
@@ -104,12 +109,15 @@ public final class AnnotationTypes {
         var ignored = extensionNonbinding.getOrDefault(type.value(), Set.of());
         var members = new HashMap<String, AnnotationValue>();
         var info = type(type);
-        info.ifPresent(declared -> putBindingMembers(declared, written, ignored, members));
-        written.forEach((name, value) -> {
+        if (info.isPresent()) {
+            putBindingMembers(info.get(), written, ignored, members);
+        }
+        for (var member : written.entrySet()) {
+            var name = member.getKey();
             if (!ignored.contains(name) && (info.isEmpty() || info.get().member(name).isEmpty())) {
-                members.put(name, complete(value));
+                members.put(name, complete(member.getValue()));
             }
-        });
+        }
         return new AnnotationKey(type, members);
     }
 
@@ -190,10 +198,17 @@ public final class AnnotationTypes {
 
     /** What a generated provider says the type declares, or empty when no provider owns it. */
     private Optional<io.vidocq.vauban.api.AnnotationTypeMetadata> metadata(DotName name) {
-        return generated.computeIfAbsent(name, type -> providers.stream()
-                .map(provider -> provider.annotationMetadata(type.value()))
-                .filter(Objects::nonNull)
-                .findFirst());
+        return generated.computeIfAbsent(name, this::generatedMetadata);
+    }
+
+    private Optional<io.vidocq.vauban.api.AnnotationTypeMetadata> generatedMetadata(DotName name) {
+        for (var provider : providers) {
+            var metadata = provider.annotationMetadata(name.value());
+            if (metadata != null) {
+                return Optional.of(metadata);
+            }
+        }
+        return Optional.empty();
     }
 
     /** The members of an instance, read by the module that generated its type's reader. */
@@ -202,11 +217,11 @@ public final class AnnotationTypes {
             var values = provider.readAnnotation(annotation);
             if (values != null) {
                 var members = new HashMap<String, AnnotationValue>();
-                values.forEach((name, value) -> {
-                    if (value != null) {
-                        members.put(name, indexValue(value));
+                for (var member : values.entrySet()) {
+                    if (member.getValue() != null) {
+                        members.put(member.getKey(), indexValue(member.getValue()));
                     }
-                });
+                }
                 return Optional.of(members);
             }
         }
@@ -263,15 +278,16 @@ public final class AnnotationTypes {
     private Optional<AnnotationTypeInfo> load(DotName name) {
         var metadata = metadata(name);
         if (metadata.isPresent()) {
-            return metadata.map(generatedMetadata -> toTypeInfo(name, generatedMetadata));
+            return Optional.of(toTypeInfo(name, metadata.get()));
         }
         if (index != null) {
-            var indexed = index.getClassByName(name).filter(ClassInfo::isAnnotation);
-            if (indexed.isPresent()) {
-                return indexed.map(AnnotationTypeInfo::of);
+            var indexed = index.getClassByName(name);
+            if (indexed.isPresent() && indexed.get().isAnnotation()) {
+                return Optional.of(AnnotationTypeInfo.of(indexed.get()));
             }
         }
-        return fromClassFile(name).or(() -> fromDeclaration(name));
+        var fromClassFile = fromClassFile(name);
+        return fromClassFile.isPresent() ? fromClassFile : fromDeclaration(name);
     }
 
     /** The type as its class file describes it, read through the first loader that has a readable one. */
@@ -312,12 +328,12 @@ public final class AnnotationTypes {
 
     /** What a module generated about its own annotation type, in the form matching compares. */
     private AnnotationTypeInfo toTypeInfo(DotName name, io.vidocq.vauban.api.AnnotationTypeMetadata metadata) {
-        var members = metadata.members().stream()
-                .map(member -> new AnnotationTypeInfo.Member(member,
-                        metadata.defaults().containsKey(member)
-                                ? indexValue(metadata.defaults().get(member)) : null,
-                        metadata.nonbinding().contains(member)))
-                .toList();
+        var members = new ArrayList<AnnotationTypeInfo.Member>();
+        for (var member : metadata.members()) {
+            members.add(new AnnotationTypeInfo.Member(member,
+                    metadata.defaults().containsKey(member) ? indexValue(metadata.defaults().get(member)) : null,
+                    metadata.nonbinding().contains(member)));
+        }
         return new AnnotationTypeInfo(name, members);
     }
 

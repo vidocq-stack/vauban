@@ -89,9 +89,15 @@ public final class IndexClassValidator {
     private final VaubanIndex index;
     private final AnnotationTypes types;
     private final boolean compilerElements;
-    /** Describes a class the index does not hold, a superclass the processor did not index, or returns empty. */
+    /**
+     * Describes a class the index does not hold, a superclass the processor did not index, or returns empty;
+     * {@code null} when nothing but the index describes a class.
+     */
     private final Function<DotName, Optional<ClassInfo>> outside;
-    /** The classes known to be beans without a bean-defining annotation: a bean descriptor names them. */
+    /**
+     * The classes known to be beans without a bean-defining annotation: a bean descriptor names them;
+     * {@code null} when there is none.
+     */
     private final Predicate<DotName> beanClasses;
 
     /**
@@ -100,8 +106,7 @@ public final class IndexClassValidator {
      */
     public IndexClassValidator(VaubanIndex index, Function<String, Class<?>> loader,
             Predicate<DotName> customInterceptorBinding) {
-        this(index, new AnnotationTypes(index, loader, customInterceptorBinding), false, name -> Optional.empty(),
-                name -> false);
+        this(index, new AnnotationTypes(index, loader, customInterceptorBinding), false, null, null);
     }
 
     private IndexClassValidator(VaubanIndex index, AnnotationTypes types, boolean compilerElements,
@@ -134,7 +139,14 @@ public final class IndexClassValidator {
 
     /** The class {@code name}, from the index or {@link #outside}; undecidable when neither describes it. */
     private ClassInfo superClass(DotName name) {
-        return index.getClassByName(name).or(() -> outside.apply(name)).orElseThrow(Undecidable::new);
+        var found = index.getClassByName(name);
+        if (found.isEmpty() && outside != null) {
+            found = outside.apply(name);
+        }
+        if (found.isEmpty()) {
+            throw new Undecidable();
+        }
+        return found.get();
     }
 
     /** The definition errors of {@code classInfo}, or empty when the index cannot decide them. */
@@ -179,7 +191,8 @@ public final class IndexClassValidator {
         if (superName != null && !superName.equals(OBJECT)) {
             var superClass = superClass(superName);
             for (var annotation : annotations(superClass)) {
-                if (types.meta(annotation.name()).map(AnnotationTypes.Meta::inherited).orElse(false)) {
+                var meta = types.meta(annotation.name());
+                if (meta.isPresent() && meta.get().inherited()) {
                     byType.put(annotation.name(), annotation);
                 }
             }
@@ -194,16 +207,32 @@ public final class IndexClassValidator {
 
     /** An annotation type's own annotations, those whose type resolves. */
     private List<AnnotationInfo> metaAnnotations(DotName annotationType) {
-        return types.meta(annotationType).map(AnnotationTypes.Meta::annotations).orElse(List.of()).stream()
-                .filter(a -> types.meta(a.name()).isPresent())
-                .toList();
+        var resolved = new ArrayList<AnnotationInfo>();
+        var meta = types.meta(annotationType);
+        if (meta.isPresent()) {
+            for (var a : meta.get().annotations()) {
+                if (types.meta(a.name()).isPresent()) {
+                    resolved.add(a);
+                }
+            }
+        }
+        return resolved;
+    }
+
+    /** The annotation {@code annotation} of the annotation type {@code annotationType}, when it has one. */
+    private Optional<AnnotationInfo> metaAnnotation(DotName annotationType, DotName annotation) {
+        var meta = types.meta(annotationType);
+        return meta.isPresent() ? meta.get().annotation(annotation) : Optional.empty();
     }
 
     private boolean hasBeanDefiningAnnotation(ClassInfo classInfo, List<AnnotationInfo> annotations) {
         for (var annotation : annotations) {
             if (types.isScope(annotation.name()) || types.isStereotype(annotation.name())) return true;
         }
-        return constructors(classInfo).anyMatch(c -> has(c.annotations(), INJECT));
+        for (var ctor : constructors(classInfo)) {
+            if (has(ctor.annotations(), INJECT)) return true;
+        }
+        return false;
     }
 
     // ---- The rules, in ReflectionValidator's order ----
@@ -211,8 +240,8 @@ public final class IndexClassValidator {
     private void validateStereotypeNamed(List<AnnotationInfo> annotations, List<String> errors) {
         for (var annotation : annotations) {
             if (!types.isStereotype(annotation.name())) continue;
-            var named = types.meta(annotation.name()).flatMap(m -> m.annotation(NAMED));
-            var value = named.map(n -> stringValue(n.member(VALUE))).orElse("");
+            var named = metaAnnotation(annotation.name(), NAMED);
+            var value = named.isPresent() ? stringValue(named.get().member(VALUE)) : "";
             if (named.isPresent() && !value.isEmpty()) {
                 errors.add("Stereotype " + annotation.name().value() + " has @Named with non-empty value '" + value
                         + "'");
@@ -223,11 +252,12 @@ public final class IndexClassValidator {
     private void validateGenericBeanScope(ClassInfo classInfo, List<AnnotationInfo> annotations,
             boolean beanDefining, List<String> errors) {
         if (beanDefining && !classInfo.typeParameters().isEmpty()) {
-            annotations.stream()
-                    .filter(a -> types.isNormalScope(a.name()) || a.name().equals(SINGLETON))
-                    .findFirst()
-                    .ifPresent(scope -> errors.add(GenericBeanScope.error(classInfo.name().value(),
-                            scope.name().value())));
+            for (var a : annotations) {
+                if (types.isNormalScope(a.name()) || a.name().equals(SINGLETON)) {
+                    errors.add(GenericBeanScope.error(classInfo.name().value(), a.name().value()));
+                    break;
+                }
+            }
         }
     }
 
@@ -244,7 +274,7 @@ public final class IndexClassValidator {
                     }
                 }
             }
-            for (var ctor : constructors(classInfo).toList()) {
+            for (var ctor : constructors(classInfo)) {
                 if (has(ctor.annotations(), INJECT)) {
                     for (var parameter : ctor.parameters()) {
                         if (namedWithoutValue(parameter)) {
@@ -263,7 +293,7 @@ public final class IndexClassValidator {
                     }
                 }
             }
-            if (method.parameters().stream().anyMatch(IndexClassValidator::isObservesOrDisposes)) {
+            if (hasObserves(method) || hasDisposes(method)) {
                 for (var parameter : method.parameters()) {
                     if (!isObservesOrDisposes(parameter) && namedWithoutValue(parameter)) {
                         errors.add("@Named without value on observer/disposer method parameter: " + className + "."
@@ -275,9 +305,28 @@ public final class IndexClassValidator {
     }
 
     private boolean namedWithoutValue(ParameterInfo parameter) {
-        return parameter.annotations().stream()
-                .filter(a -> a.name().equals(NAMED))
-                .anyMatch(a -> stringValue(a.member(VALUE)).isEmpty());
+        for (var a : parameter.annotations()) {
+            if (a.name().equals(NAMED) && stringValue(a.member(VALUE)).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a parameter of {@code method} is the event parameter of an observer. */
+    private static boolean hasObserves(MethodInfo method) {
+        for (var parameter : method.parameters()) {
+            if (isObserves(parameter)) return true;
+        }
+        return false;
+    }
+
+    /** Whether a parameter of {@code method} is the disposed parameter of a disposer. */
+    private static boolean hasDisposes(MethodInfo method) {
+        for (var parameter : method.parameters()) {
+            if (isDisposes(parameter)) return true;
+        }
+        return false;
     }
 
     private static boolean isObserves(ParameterInfo parameter) {
@@ -294,7 +343,7 @@ public final class IndexClassValidator {
 
     private void validateNormalScopedPublicFields(ClassInfo classInfo, List<AnnotationInfo> annotations,
             boolean beanDefining, List<String> errors) {
-        if (!beanDefining || annotations.stream().noneMatch(a -> types.isNormalScope(a.name()))) return;
+        if (!beanDefining || !hasNormalScope(annotations)) return;
         for (var field : classInfo.fields()) {
             if (field.isPublic() && !field.isStatic() && !has(field.annotations(), PRODUCES)) {
                 errors.add("Normal-scoped bean " + classInfo.name().value() + " has non-static public field '"
@@ -371,7 +420,7 @@ public final class IndexClassValidator {
                             errors);
                 }
             }
-            if (method.parameters().stream().anyMatch(IndexClassValidator::isObserves)) {
+            if (hasObserves(method)) {
                 var parameters = method.parameters();
                 for (int i = 0; i < parameters.size(); i++) {
                     if (!isObserves(parameters.get(i))) {
@@ -381,7 +430,7 @@ public final class IndexClassValidator {
                     }
                 }
             }
-            if (method.parameters().stream().anyMatch(IndexClassValidator::isDisposes)) {
+            if (hasDisposes(method)) {
                 var parameters = method.parameters();
                 for (int i = 0; i < parameters.size(); i++) {
                     var parameter = parameters.get(i);
@@ -526,7 +575,7 @@ public final class IndexClassValidator {
 
     private void validateConstructors(ClassInfo classInfo, List<String> errors) {
         var bean = mayBeABean(classInfo);
-        for (var ctor : constructors(classInfo).toList()) {
+        for (var ctor : constructors(classInfo)) {
             if (!has(ctor.annotations(), INJECT)) continue;
             var parameters = ctor.parameters();
             for (int i = 0; i < parameters.size(); i++) {
@@ -552,17 +601,17 @@ public final class IndexClassValidator {
         for (var annotation : annotations) {
             var type = annotation.name();
             if (!types.isStereotype(type) || !visited.add(type)) continue;
-            types.meta(type).flatMap(m -> m.annotation(PRIORITY))
-                    .map(p -> p.member(VALUE))
-                    .filter(AnnotationValue.IntVal.class::isInstance)
-                    .ifPresent(v -> priorities.add(((AnnotationValue.IntVal) v).value()));
+            var priority = metaAnnotation(type, PRIORITY);
+            if (priority.isPresent() && priority.get().member(VALUE) instanceof AnnotationValue.IntVal(var value)) {
+                priorities.add(value);
+            }
             collectStereotypePriorities(metaAnnotations(type), priorities, visited);
         }
     }
 
     private void validateStereotypeScopes(ClassInfo classInfo, List<AnnotationInfo> annotations,
             boolean beanDefining, List<String> errors) {
-        if (!beanDefining || classInfo.annotations().stream().anyMatch(a -> types.isScope(a.name()))) return;
+        if (!beanDefining || hasScope(classInfo.annotations())) return;
         var scopes = new LinkedHashSet<String>();
         collectStereotypeScopes(annotations, scopes, new HashSet<>());
         if (scopes.size() > 1) {
@@ -650,13 +699,17 @@ public final class IndexClassValidator {
         if (classInfo.isAbstract() || classInfo.hasAnnotation(VETOED)) {
             return false;
         }
-        if (!beanClasses.test(classInfo.name()) && !hasBeanDefiningAnnotation(classInfo, annotations(classInfo))) {
+        boolean named = beanClasses != null && beanClasses.test(classInfo.name());
+        if (!named && !hasBeanDefiningAnnotation(classInfo, annotations(classInfo))) {
             return false;
         }
         var name = classInfo.name().value();
         var dot = name.lastIndexOf('.');
-        return dot < 0 || index.getClassByName(DotName.of(name.substring(0, dot) + ".package-info"))
-                .map(packageInfo -> !packageInfo.hasAnnotation(VETOED)).orElse(true);
+        if (dot < 0) {
+            return true;
+        }
+        var packageInfo = index.getClassByName(DotName.of(name.substring(0, dot) + ".package-info"));
+        return packageInfo.isEmpty() || !packageInfo.get().hasAnnotation(VETOED);
     }
 
     private static void validateProducerReturnType(TypeInfo type, String location, List<String> errors) {
@@ -680,38 +733,82 @@ public final class IndexClassValidator {
     }
 
     private static boolean hasWildcard(List<TypeInfo> arguments) {
-        return arguments.stream().anyMatch(TypeInfo.WildcardType.class::isInstance);
+        for (var argument : arguments) {
+            if (argument instanceof TypeInfo.WildcardType) return true;
+        }
+        return false;
     }
 
     private static boolean containsWildcard(TypeInfo type) {
         return switch (type) {
             case TypeInfo.WildcardType _ -> true;
-            case TypeInfo.ParameterizedType(_, var arguments, _) ->
-                    arguments.stream().anyMatch(IndexClassValidator::containsWildcard);
+            case TypeInfo.ParameterizedType(_, var arguments, _) -> anyContainsWildcard(arguments);
             case TypeInfo.ArrayType(var component, _) -> containsWildcard(component);
             default -> false;
         };
+    }
+
+    private static boolean anyContainsWildcard(List<TypeInfo> arguments) {
+        for (var type : arguments) {
+            if (containsWildcard(type)) return true;
+        }
+        return false;
     }
 
     private static boolean containsTypeVariable(TypeInfo type) {
         return switch (type) {
             case null -> false;
             case TypeInfo.TypeVariable _ -> true;
-            case TypeInfo.ParameterizedType(_, var arguments, _) ->
-                    arguments.stream().anyMatch(IndexClassValidator::containsTypeVariable);
+            case TypeInfo.ParameterizedType(_, var arguments, _) -> anyContainsTypeVariable(arguments);
             case TypeInfo.ArrayType(var component, _) -> containsTypeVariable(component);
             case TypeInfo.WildcardType(var upper, var lower) -> containsTypeVariable(upper) || containsTypeVariable(lower);
             default -> false;
         };
     }
 
+    private static boolean anyContainsTypeVariable(List<TypeInfo> arguments) {
+        for (var type : arguments) {
+            if (containsTypeVariable(type)) return true;
+        }
+        return false;
+    }
+
     private boolean hasNonDependentScope(List<AnnotationInfo> annotations) {
-        return annotations.stream().anyMatch(a -> types.isNormalScope(a.name())
-                || (types.isScope(a.name()) && !a.name().equals(DEPENDENT)));
+        for (var a : annotations) {
+            if (types.isNormalScope(a.name()) || (types.isScope(a.name()) && !a.name().equals(DEPENDENT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasNormalScope(List<AnnotationInfo> annotations) {
+        for (var a : annotations) {
+            if (types.isNormalScope(a.name())) return true;
+        }
+        return false;
+    }
+
+    private boolean hasScope(List<AnnotationInfo> annotations) {
+        for (var a : annotations) {
+            if (types.isScope(a.name())) return true;
+        }
+        return false;
+    }
+
+    /** How many of {@code annotations} are scopes. */
+    private int scopeCount(List<AnnotationInfo> annotations) {
+        int count = 0;
+        for (var a : annotations) {
+            if (types.isScope(a.name())) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private void validateNoMultipleScopes(List<AnnotationInfo> annotations, String location, List<String> errors) {
-        if (annotations.stream().filter(a -> types.isScope(a.name())).count() > 1) {
+        if (scopeCount(annotations) > 1) {
             errors.add(location + " has multiple scope annotations");
         }
     }
@@ -742,7 +839,11 @@ public final class IndexClassValidator {
             var current = pending.poll();
             if (current.equals(type)) return true;
             if (current.equals(OBJECT) || !seen.add(current)) continue;
-            var info = index.getClassByName(current).orElseThrow(Undecidable::new);
+            var known = index.getClassByName(current);
+            if (known.isEmpty()) {
+                throw new Undecidable();
+            }
+            var info = known.get();
             if (info.superName() != null) pending.add(info.superName());
             pending.addAll(info.interfaces());
         }
@@ -752,30 +853,54 @@ public final class IndexClassValidator {
     // ---- Members ----
 
     private static List<MethodInfo> methods(ClassInfo classInfo) {
-        return classInfo.methods().stream().filter(m -> !m.isConstructor() && !m.isStaticInitializer()).toList();
+        var methods = new ArrayList<MethodInfo>();
+        for (var m : classInfo.methods()) {
+            if (!m.isConstructor() && !m.isStaticInitializer()) {
+                methods.add(m);
+            }
+        }
+        return methods;
     }
 
-    private static java.util.stream.Stream<MethodInfo> constructors(ClassInfo classInfo) {
-        return classInfo.methods().stream().filter(MethodInfo::isConstructor);
+    private static List<MethodInfo> constructors(ClassInfo classInfo) {
+        var constructors = new ArrayList<MethodInfo>();
+        for (var m : classInfo.methods()) {
+            if (m.isConstructor()) {
+                constructors.add(m);
+            }
+        }
+        return constructors;
     }
 
     private static boolean has(List<AnnotationInfo> annotations, DotName name) {
-        return annotations.stream().anyMatch(a -> a.name().equals(name));
+        return annotation(annotations, name).isPresent();
     }
 
     private static Optional<AnnotationInfo> annotation(List<AnnotationInfo> annotations, DotName name) {
-        return annotations.stream().filter(a -> a.name().equals(name)).findFirst();
+        for (var a : annotations) {
+            if (a.name().equals(name)) {
+                return Optional.of(a);
+            }
+        }
+        return Optional.empty();
     }
 
     private static List<DotName> classValues(AnnotationInfo annotation) {
         return switch (annotation.member(VALUE)) {
-            case AnnotationValue.ArrayVal(var values) -> values.stream()
-                    .filter(AnnotationValue.ClassVal.class::isInstance)
-                    .map(v -> ((AnnotationValue.ClassVal) v).className())
-                    .toList();
+            case AnnotationValue.ArrayVal(var values) -> classNames(values);
             case AnnotationValue.ClassVal(var name) -> List.of(name);
             case null, default -> List.of();
         };
+    }
+
+    private static List<DotName> classNames(List<AnnotationValue> values) {
+        var names = new ArrayList<DotName>();
+        for (var value : values) {
+            if (value instanceof AnnotationValue.ClassVal(var name)) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     private static String stringValue(AnnotationValue value) {

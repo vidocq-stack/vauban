@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -49,13 +50,21 @@ public final class GenericBeanScope {
      * parameters and whose scope, the extensions run, is not {@code @Dependent}.
      */
     public static List<String> errors(List<BeanDescriptor> beans, VaubanIndex index) {
-        return beans.stream()
-                .filter(bean -> bean.kind() == BeanDescriptor.BeanKind.MANAGED && bean.scope() != null
-                        && !DEPENDENT.equals(bean.scope().annotationName()))
-                .filter(bean -> index.getClassByName(bean.beanClass())
-                        .filter(type -> !type.typeParameters().isEmpty()).isPresent())
-                .map(bean -> error(bean.beanClass().value(), bean.scope().annotationName().value()))
-                .distinct()
-                .toList();
+        var errors = new ArrayList<String>();
+        for (var bean : beans) {
+            if (bean.kind() == BeanDescriptor.BeanKind.MANAGED && bean.scope() != null
+                    && !DEPENDENT.equals(bean.scope().annotationName()) && isGeneric(bean, index)) {
+                var error = error(bean.beanClass().value(), bean.scope().annotationName().value());
+                if (!errors.contains(error)) {
+                    errors.add(error);
+                }
+            }
+        }
+        return List.copyOf(errors);
+    }
+
+    private static boolean isGeneric(BeanDescriptor bean, VaubanIndex index) {
+        var type = index.getClassByName(bean.beanClass());
+        return type.isPresent() && !type.get().typeParameters().isEmpty();
     }
 }

@@ -60,10 +60,9 @@ record ComponentProviders(List<VaubanComponentProvider> providers) {
     static ComponentProviders load(ClassLoader cl, List<VaubanComponentProvider> extra) {
         var all = new ArrayList<>(extra);
         try {
-            ServiceLoader.load(VaubanComponentProvider.class, cl)
-                    .stream()
-                    .map(ServiceLoader.Provider::get)
-                    .forEach(all::add);
+            for (VaubanComponentProvider provider : ServiceLoader.load(VaubanComponentProvider.class, cl)) {
+                all.add(provider);
+            }
         } catch (ServiceConfigurationError | LinkageError | RuntimeException _) {
             // misconfigured/absent services — keep the explicit providers, fall back otherwise
         }
@@ -99,7 +98,9 @@ record ComponentProviders(List<VaubanComponentProvider> providers) {
      */
     static List<VaubanComponentProvider> withTestCompanions(List<VaubanComponentProvider> providers) {
         var present = new java.util.HashSet<String>();
-        providers.forEach(provider -> present.add(provider.getClass().getName()));
+        for (var provider : providers) {
+            present.add(provider.getClass().getName());
+        }
         var result = new ArrayList<VaubanComponentProvider>(providers.size());
         for (var provider : providers) {
             result.add(provider);

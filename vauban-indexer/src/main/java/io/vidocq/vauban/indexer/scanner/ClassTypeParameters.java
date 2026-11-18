@@ -26,6 +26,7 @@ import java.lang.classfile.ClassSignature;
 import java.lang.classfile.MethodSignature;
 import java.lang.classfile.Signature;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,15 +49,23 @@ final class ClassTypeParameters {
     private final Set<String> reading = new HashSet<>();
 
     private ClassTypeParameters(List<Signature.TypeParam> classParameters, List<Signature.TypeParam> methodParameters) {
-        classParameters.forEach(parameter -> declared.put(parameter.identifier(), parameter));
+        for (var parameter : classParameters) {
+            declared.put(parameter.identifier(), parameter);
+        }
         // A method's type parameter shadows the class's of the same name.
-        methodParameters.forEach(parameter -> declared.put(parameter.identifier(), parameter));
+        for (var parameter : methodParameters) {
+            declared.put(parameter.identifier(), parameter);
+        }
     }
 
     /** The type parameters the signature declares, in declaration order. */
     static List<TypeInfo.TypeVariable> of(ClassSignature signature) {
         var reader = new ClassTypeParameters(signature.typeParameters(), List.of());
-        return reader.declared.keySet().stream().map(reader::typeVariable).toList();
+        var variables = new ArrayList<TypeInfo.TypeVariable>();
+        for (var name : reader.declared.keySet()) {
+            variables.add(reader.typeVariable(name));
+        }
+        return Collections.unmodifiableList(variables);
     }
 
     /** The superclass and the interfaces a class signature declares, with their type arguments. */
@@ -69,7 +78,7 @@ final class ClassTypeParameters {
     static Supertypes supertypes(ClassSignature signature) {
         var reader = new ClassTypeParameters(signature.typeParameters(), List.of());
         return new Supertypes(reader.type(signature.superclassSignature()),
-                signature.superinterfaceSignatures().stream().map(reader::type).toList());
+                reader.types(signature.superinterfaceSignatures()));
     }
 
     /**
@@ -94,15 +103,24 @@ final class ClassTypeParameters {
      */
     static MethodTypes methodTypes(List<Signature.TypeParam> classParameters, MethodSignature signature) {
         var reader = new ClassTypeParameters(classParameters, signature.typeParameters());
-        var typeParameters = signature.typeParameters().stream()
-                .map(parameter -> reader.typeVariable(parameter.identifier()))
-                .toList();
-        var parameters = signature.arguments().stream().map(reader::type).toList();
+        var typeParameters = new ArrayList<TypeInfo.TypeVariable>();
+        for (var parameter : signature.typeParameters()) {
+            typeParameters.add(reader.typeVariable(parameter.identifier()));
+        }
+        var parameters = reader.types(signature.arguments());
         var result = signature.result() instanceof Signature.BaseTypeSig base && base.baseType() == 'V'
                 ? new TypeInfo.VoidType()
                 : reader.type(signature.result());
-        var exceptions = signature.throwableSignatures().stream().map(reader::type).toList();
-        return new MethodTypes(typeParameters, parameters, result, exceptions);
+        var exceptions = reader.types(signature.throwableSignatures());
+        return new MethodTypes(Collections.unmodifiableList(typeParameters), parameters, result, exceptions);
+    }
+
+    private List<TypeInfo> types(List<? extends Signature> signatures) {
+        var types = new ArrayList<TypeInfo>(signatures.size());
+        for (var signature : signatures) {
+            types.add(type(signature));
+        }
+        return Collections.unmodifiableList(types);
     }
 
     private TypeInfo.TypeVariable typeVariable(String name) {
@@ -112,10 +130,13 @@ final class ClassTypeParameters {
             return new TypeInfo.TypeVariable(name, List.of());
         }
         var bounds = new ArrayList<TypeInfo>();
-        parameter.classBound()
-                .filter(bound -> !isObject(bound))
-                .ifPresent(bound -> bounds.add(type(bound)));
-        parameter.interfaceBounds().forEach(bound -> bounds.add(type(bound)));
+        var classBound = parameter.classBound();
+        if (classBound.isPresent() && !isObject(classBound.get())) {
+            bounds.add(type(classBound.get()));
+        }
+        for (var bound : parameter.interfaceBounds()) {
+            bounds.add(type(bound));
+        }
         reading.remove(name);
         return new TypeInfo.TypeVariable(name, bounds);
     }
@@ -143,14 +164,19 @@ final class ClassTypeParameters {
         // classDesc() joins an inner class to its outer class with '$': the binary name the index keys classes by.
         var name = DotName.fromDescriptor(type.classDesc().descriptorString());
         // The enclosing type, where it carries type arguments the classes above this one may name (BUG-20261117-21)
-        var owner = type.outerType().map(this::classType)
-                .filter(TypeInfo.ParameterizedType.class::isInstance).orElse(null);
+        var outer = type.outerType();
+        TypeInfo owner = outer.isPresent() && classType(outer.get()) instanceof TypeInfo.ParameterizedType enclosing
+                ? enclosing : null;
         // Without arguments of its own, a member type of a parameterized type keeps that owner, as reflection gives
         // Outer<String>.Plain: a parameterized type without arguments (BUG-20261118-47)
         if (type.typeArgs().isEmpty() && owner == null) {
             return new TypeInfo.ClassType(name);
         }
-        return new TypeInfo.ParameterizedType(name, type.typeArgs().stream().map(this::typeArgument).toList(), owner);
+        var arguments = new ArrayList<TypeInfo>(type.typeArgs().size());
+        for (var argument : type.typeArgs()) {
+            arguments.add(typeArgument(argument));
+        }
+        return new TypeInfo.ParameterizedType(name, arguments, owner);
     }
 
     private TypeInfo typeArgument(Signature.TypeArg argument) {
@@ -172,7 +198,11 @@ final class ClassTypeParameters {
      * {@code java.lang.Object} it leaves out, {@code -1} for none, the first bound being an interface.
      */
     static int classBound(Signature.TypeParam parameter) {
-        return parameter.classBound().map(bound -> isObject(bound) ? 0 : 1).orElse(-1);
+        var bound = parameter.classBound();
+        if (bound.isEmpty()) {
+            return -1;
+        }
+        return isObject(bound.get()) ? 0 : 1;
     }
 
     private static boolean isObject(Signature bound) {

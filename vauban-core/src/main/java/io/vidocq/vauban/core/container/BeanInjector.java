@@ -181,8 +181,13 @@ final class BeanInjector {
 
     /** The fields of {@link #injectionOrder}, in its order: what {@link #injectFieldsByReflection} injects. */
     static List<Field> injectedFields(Class<?> beanClass) {
-        return injectionOrder(beanClass).stream()
-                .filter(Field.class::isInstance).map(Field.class::cast).toList();
+        var fields = new ArrayList<Field>();
+        for (var member : injectionOrder(beanClass)) {
+            if (member instanceof Field field) {
+                fields.add(field);
+            }
+        }
+        return Collections.unmodifiableList(fields);
     }
 
     @SuppressWarnings("java:S1181")

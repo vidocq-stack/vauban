@@ -227,9 +227,13 @@ final class ObserverDisposerDiscovery {
         var param = method.parameters().get(paramIndex);
         boolean isObservesAsync = BeanDiscovery.hasAnnotation(param.annotations(), BeanDiscovery.OBSERVES_ASYNC);
         // Qualifiers on the observed parameter (excluding @Observes/@ObservesAsync)
-        var qualifiers = host.computeObserverQualifiers(param.annotations().stream()
-                .filter(a -> !isObservesAnnotation(a))
-                .toList());
+        var annotations = new ArrayList<AnnotationInfo>();
+        for (var annotation : param.annotations()) {
+            if (!isObservesAnnotation(annotation)) {
+                annotations.add(annotation);
+            }
+        }
+        var qualifiers = host.computeObserverQualifiers(java.util.Collections.unmodifiableList(annotations));
         // CDI spec: @Priority on observer is on the @Observes parameter, not the method. A declared 0 is a
         // priority (Interceptor.Priority.PLATFORM_BEFORE), not "none": it used to fall back to the default
         // (BUG-20261113-11).

@@ -26,6 +26,7 @@ import io.vidocq.vauban.indexer.model.AnnotationValue;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,11 +57,16 @@ final class AnnotationTypes {
     record Meta(boolean inherited, List<AnnotationInfo> annotations, Map<String, AnnotationValue> defaults) {
 
         boolean has(DotName annotation) {
-            return annotations.stream().anyMatch(a -> a.name().equals(annotation));
+            return annotation(annotation).isPresent();
         }
 
         Optional<AnnotationInfo> annotation(DotName annotation) {
-            return annotations.stream().filter(a -> a.name().equals(annotation)).findFirst();
+            for (var a : annotations) {
+                if (a.name().equals(annotation)) {
+                    return Optional.of(a);
+                }
+            }
+            return Optional.empty();
         }
     }
 
@@ -76,12 +82,13 @@ final class AnnotationTypes {
      */
     AnnotationTypes(VaubanIndex index, Function<String, Class<?>> loader,
             Predicate<DotName> customInterceptorBinding) {
-        this(index, name -> Optional.empty(), loader, customInterceptorBinding);
+        this(index, null, loader, customInterceptorBinding);
     }
 
     /**
      * @param describer describes an annotation type the index does not hold, without loading it — the processor
-     *                  reads the compiler's elements — or returns empty; {@code loader} is asked next
+     *                  reads the compiler's elements — or returns empty; {@code loader} is asked next;
+     *                  {@code null} when nothing but the index describes a type
      */
     AnnotationTypes(VaubanIndex index, Function<DotName, Optional<ClassInfo>> describer,
             Function<String, Class<?>> loader, Predicate<DotName> customInterceptorBinding) {
@@ -93,44 +100,61 @@ final class AnnotationTypes {
 
     /** The annotation type {@code name}, or empty when it is neither indexed nor loadable. */
     Optional<Meta> meta(DotName name) {
-        return metas.computeIfAbsent(name, this::read);
+        var meta = metas.get(name);
+        if (meta == null) {
+            meta = read(name);
+            metas.put(name, meta);
+        }
+        return meta;
     }
 
     boolean isNormalScope(DotName name) {
-        return meta(name).map(m -> m.has(NORMAL_SCOPE)).orElse(false);
+        return has(name, NORMAL_SCOPE);
     }
 
     /** A normal scope or a pseudo-scope. */
     boolean isScope(DotName name) {
-        return meta(name).map(m -> m.has(NORMAL_SCOPE) || m.has(SCOPE)).orElse(false);
+        return has(name, NORMAL_SCOPE) || has(name, SCOPE);
     }
 
     boolean isStereotype(DotName name) {
-        return meta(name).map(m -> m.has(STEREOTYPE)).orElse(false);
+        return has(name, STEREOTYPE);
     }
 
     boolean isInterceptorBinding(DotName name) {
-        return meta(name).map(m -> m.has(INTERCEPTOR_BINDING)).orElse(false) || customInterceptorBinding.test(name);
+        return has(name, INTERCEPTOR_BINDING) || customInterceptorBinding.test(name);
+    }
+
+    /** Whether the annotation type {@code name} is known and carries {@code annotation}. */
+    private boolean has(DotName name, DotName annotation) {
+        var meta = meta(name);
+        return meta.isPresent() && meta.get().has(annotation);
     }
 
     /** {@code annotation} with every member its type declares a default for, as a live annotation compares. */
     AnnotationInfo withDefaults(AnnotationInfo annotation) {
-        var defaults = meta(annotation.name()).map(Meta::defaults).orElse(Map.of());
-        if (defaults.isEmpty()) {
+        var meta = meta(annotation.name());
+        if (meta.isEmpty() || meta.get().defaults().isEmpty()) {
             return annotation;
         }
-        var members = new LinkedHashMap<>(defaults);
+        var members = new LinkedHashMap<>(meta.get().defaults());
         members.putAll(annotation.members());
         return new AnnotationInfo(annotation.name(), members);
     }
 
     private Optional<Meta> read(DotName name) {
-        var indexed = index.getClassByName(name).or(() -> describer.apply(name)).filter(ClassInfo::isAnnotation);
-        if (indexed.isPresent()) {
+        var indexed = index.getClassByName(name);
+        if (indexed.isEmpty() && describer != null) {
+            indexed = describer.apply(name);
+        }
+        if (indexed.isPresent() && indexed.get().isAnnotation()) {
             var type = indexed.get();
             var defaults = new LinkedHashMap<String, AnnotationValue>();
-            type.methods().stream().filter(m -> m.defaultValue() != null)
-                    .forEach(m -> defaults.put(m.name(), m.defaultValue()));
+            for (var m : type.methods()) {
+                if (m.defaultValue() != null) {
+                    defaults.put(m.name(), m.defaultValue());
+                }
+            }
             return Optional.of(new Meta(type.hasAnnotation(INHERITED), type.annotations(), defaults));
         }
         return reflected(name);
@@ -142,9 +166,10 @@ final class AnnotationTypes {
             if (type == null || !type.isAnnotation()) {
                 return Optional.empty();
             }
-            var annotations = java.util.Arrays.stream(type.getAnnotations())
-                    .map(AnnotationValues::toAnnotationInfo)
-                    .toList();
+            var annotations = new ArrayList<AnnotationInfo>();
+            for (var annotation : type.getAnnotations()) {
+                annotations.add(AnnotationValues.toAnnotationInfo(annotation));
+            }
             var defaults = new LinkedHashMap<String, AnnotationValue>();
             for (var member : type.getDeclaredMethods()) {
                 var value = member.getDefaultValue();
@@ -152,8 +177,8 @@ final class AnnotationTypes {
                     defaults.put(member.getName(), AnnotationValues.of(value));
                 }
             }
-            return Optional.of(new Meta(type.isAnnotationPresent(java.lang.annotation.Inherited.class), annotations,
-                    defaults));
+            return Optional.of(new Meta(type.isAnnotationPresent(java.lang.annotation.Inherited.class),
+                    List.copyOf(annotations), defaults));
         } catch (RuntimeException | LinkageError _) {
             return Optional.empty();
         }

@@ -493,17 +493,19 @@ final class DisposerInvoker {
     static void validateDisposerDefinitions(
             List<DisposerDescriptor> disposers,
             List<BeanDescriptor> descriptors) {
-        var producerBeans = descriptors.stream()
-                .filter(d -> d.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
-                        || d.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD)
-                .toList();
+        if (disposers.isEmpty()) {
+            return;
+        }
+        var producerBeans = new java.util.ArrayList<BeanDescriptor>();
+        for (var d : descriptors) {
+            if (d.kind() == BeanDescriptor.BeanKind.PRODUCER_METHOD
+                    || d.kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD) {
+                producerBeans.add(d);
+            }
+        }
 
         for (var disposer : disposers) {
-            boolean found = producerBeans.stream()
-                    .anyMatch(producer -> (producer.beanClass().equals(disposer.declaringClass())
-                            || producerDeclaredIn(producer, disposer.declaringClass()))
-                            && disposerMatchesProducerType(disposer, producer));
-            if (!found && declaredInManagedBean(disposer, descriptors)) {
+            if (!hasProducer(disposer, producerBeans) && declaredInManagedBean(disposer, descriptors)) {
                 throw new jakarta.enterprise.inject.spi.DefinitionException(
                         DISPOSER_METHOD + disposer.declaringClass().value() + "." + disposer.methodName()
                                 + "(): no matching producer found for disposed type " + disposer.disposedType());
@@ -511,10 +513,24 @@ final class DisposerInvoker {
         }
     }
 
+    private static boolean hasProducer(DisposerDescriptor disposer, List<BeanDescriptor> producerBeans) {
+        for (var producer : producerBeans) {
+            if ((producer.beanClass().equals(disposer.declaringClass())
+                    || producerDeclaredIn(producer, disposer.declaringClass()))
+                    && disposerMatchesProducerType(disposer, producer)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean declaredInManagedBean(DisposerDescriptor disposer, List<BeanDescriptor> descriptors) {
-        return descriptors.stream()
-                .anyMatch(d -> d.beanClass().equals(disposer.declaringClass())
-                        && d.kind() == BeanDescriptor.BeanKind.MANAGED);
+        for (var d : descriptors) {
+            if (d.beanClass().equals(disposer.declaringClass()) && d.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean producerDeclaredIn(BeanDescriptor producer, DotName declaringClass) {

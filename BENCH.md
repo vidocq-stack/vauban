@@ -6,6 +6,66 @@ Every published number (README, commit, post) must point to an entry here.
 
 ---
 
+## BENCH-20261118-01 — Classes loaded by the start of the Cassini bench application, before and after loops on the start path (vauban#347)
+
+- **Date**: 2026-11-18
+- **Commit**: base `bd38e952` (origin/main), change `perf/start-loads-less` (this entry's commit). Reference: the
+  2026-10-28 snapshot the bench measured.
+- **JVM**: Temurin 25+36-LTS, `-XX:+UseG1GC -Xms1g -Xmx1g -Dfile.encoding=UTF-8` (the bench's flags), default CDS
+  archive
+- **Hardware**: Apple M5 Max / 18 cores (6 super, 12 performance) / 128 GB RAM
+- **OS**: macOS 27.2.1 (arm64); load average 12 to 13 during the timed campaign (other sessions' builds): the times
+  are indicative only, the class counts do not depend on it
+- **Application**: `bench-http-cdi-rest/apps/vidocq-cassini-snapshot` (two resources, six routes, two build compatible
+  extensions frozen at build), the distributions PERFS measured for 2026-10-28 and 2026-11-18. "main" is the
+  2026-11-18 distribution; "change" is the same distribution with the six Vauban jars (`vauban-api`,
+  `vauban-classloader-spi`, `vauban-classloader`, `vauban-weaver`, `vauban-indexer`, `vauban-core`) of this change.
+  The record of frozen extensions, written by the 2026-11-18 build, is still accepted with the change (the startup
+  report says `cdi extensions  2 extensions frozen at build`): the fingerprint is unchanged.
+- **Exact command**, one fresh JVM per start, the three distributions interleaved, 9 rounds; each start serves the six
+  endpoints once, `jcmd PerfCounter.print` gives `java.cls.loadedClasses` at idle (before traffic) and after traffic,
+  `-Xlog:class+load` attributes each class outside the CDS archive to its jar (a hidden class to its host's jar):
+  ```bash
+  java -XX:+UseG1GC -Xms1g -Xmx1g -Dfile.encoding=UTF-8 -Dvidocq.http.port=<free port> \
+      -Xlog:class+load=info:file=class-load.log:uptime,tags \
+      --module-path <dist>/lib:<dist>/app --add-modules ALL-MODULE-PATH \
+      --module dev.vidocq.bench.todo/dev.vidocq.bench.todo.VidocqCassiniApp
+  ```
+- **Results**, medians of 9 starts (min–max for the times):
+
+  | | 2026-10-28 | main | change |
+  |---|---|---|---|
+  | classes loaded, idle | 1497 | 1898 | 1628 |
+  | classes loaded, after traffic | 1929 | 2269 | 1992 |
+  | `vauban-core` classes / hidden classes | 92 / 120 | 145 / 224 | 146 / 58 |
+  | `vauban-indexer` classes / hidden classes | 33 / 10 | 44 / 51 | 42 / 4 |
+  | `vauban-classloader` classes / hidden classes | 15 / 37 | 17 / 42 | 17 / 1 |
+  | JDK classes outside CDS (`jrt`) | 578 | 702 | 693 |
+  | `Vidocq - Started in`, ms | 168.5 (122.5–253.3) | 224.9 (145.2–487.1) | 184.6 (144.9–267.1) |
+  | process running at `Started`, ms | 299 (214–415) | 362 (248–807) | 309 (245–414) |
+  | RSS idle / after traffic, MB | 112 / 140 | 149 / 153 | 115 / 133 |
+
+  An earlier campaign of 7 rounds the same afternoon (load average about 8.7, before the second pass of loops on the
+  frozen-record path): started in 169.6 / 207.2 / 173.3 ms, idle classes 1497 / 1898 / 1644.
+- **Probe**: `StartLoadsFewClassesModulePathTest` (`vauban-module-it`) counts the hidden classes of Vauban a start of
+  `StartProbe` loads (an application layer, then a container): 308 on `bd38e952` (278 lambdas, 30 `switch` on types),
+  55 with the change (27 lambdas, 28 `switch` on types).
+- **Memory, the +21 MB of RSS the bench saw**: with `-Xmn600m` (no young collection before idle), 3 starts each, eden
+  used at idle is 39 / 51 / 43 MB and RSS 111 / 144 / 117 MB. With `-XX:NativeMemoryTracking=summary`, 2 starts each,
+  the committed native memory differs by the compiler's arena chunks (8 / 14 / 7 MB) and 1 MB of code cache and
+  metaspace; the heap committed is 1 GB in all three. So the growth is not index metadata kept in memory: it is heap
+  pages touched by more allocation during the start (in the bench's flags the 2026-11-18 start crosses its first
+  young collection before idle, the others do not) and the JIT's arenas, both driven by the classes the start spun.
+- **Reading**: the change gives back 270 of the 401 classes the start gained since 2026-10-28, the hidden classes of
+  `vauban-core`, `vauban-indexer` and `vauban-classloader` falling from 317 to 63, and with them the RSS. What
+  remains are the classes of the features added since (`vauban-core` +54, `vauban-indexer` +9) and JDK classes
+  (+115: the Class-File API the indexer now uses for signatures and type annotations, and Vidocq's SHA-256 of
+  `generate.stamp`, tracked on the Vidocq side). The start time follows the class count; with this load average
+  the medians are no better than ±20 ms.
+- **Delta vs previous run**: none, first class count of a start in this file.
+
+---
+
 ## BENCH-20261113-01 — Start of a Vidocq application with its extensions run at start or frozen at build (VAU-PERF-005, vauban#288)
 
 - **Date**: 2026-11-13

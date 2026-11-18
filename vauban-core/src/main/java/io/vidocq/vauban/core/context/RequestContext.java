@@ -65,12 +65,20 @@ public final class RequestContext implements AlterableContext {
     /** The state of an imperative activation, per thread. Removed on deactivation. */
     private final ThreadLocal<RequestContextState> threadState = new ThreadLocal<>();
 
-    /** Fires a context event with the given qualifier; set by the container, a no-op until then. */
-    private volatile Consumer<Annotation> lifecycleEvents = qualifier -> { };
+    /** Fires a context event with the given qualifier; set by the container, {@code null} until then. */
+    private volatile Consumer<Annotation> lifecycleEvents;
 
     /** Gives the context the way to fire its {@code @Initialized} / {@code @BeforeDestroyed} / {@code @Destroyed} events. */
     public void lifecycleEvents(Consumer<Annotation> events) {
         this.lifecycleEvents = events;
+    }
+
+    /** Fires a context event, once the container gave the way to. */
+    private void fire(Annotation qualifier) {
+        var events = lifecycleEvents;
+        if (events != null) {
+            events.accept(qualifier);
+        }
     }
 
     /** The current state, or {@code null} when neither a scope nor this thread activated the context. */
@@ -173,7 +181,7 @@ public final class RequestContext implements AlterableContext {
         } finally {
             state.lock.unlock();
         }
-        lifecycleEvents.accept(Initialized.Literal.REQUEST);
+        fire(Initialized.Literal.REQUEST);
     }
 
     private static List<Contextual<?>> instancesOf(RequestContextState state) {
@@ -193,7 +201,7 @@ public final class RequestContext implements AlterableContext {
         }
         try {
             if (state.active) {
-                lifecycleEvents.accept(BeforeDestroyed.Literal.REQUEST);
+                fire(BeforeDestroyed.Literal.REQUEST);
             }
             for (var contextual : instancesOf(state)) {
                 destroy(state, contextual);
@@ -211,7 +219,7 @@ public final class RequestContext implements AlterableContext {
                 threadState.remove();
             }
             if (wasActive) {
-                lifecycleEvents.accept(Destroyed.Literal.REQUEST);
+                fire(Destroyed.Literal.REQUEST);
             }
         }
     }

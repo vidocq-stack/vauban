@@ -19,6 +19,8 @@
  */
 package io.vidocq.vauban.indexer.model;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -180,7 +182,11 @@ public record ClassInfo(
     }
 
     private static List<TypeInfo> raw(List<DotName> interfaces) {
-        return interfaces.stream().<TypeInfo>map(TypeInfo.ClassType::new).toList();
+        var types = new ArrayList<TypeInfo>(interfaces.size());
+        for (var name : interfaces) {
+            types.add(new TypeInfo.ClassType(name));
+        }
+        return Collections.unmodifiableList(types);
     }
 
     public boolean isPublic() {
@@ -212,10 +218,15 @@ public record ClassInfo(
     }
 
     public Optional<AnnotationInfo> annotation(DotName annotationName) {
-        return annotations.stream().filter(a -> a.name().equals(annotationName)).findFirst();
+        for (var a : annotations) {
+            if (a.name().equals(annotationName)) {
+                return Optional.of(a);
+            }
+        }
+        return Optional.empty();
     }
 
     public boolean hasAnnotation(DotName annotationName) {
-        return annotations.stream().anyMatch(a -> a.name().equals(annotationName));
+        return annotation(annotationName).isPresent();
     }
 }

@@ -42,7 +42,11 @@
         <dependency>
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-classloader-spi</artifactId>
-            <scope>runtime</scope>
+        </dependency>
+        <!-- StartProbe defines an application layer, as a Vidocq application does (vauban#347). -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-classloader</artifactId>
         </dependency>
         <!-- The session context: SessionMoveModulePathTest moves a session to another container (foy#114). -->
         <dependency>

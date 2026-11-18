@@ -324,12 +324,17 @@ public final class BeanDiscovery {
 
     private boolean hasSuitableConstructor(ClassInfo classInfo) {
         // Has @Inject constructor
-        boolean hasInjectConstructor = classInfo.methods().stream()
-                .anyMatch(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT));
-        if (hasInjectConstructor) return true;
+        if (hasInjectConstructor(classInfo)) return true;
 
         // Has no-arg constructor or no declared constructors (implicit default)
-        boolean hasExplicitConstructor = classInfo.methods().stream().anyMatch(MethodInfo::isConstructor);
+        boolean hasExplicitConstructor = false;
+        boolean hasNoArgConstructor = false;
+        for (var m : classInfo.methods()) {
+            if (m.isConstructor()) {
+                hasExplicitConstructor = true;
+                hasNoArgConstructor = hasNoArgConstructor || m.parameters().isEmpty();
+            }
+        }
         if (!hasExplicitConstructor) {
             // Check reflection for classes not in index
             try {
@@ -342,8 +347,16 @@ public final class BeanDiscovery {
             return true; // implicit no-arg
         }
 
-        return classInfo.methods().stream()
-                .anyMatch(m -> m.isConstructor() && m.parameters().isEmpty());
+        return hasNoArgConstructor;
+    }
+
+    private static boolean hasInjectConstructor(ClassInfo classInfo) {
+        for (var m : classInfo.methods()) {
+            if (m.isConstructor() && hasAnnotation(m.annotations(), INJECT)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     boolean hasBeanDefiningAnnotation(ClassInfo classInfo) {
@@ -354,7 +367,7 @@ public final class BeanDiscovery {
         // CDI 4.0+: @Alternative with @Priority is a bean-defining combination
         if (classInfo.hasAnnotation(ALTERNATIVE) && classInfo.hasAnnotation(PRIORITY)) return true;
         // Also check @Inject on constructor — @Inject constructor makes it a bean
-        if (classInfo.methods().stream().anyMatch(m -> m.isConstructor() && hasAnnotation(m.annotations(), INJECT))) {
+        if (hasInjectConstructor(classInfo)) {
             return true;
         }
 
@@ -585,10 +598,13 @@ public final class BeanDiscovery {
      * (BUG-20261116-11).
      */
     private static boolean isOverloadedProducer(ClassInfo declaringClass, MethodInfo method) {
-        return declaringClass.methods().stream()
-                .filter(candidate -> candidate.name().equals(method.name())
-                        && hasAnnotation(candidate.annotations(), PRODUCES))
-                .count() > 1;
+        int producers = 0;
+        for (var candidate : declaringClass.methods()) {
+            if (candidate.name().equals(method.name()) && hasAnnotation(candidate.annotations(), PRODUCES)) {
+                producers++;
+            }
+        }
+        return producers > 1;
     }
 
     /** Whether the reflected {@code m} is the producer {@code method}: its name, and its parameters when overloaded. */
@@ -638,10 +654,20 @@ public final class BeanDiscovery {
      * when the bean declaring it is one.
      */
     private boolean isAlternativeProducer(ClassInfo declaringClass, List<AnnotationInfo> annotations) {
-        return hasAnnotation(annotations, ALTERNATIVE) ||
-                annotations.stream().anyMatch(a -> isStereotype(a.name()) &&
-                        index.getClassByName(a.name()).map(c -> c.hasAnnotation(ALTERNATIVE)).orElse(false))
+        return hasAnnotation(annotations, ALTERNATIVE) || hasAlternativeStereotype(annotations)
                 || isAlternativeWithStereotypes(declaringClass);
+    }
+
+    private boolean hasAlternativeStereotype(List<AnnotationInfo> annotations) {
+        for (var a : annotations) {
+            if (isStereotype(a.name())) {
+                var stereotype = index.getClassByName(a.name());
+                if (stereotype.isPresent() && stereotype.get().hasAnnotation(ALTERNATIVE)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -723,11 +749,9 @@ public final class BeanDiscovery {
      */
     Set<TypeInfo> computeBeanTypes(ClassInfo classInfo) {
         // CDI spec: @Typed restricts the bean types to the specified types + Object
-        var typedAnn = classInfo.annotations().stream()
-                .filter(a -> a.name().equals(TYPED))
-                .findFirst();
-        if (typedAnn.isPresent()) {
-            return typedBeanTypes(classInfo, typedClassNames(typedAnn.get()));
+        var typedAnn = findAnnotation(classInfo.annotations(), TYPED);
+        if (typedAnn != null) {
+            return typedBeanTypes(classInfo, typedClassNames(typedAnn));
         }
         var types = new LinkedHashSet<TypeInfo>();
         types.add(beanClassType(classInfo));
@@ -748,8 +772,7 @@ public final class BeanDiscovery {
     private static TypeInfo beanClassType(ClassInfo classInfo) {
         var parameters = classInfo.typeParameters();
         return parameters.isEmpty() ? new TypeInfo.ClassType(classInfo.name())
-                : new TypeInfo.ParameterizedType(classInfo.name(),
-                        parameters.stream().map(BeanDiscovery::asReflected).toList());
+                : new TypeInfo.ParameterizedType(classInfo.name(), allAsReflected(parameters));
     }
 
     /**
@@ -759,8 +782,8 @@ public final class BeanDiscovery {
      * parameterization (BUG-20261117-14). Empty when neither knows the class.
      */
     private static List<TypeInfo> parameterizedSupertypes(DotName className) {
-        return CompiledSupertypes.of(new TypeInfo.ClassType(className))
-                .orElseGet(() -> reflectedParameterizedSupertypes(className));
+        var compiled = CompiledSupertypes.of(new TypeInfo.ClassType(className));
+        return compiled.isPresent() ? compiled.get() : reflectedParameterizedSupertypes(className);
     }
 
     private static List<TypeInfo> reflectedParameterizedSupertypes(DotName className) {
@@ -809,7 +832,12 @@ public final class BeanDiscovery {
     }
 
     private static boolean anyHasForeignTypeVariable(java.lang.reflect.Type[] types, Class<?> root) {
-        return Arrays.stream(types).anyMatch(type -> hasForeignTypeVariable(type, root));
+        for (var type : types) {
+            if (hasForeignTypeVariable(type, root)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The names of the type variables {@code classInfo} declares. */
@@ -848,8 +876,13 @@ public final class BeanDiscovery {
 
     /** Whether a type argument of {@code type} is a wildcard, or a parameterized type that has one, at any depth. */
     private static boolean hasWildcard(TypeInfo.ParameterizedType type) {
-        return type.typeArguments().stream().anyMatch(argument -> argument instanceof TypeInfo.WildcardType
-                || argument instanceof TypeInfo.ParameterizedType nested && hasWildcard(nested));
+        for (var argument : type.typeArguments()) {
+            if (argument instanceof TypeInfo.WildcardType
+                    || argument instanceof TypeInfo.ParameterizedType nested && hasWildcard(nested)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The names of the type variables {@code type} has, itself or among its type arguments, at any depth. */
@@ -863,7 +896,9 @@ public final class BeanDiscovery {
         switch (type) {
             case TypeInfo.TypeVariable(var name, _) -> names.add(name);
             case TypeInfo.ParameterizedType(_, var arguments, var owner) -> {
-                arguments.forEach(argument -> addTypeVariableNames(argument, names));
+                for (var argument : arguments) {
+                    addTypeVariableNames(argument, names);
+                }
                 // F of <F> Outer<F>.Inner<Integer> is the producer's too (BUG-20261117-21)
                 addTypeVariableNames(owner, names);
             }
@@ -889,7 +924,11 @@ public final class BeanDiscovery {
                 parameterizedNames.add(rawType);
             }
         }
-        types.removeIf(t -> t instanceof TypeInfo.ClassType(var name) && parameterizedNames.contains(name));
+        for (var it = types.iterator(); it.hasNext(); ) {
+            if (it.next() instanceof TypeInfo.ClassType(var name) && parameterizedNames.contains(name)) {
+                it.remove();
+            }
+        }
     }
 
     /**
@@ -911,13 +950,20 @@ public final class BeanDiscovery {
     private static Set<TypeInfo> typedForms(Collection<TypeInfo> types, List<DotName> restrictedRawTypes) {
         var restrictedTypes = new LinkedHashSet<TypeInfo>();
         for (var rawName : restrictedRawTypes) {
-            restrictedTypes.add(types.stream()
-                    .filter(t -> t instanceof TypeInfo.ParameterizedType(var rawType, _, _) && rawType.equals(rawName))
-                    .findFirst()
-                    .orElseGet(() -> new TypeInfo.ClassType(rawName)));
+            restrictedTypes.add(parameterizedFormOrRaw(types, rawName));
         }
         restrictedTypes.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
         return restrictedTypes;
+    }
+
+    /** The first parameterized type of class {@code rawName} among {@code types}, or the raw class. */
+    private static TypeInfo parameterizedFormOrRaw(Collection<TypeInfo> types, DotName rawName) {
+        for (var t : types) {
+            if (t instanceof TypeInfo.ParameterizedType(var rawType, _, _) && rawType.equals(rawName)) {
+                return t;
+            }
+        }
+        return new TypeInfo.ClassType(rawName);
     }
 
     /** The class names a {@code @Typed} annotation lists, in declaration order. */
@@ -998,14 +1044,22 @@ public final class BeanDiscovery {
             case TypeInfo.ArrayType(var component, var dimensions) ->
                     new TypeInfo.ArrayType(asReflected(component), dimensions);
             case TypeInfo.ParameterizedType(var raw, var arguments, var owner) ->
-                    new TypeInfo.ParameterizedType(raw, arguments.stream().map(BeanDiscovery::asReflected).toList(),
-                            asReflected(owner));
+                    new TypeInfo.ParameterizedType(raw, allAsReflected(arguments), asReflected(owner));
             case TypeInfo.TypeVariable(var name, var bounds) ->
-                    new TypeInfo.TypeVariable(name, bounds.stream().map(BeanDiscovery::asReflected).toList());
+                    new TypeInfo.TypeVariable(name, allAsReflected(bounds));
             case TypeInfo.WildcardType(var upper, var lower) ->
                     new TypeInfo.WildcardType(asReflected(upper), asReflected(lower));
             case TypeInfo.ClassType _ -> type;
         };
+    }
+
+    /** Each of {@code types} {@link #asReflected as reflection gives it}, in order. */
+    private static List<TypeInfo> allAsReflected(List<? extends TypeInfo> types) {
+        var reflected = new ArrayList<TypeInfo>(types.size());
+        for (var type : types) {
+            reflected.add(asReflected(type));
+        }
+        return Collections.unmodifiableList(reflected);
     }
 
     /**
@@ -1093,7 +1147,10 @@ public final class BeanDiscovery {
 
         var compiled = CompiledSupertypes.of(producerType);
         if (compiled.isPresent() || !addReflectedSupertypes(producerType, types)) {
-            rawClassName(producerType).ifPresent(rawName -> collectBeanTypes(rawName, types));
+            var rawName = rawClassName(producerType);
+            if (rawName.isPresent()) {
+                collectBeanTypes(rawName.get(), types);
+            }
             types.addAll(compiled.orElse(List.of()));
             dropRawFormsOfParameterizedTypes(types);
         }
@@ -1117,14 +1174,16 @@ public final class BeanDiscovery {
      */
     private static boolean addReflectedSupertypes(TypeInfo producerType, Set<TypeInfo> types) {
         try {
-            reflectProducerType(producerType).ifPresent(refType -> {
+            var reflected = reflectProducerType(producerType);
+            if (reflected.isPresent()) {
+                var refType = reflected.get();
                 var root = refType instanceof java.lang.reflect.ParameterizedType parameterized
                         ? parameterized.getRawType() : refType;
                 for (java.lang.reflect.Type t : io.vidocq.vauban.core.types.TypeHierarchyResolver.resolveAllSupertypes(refType)) {
                     var typeInfo = supertypeAsJavaSeesIt(t, reflectTypeToTypeInfo(t), (Class<?>) root);
                     if (typeInfo != null) types.add(typeInfo);
                 }
-            });
+            }
             return true;
         } catch (ClassNotFoundException | RuntimeException _) {
             return false;
@@ -1179,14 +1238,12 @@ public final class BeanDiscovery {
     }
 
     Set<TypeInfo> computeProducerTypesWithTyped(TypeInfo producerType, List<AnnotationInfo> annotations) {
-        var typedAnn = annotations.stream()
-                .filter(a -> a.name().equals(TYPED))
-                .findFirst();
-        if (typedAnn.isPresent()) {
+        var typedAnn = findAnnotation(annotations, TYPED);
+        if (typedAnn != null) {
             // The parameterized forms the produced type gives, as Bean.getTypes() has them: Repo<String> for a
             // @Typed(Repo.class) producer of Box<String>, where Box<T> implements Repo<T>. They were raw, and once
             // a raw type satisfied no other parameterization, nothing satisfied @Inject Repo<String> (BUG-20261117-19)
-            return typedForms(computeProducerTypes(producerType), typedClassNames(typedAnn.get()));
+            return typedForms(computeProducerTypes(producerType), typedClassNames(typedAnn));
         }
         return computeProducerTypes(producerType);
     }
@@ -1306,7 +1363,12 @@ public final class BeanDiscovery {
     }
 
     private boolean hasScopeAnnotation(List<AnnotationInfo> annotations) {
-        return annotations.stream().anyMatch(a -> mapScope(a.name()) != null);
+        for (var a : annotations) {
+            if (mapScope(a.name()) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     ScopeInfo computeScopeFromAnnotations(List<AnnotationInfo> annotations) {
@@ -1422,7 +1484,11 @@ public final class BeanDiscovery {
      * overloads of one name (BUG-20261118-41).
      */
     public static List<String> erasedParameterTypes(MethodInfo method) {
-        return method.parameters().stream().map(parameter -> String.valueOf(erasedName(parameter.type()))).toList();
+        var types = new ArrayList<String>();
+        for (var parameter : method.parameters()) {
+            types.add(String.valueOf(erasedName(parameter.type())));
+        }
+        return List.copyOf(types);
     }
 
     /** The erased type name, as {@link Class#getTypeName()} spells it, or {@code null} when it cannot be told. */
@@ -1519,18 +1585,16 @@ public final class BeanDiscovery {
      * (Vidocq/vauban#24).
      */
     private static Optional<MethodInfo> injectionConstructor(ClassInfo classInfo) {
-        var injectConstructor = classInfo.methods().stream()
-                .filter(m -> isInjectionCandidateCtor(m) && hasAnnotation(m.annotations(), INJECT))
-                .findFirst();
-        if (injectConstructor.isEmpty()) {
-            var allConstructors = classInfo.methods().stream()
-                    .filter(BeanDiscovery::isInjectionCandidateCtor)
-                    .toList();
-            if (allConstructors.size() == 1) {
-                injectConstructor = Optional.of(allConstructors.get(0));
+        var candidates = new ArrayList<MethodInfo>();
+        for (var m : classInfo.methods()) {
+            if (isInjectionCandidateCtor(m)) {
+                if (hasAnnotation(m.annotations(), INJECT)) {
+                    return Optional.of(m);
+                }
+                candidates.add(m);
             }
         }
-        return injectConstructor;
+        return candidates.size() == 1 ? Optional.of(candidates.getFirst()) : Optional.empty();
     }
 
     private void addConstructorInjectionPoints(ClassInfo classInfo, List<InjectionPointInfo> points) {
@@ -1608,8 +1672,15 @@ public final class BeanDiscovery {
     }
 
     private static boolean isInstanceObserverMethod(MethodInfo method) {
-        return !method.isConstructor() && !method.isStatic()
-                && method.parameters().stream().anyMatch(p -> hasObserverAnnotation(p.annotations()));
+        if (method.isConstructor() || method.isStatic()) {
+            return false;
+        }
+        for (var p : method.parameters()) {
+            if (hasObserverAnnotation(p.annotations())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void addObserverParameterInjectionPoint(ClassInfo classInfo, MethodInfo method, int index,
@@ -1634,12 +1705,16 @@ public final class BeanDiscovery {
     InjectionPointInfo parameterInjectionPoint(ClassInfo classInfo, MethodInfo method,
             String methodName, int index, TypeInfo requiredType, InjectionPointInfo.InjectionKind kind) {
         var annotations = method.parameters().get(index).annotations();
+        var parameterTypes = new ArrayList<TypeInfo>();
+        for (var parameter : method.parameters()) {
+            parameterTypes.add(parameter.type());
+        }
         return new InjectionPointInfo(
                 requiredType, computeInjectionPointQualifiers(annotations),
                 declaredInjectionPointQualifiers(annotations),
                 kind,
                 InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), methodName, index,
-                        method.parameters().stream().map(ParameterInfo::type).toList()),
+                        Collections.unmodifiableList(parameterTypes)),
                 classInfo.name());
     }
 
@@ -1740,7 +1815,17 @@ public final class BeanDiscovery {
     }
 
     static boolean hasAnnotation(List<AnnotationInfo> annotations, DotName name) {
-        return annotations.stream().anyMatch(a -> a.name().equals(name));
+        return findAnnotation(annotations, name) != null;
+    }
+
+    /** The first annotation of type {@code name} among {@code annotations}, or {@code null}. */
+    private static AnnotationInfo findAnnotation(List<AnnotationInfo> annotations, DotName name) {
+        for (var a : annotations) {
+            if (a.name().equals(name)) {
+                return a;
+            }
+        }
+        return null;
     }
 
     /**

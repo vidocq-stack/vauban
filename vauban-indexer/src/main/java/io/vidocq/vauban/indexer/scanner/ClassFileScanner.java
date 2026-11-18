@@ -37,7 +37,6 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
 import java.lang.constant.MethodTypeDesc;
 import java.util.*;
-import java.util.function.IntPredicate;
 
 public final class ClassFileScanner {
 
@@ -56,12 +55,12 @@ public final class ClassFileScanner {
 
     private static ClassInfo buildClassInfo(ClassModel cm) {
         var name = DotName.fromInternal(cm.thisClass().asInternalName());
-        var superName = cm.superclass()
-                .map(ce -> DotName.fromInternal(ce.asInternalName()))
-                .orElse(null);
-        var interfaces = cm.interfaces().stream()
-                .map(ce -> DotName.fromInternal(ce.asInternalName()))
-                .toList();
+        var superclass = cm.superclass();
+        var superName = superclass.isPresent() ? DotName.fromInternal(superclass.get().asInternalName()) : null;
+        var interfaces = new ArrayList<DotName>();
+        for (var ce : cm.interfaces()) {
+            interfaces.add(DotName.fromInternal(ce.asInternalName()));
+        }
         var accessFlags = cm.flags().flagsMask();
 
         var fields = new ArrayList<FieldInfo>();
@@ -72,25 +71,21 @@ public final class ClassFileScanner {
         var modifiers = accessFlags & ~ClassFile.ACC_SUPER;
         // Read first: the fields and methods resolve their type variables against the class's.
         var signature = classSignature(cm);
-        var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
-        List<TypeVariable> typeParameters = signature.map(ClassTypeParameters::of).orElse(List.of());
-        var members = new Members(name, (cm.flags().flagsMask() & ClassFile.ACC_ENUM) != 0,
-                cm.findAttribute(Attributes.enclosingMethod())
-                        .map(enclosing -> enclosing.enclosingClass().asSymbol()).orElse(null),
-                cm.findAttribute(Attributes.record()).map(RecordAttribute::components).orElse(null),
-                classParameters, TypeAnnotationReader.of(cm, ClassFileScanner::buildAnnotationInfo),
-                TypeAnnotationReader.receiver(name, typeParameters));
+        List<Signature.TypeParam> classParameters = signature.isPresent() ? signature.get().typeParameters()
+                : List.of();
+        List<TypeVariable> typeParameters = signature.isPresent() ? ClassTypeParameters.of(signature.get())
+                : List.of();
+        var members = members(cm, name, classParameters, typeParameters);
 
         for (var element : cm) {
             switch (element) {
                 case FieldModel fm -> fields.add(buildFieldInfo(fm, members));
                 case MethodModel mm -> methods.add(buildMethodInfo(mm, members));
-                case RuntimeVisibleAnnotationsAttribute rvaa ->
-                        rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
+                case RuntimeVisibleAnnotationsAttribute rvaa -> addAnnotations(rvaa.annotations(), annotations);
                 case InnerClassesAttribute ica -> {
                     simpleName = innerSimpleName(cm, ica);
                     enclosingClass = enclosingClass(cm, ica);
-                    modifiers = innerFlags(cm, ica).orElse(modifiers);
+                    modifiers = innerFlags(cm, ica, modifiers);
                 }
                 default -> {
                     // other class elements carry nothing the index records
@@ -101,17 +96,41 @@ public final class ClassFileScanner {
         var kind = determineKind(cm, superName);
         // The supertypes as the class declares them, with their type arguments (BUG-20261117-22), or raw, as the
         // class file names them, when the signature does not name as many interfaces, or the class file no superclass.
-        var supertypes = signature.map(ClassTypeParameters::supertypes)
-                .filter(declared -> superName != null && declared.interfaces().size() == interfaces.size())
-                .orElse(RAW);
-        var typeAnnotations = classTypeAnnotations(cm, members, typeParameters,
-                superName == null ? null
-                        : Objects.requireNonNullElse(supertypes.superclass(), new ClassType(superName)),
-                supertypes.interfaces() == null ? interfaces.stream().<TypeInfo>map(ClassType::new).toList()
-                        : supertypes.interfaces());
+        var supertypes = signature.isPresent() ? supertypes(signature.get(), superName, interfaces.size()) : RAW;
+        // A class without type annotations reads none: most classes.
+        List<TypeAnnotationInfo> typeAnnotations = !TypeAnnotationReader.hasTypeAnnotations(cm) ? List.of()
+                : classTypeAnnotations(cm, members, typeParameters,
+                        superName == null ? null
+                                : Objects.requireNonNullElse(supertypes.superclass(), new ClassType(superName)),
+                        supertypes.interfaces() == null ? rawTypes(interfaces) : supertypes.interfaces());
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
                 typeParameters, true, supertypes.superclass(), supertypes.interfaces(), typeAnnotations,
                 enclosingClass, modifiers);
+    }
+
+    private static Members members(ClassModel cm, DotName name, List<Signature.TypeParam> classParameters,
+            List<TypeVariable> typeParameters) {
+        var enclosing = cm.findAttribute(Attributes.enclosingMethod());
+        var components = cm.findAttribute(Attributes.record());
+        return new Members(name, (cm.flags().flagsMask() & ClassFile.ACC_ENUM) != 0,
+                enclosing.isPresent() ? enclosing.get().enclosingClass().asSymbol() : null,
+                components.isPresent() ? components.get().components() : null,
+                classParameters, TypeAnnotationReader.of(cm), TypeAnnotationReader.receiver(name, typeParameters));
+    }
+
+    /** The supertypes {@code signature} declares, or {@link #RAW} when they are not those the class file names. */
+    private static ClassTypeParameters.Supertypes supertypes(ClassSignature signature, DotName superName,
+            int interfaces) {
+        var declared = ClassTypeParameters.supertypes(signature);
+        return superName != null && declared.interfaces().size() == interfaces ? declared : RAW;
+    }
+
+    private static List<TypeInfo> rawTypes(List<DotName> names) {
+        var types = new ArrayList<TypeInfo>(names.size());
+        for (var name : names) {
+            types.add(new ClassType(name));
+        }
+        return types;
     }
 
     /**
@@ -152,7 +171,8 @@ public final class ClassFileScanner {
      */
     private static Optional<ClassSignature> classSignature(ClassModel cm) {
         try {
-            return cm.findAttribute(Attributes.signature()).map(SignatureAttribute::asClassSignature);
+            var attribute = cm.findAttribute(Attributes.signature());
+            return attribute.isPresent() ? Optional.of(attribute.get().asClassSignature()) : Optional.empty();
         } catch (IllegalArgumentException _) {
             return Optional.empty();
         }
@@ -167,7 +187,8 @@ public final class ClassFileScanner {
         var self = cm.thisClass().asInternalName();
         for (var inner : attribute.classes()) {
             if (inner.innerClass().asInternalName().equals(self)) {
-                return inner.innerName().map(Utf8Entry::stringValue).orElse("");
+                var innerName = inner.innerName();
+                return innerName.isPresent() ? innerName.get().stringValue() : "";
             }
         }
         return null;
@@ -175,13 +196,17 @@ public final class ClassFileScanner {
 
     /**
      * The flags of a nested, local or anonymous class's own entry of the {@code InnerClasses} attribute, which keep its
-     * {@code static}, {@code private} and {@code protected}, as {@link Class#getModifiers()} reads them; empty for a
-     * top-level class (BUG-20261117-37).
+     * {@code static}, {@code private} and {@code protected}, as {@link Class#getModifiers()} reads them;
+     * {@code topLevel} for a top-level class, which has no such entry (BUG-20261117-37).
      */
-    private static Optional<Integer> innerFlags(ClassModel cm, InnerClassesAttribute attribute) {
+    private static int innerFlags(ClassModel cm, InnerClassesAttribute attribute, int topLevel) {
         var self = cm.thisClass().asInternalName();
-        return attribute.classes().stream().filter(inner -> inner.innerClass().asInternalName().equals(self))
-                .findFirst().map(InnerClassInfo::flagsMask);
+        for (var inner : attribute.classes()) {
+            if (inner.innerClass().asInternalName().equals(self)) {
+                return inner.flagsMask();
+            }
+        }
+        return topLevel;
     }
 
     /**
@@ -193,8 +218,9 @@ public final class ClassFileScanner {
         var self = cm.thisClass().asInternalName();
         for (var inner : attribute.classes()) {
             if (inner.innerClass().asInternalName().equals(self)) {
-                return (inner.flagsMask() & ClassFile.ACC_STATIC) != 0 ? null
-                        : inner.outerClass().map(outer -> DotName.fromInternal(outer.asInternalName())).orElse(null);
+                var outer = inner.outerClass();
+                return (inner.flagsMask() & ClassFile.ACC_STATIC) != 0 || outer.isEmpty() ? null
+                        : DotName.fromInternal(outer.get().asInternalName());
             }
         }
         return null;
@@ -234,22 +260,21 @@ public final class ClassFileScanner {
     }
 
     /**
-     * The type parameters, generic parameter types and return type a method's {@code Signature} declares; empty
-     * when it has none or it does not parse. A constructor of an inner class or an enum has synthetic leading
-     * parameters its signature leaves out: the generic types line up with the last parameters.
+     * The type parameters, generic parameter types and return type a method's {@code Signature} declares;
+     * {@code null} when it has none or it does not parse. A constructor of an inner class or an enum has synthetic
+     * leading parameters its signature leaves out: the generic types line up with the last parameters.
      */
-    private static Optional<ClassTypeParameters.MethodTypes> methodTypes(MethodModel mm,
+    private static ClassTypeParameters.MethodTypes methodTypes(MethodModel mm,
             List<Signature.TypeParam> classParameters) {
         var signature = mm.findAttribute(Attributes.signature());
         if (signature.isEmpty()) {
-            return Optional.empty();
+            return null;
         }
         try {
             var types = ClassTypeParameters.methodTypes(classParameters, signature.get().asMethodSignature());
-            return types.parameters().size() <= mm.methodTypeSymbol().parameterCount()
-                    ? Optional.of(types) : Optional.empty();
+            return types.parameters().size() <= mm.methodTypeSymbol().parameterCount() ? types : null;
         } catch (IllegalArgumentException _) {
-            return Optional.empty();
+            return null;
         }
     }
 
@@ -258,9 +283,10 @@ public final class ClassFileScanner {
         var type = fieldType(fm, members.classParameters());
         var accessFlags = fm.flags().flagsMask();
         var annotations = extractAnnotations(fm);
-        var typeAnnotations = members.typeAnnotations().read(fm,
-                annotation -> annotation.targetInfo().targetType() == TypeAnnotation.TargetType.FIELD
-                        ? TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.FIELD, 0, type) : null);
+        List<TypeAnnotationInfo> typeAnnotations = !TypeAnnotationReader.hasTypeAnnotations(fm) ? List.of()
+                : members.typeAnnotations().read(fm,
+                        annotation -> annotation.targetInfo().targetType() == TypeAnnotation.TargetType.FIELD
+                                ? TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.FIELD, 0, type) : null);
         return new FieldInfo(name, type, accessFlags, annotations, typeAnnotations);
     }
 
@@ -268,34 +294,42 @@ public final class ClassFileScanner {
         var name = mm.methodName().stringValue();
         var methodType = mm.methodTypeSymbol();
         var generic = methodTypes(mm, members.classParameters());
-        var returnType = generic.map(ClassTypeParameters.MethodTypes::result)
-                .orElseGet(() -> parseTypeFromDesc(methodType.returnType()));
-        var genericParameters = generic.map(ClassTypeParameters.MethodTypes::parameters).orElse(null);
+        var returnType = generic != null ? generic.result() : parseTypeFromDesc(methodType.returnType());
+        var genericParameters = generic != null ? generic.parameters() : null;
         var layout = ParameterLayout.of(mm, members, genericParameters == null ? -1 : genericParameters.size());
         var parameters = buildParameters(mm, methodType, genericParameters, layout);
         // The thrown types as the method declares them, when its signature names them: a type variable among them,
         // which the Exceptions attribute erases (BUG-20261117-52).
-        var exceptionTypes = generic.map(ClassTypeParameters.MethodTypes::exceptions)
-                .filter(declared -> !declared.isEmpty())
-                .orElseGet(() -> extractExceptionTypes(mm));
+        var exceptionTypes = generic != null && !generic.exceptions().isEmpty() ? generic.exceptions()
+                : extractExceptionTypes(mm);
         var accessFlags = mm.flags().flagsMask();
         var annotations = extractAnnotations(mm);
         var defaultValue = extractDefaultValue(mm);
         List<TypeAnnotationInfo> typeAnnotations = List.of();
         var components = compactComponents(mm, members);
         if (components.isPresent() || TypeAnnotationReader.hasTypeAnnotations(mm)) {
-            var typeParameters = generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(List.of());
-            var methodParameters = mm.findAttribute(Attributes.signature())
-                    .map(signature -> signature.asMethodSignature().typeParameters()).orElse(List.of());
-            var shape = new MethodShape(ConstantDescs.INIT_NAME.equals(name) ? members.receiver() : returnType,
-                    parameters.stream().map(ParameterInfo::type).toList(), layout.mandated(), exceptionTypes,
-                    typeParameters,
-                    methodParameters, members.receiver());
-            typeAnnotations = components.map(found -> compactTypeAnnotations(mm, members, found, shape))
-                    .orElseGet(() -> members.typeAnnotations().read(mm, annotation -> placed(annotation, shape)));
+            var shape = methodShape(mm, members, generic, returnType, parameters, layout.mandated(), exceptionTypes);
+            typeAnnotations = components.isPresent() ? compactTypeAnnotations(mm, members, components.get(), shape)
+                    : members.typeAnnotations().read(mm, annotation -> placed(annotation, shape));
         }
         return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,
-                generic.map(ClassTypeParameters.MethodTypes::typeParameters).orElse(null), typeAnnotations);
+                generic != null ? generic.typeParameters() : null, typeAnnotations);
+    }
+
+    /** The types of {@code mm} its type annotations can be on; {@code generic}: those its signature declares. */
+    private static MethodShape methodShape(MethodModel mm, Members members, ClassTypeParameters.MethodTypes generic,
+            TypeInfo returnType, List<ParameterInfo> parameters, int offset, List<TypeInfo> exceptionTypes) {
+        List<TypeVariable> typeParameters = generic != null ? generic.typeParameters() : List.of();
+        var signature = mm.findAttribute(Attributes.signature());
+        List<Signature.TypeParam> declared = signature.isPresent()
+                ? signature.get().asMethodSignature().typeParameters() : List.of();
+        var parameterTypes = new ArrayList<TypeInfo>(parameters.size());
+        for (var parameter : parameters) {
+            parameterTypes.add(parameter.type());
+        }
+        boolean constructor = ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue());
+        return new MethodShape(constructor ? members.receiver() : returnType, parameterTypes, offset,
+                exceptionTypes, typeParameters, declared, members.receiver());
     }
 
     /**
@@ -317,10 +351,19 @@ public final class ClassFileScanner {
                 return Optional.empty();
             }
         }
-        var parameters = mm.findAttribute(Attributes.methodParameters()).map(MethodParametersAttribute::parameters)
-                .orElse(List.of());
-        return Optional.of(components).filter(_ -> parameters.size() == components.size() && parameters.stream()
-                .allMatch(parameter -> (parameter.flagsMask() & ClassFile.ACC_MANDATED) != 0));
+        var attribute = mm.findAttribute(Attributes.methodParameters());
+        List<MethodParameterInfo> parameters = attribute.isPresent() ? attribute.get().parameters() : List.of();
+        return parameters.size() == components.size() && allMandated(parameters) ? Optional.of(components)
+                : Optional.empty();
+    }
+
+    private static boolean allMandated(List<MethodParameterInfo> parameters) {
+        for (var parameter : parameters) {
+            if ((parameter.flagsMask() & ClassFile.ACC_MANDATED) == 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -420,11 +463,9 @@ public final class ClassFileScanner {
                 boolean bridge = (mm.flags().flagsMask() & ClassFile.ACC_BRIDGE) != 0;
                 return bridge ? new ParameterLayout(count, 0, 0) : DECLARED;
             }
-            var attribute = mm.findAttribute(Attributes.methodParameters())
-                    .filter(parameters -> parameters.parameters().size() == count);
+            var attribute = methodParameters(mm, count);
             if (attribute.isPresent()) {
-                return marked(attribute.get().parameters().stream().mapToInt(MethodParameterInfo::flagsMask)
-                        .toArray(), position -> isOuterInstance(mm, members, position));
+                return marked(attribute.get().parameters(), mm, members);
             }
             if (members.enumClass()) {
                 return new ParameterLayout(Math.min(ENUM_CONSTRUCTOR_PREFIX, count), 0, 0);
@@ -450,10 +491,25 @@ public final class ClassFileScanner {
          * {@code val$name}, and passes them last to the constructor.
          */
         private static int capturedValues(MethodModel mm) {
-            return (int) mm.parent().stream().flatMap(owner -> owner.fields().stream())
-                    .filter(field -> (field.flags().flagsMask() & ClassFile.ACC_SYNTHETIC) != 0
-                            && field.fieldName().stringValue().startsWith(CAPTURED_FIELD_PREFIX))
-                    .count();
+            var owner = mm.parent();
+            if (owner.isEmpty()) {
+                return 0;
+            }
+            int captured = 0;
+            for (var field : owner.get().fields()) {
+                if ((field.flags().flagsMask() & ClassFile.ACC_SYNTHETIC) != 0
+                        && field.fieldName().stringValue().startsWith(CAPTURED_FIELD_PREFIX)) {
+                    captured++;
+                }
+            }
+            return captured;
+        }
+
+        /** The {@code MethodParameters} attribute of {@code mm}, when it names {@code count} parameters. */
+        private static Optional<MethodParametersAttribute> methodParameters(MethodModel mm, int count) {
+            var attribute = mm.findAttribute(Attributes.methodParameters());
+            return attribute.isPresent() && attribute.get().parameters().size() == count ? attribute
+                    : Optional.empty();
         }
 
         /**
@@ -461,19 +517,21 @@ public final class ClassFileScanner {
          * instance after the first ones, mandated. Javac marks other parameters mandated too, which the source
          * declares implicitly and a {@code Signature} names: every parameter of a record's compact constructor, the
          * name of an enum's {@code valueOf}. Those are the method's own, numbered from 0 by the {@code Signature} and
-         * the type annotations, so only a mandated parameter {@code outer} tells the outer instance counts
-         * (BUG-20261118-32).
+         * the type annotations, so only a mandated parameter that {@link #isOuterInstance is the outer instance}
+         * counts (BUG-20261118-32).
          */
-        private static ParameterLayout marked(int[] flags, IntPredicate outer) {
+        private static ParameterLayout marked(List<MethodParameterInfo> parameters, MethodModel mm,
+                Members members) {
+            int count = parameters.size();
             int skipped = 0;
-            while (skipped < flags.length && isOnly(flags[skipped], ClassFile.ACC_SYNTHETIC)) {
+            while (skipped < count && isOnly(parameters.get(skipped).flagsMask(), ClassFile.ACC_SYNTHETIC)) {
                 skipped++;
             }
-            int mandated = skipped < flags.length && (flags[skipped] & ClassFile.ACC_MANDATED) != 0
-                    && outer.test(skipped) ? 1 : 0;
+            int mandated = skipped < count && (parameters.get(skipped).flagsMask() & ClassFile.ACC_MANDATED) != 0
+                    && isOuterInstance(mm, members, skipped) ? 1 : 0;
             int trailing = 0;
-            while (trailing < flags.length - skipped - mandated
-                    && isOnly(flags[flags.length - 1 - trailing], ClassFile.ACC_SYNTHETIC)) {
+            while (trailing < count - skipped - mandated
+                    && isOnly(parameters.get(count - 1 - trailing).flagsMask(), ClassFile.ACC_SYNTHETIC)) {
                 trailing++;
             }
             return new ParameterLayout(skipped, mandated, trailing);
@@ -493,8 +551,9 @@ public final class ClassFileScanner {
          */
         private static boolean isOuterInstance(MethodModel mm, Members members, int position) {
             var type = mm.methodTypeSymbol();
+            var owner = mm.parent();
             return ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue()) && position < type.parameterCount()
-                    && mm.parent().flatMap(owner -> owner.findAttribute(Attributes.record())).isEmpty()
+                    && (owner.isEmpty() || owner.get().findAttribute(Attributes.record()).isEmpty())
                     && (members.typeAnnotations().isInnerMember(members.className())
                             || type.parameterType(position).equals(members.enclosingClass()));
         }
@@ -549,41 +608,64 @@ public final class ClassFileScanner {
     private static List<String> extractParameterNames(MethodModel mm) {
         for (var attr : mm.attributes()) {
             if (attr instanceof MethodParametersAttribute mpa) {
-                return mpa.parameters().stream()
-                        .map(p -> p.name().map(Utf8Entry::stringValue).orElse(null))
-                        .toList();
+                return parameterNames(mpa);
             }
         }
         return List.of();
+    }
+
+    /** The names {@code attribute} gives the parameters, {@code null} for one it does not name. */
+    private static List<String> parameterNames(MethodParametersAttribute attribute) {
+        var names = new ArrayList<String>(attribute.parameters().size());
+        for (var parameter : attribute.parameters()) {
+            var name = parameter.name();
+            names.add(name.isPresent() ? name.get().stringValue() : null);
+        }
+        return Collections.unmodifiableList(names);
     }
 
     private static List<List<AnnotationInfo>> extractParameterAnnotations(MethodModel mm) {
         for (var attr : mm.attributes()) {
             if (attr instanceof RuntimeVisibleParameterAnnotationsAttribute rvpaa) {
-                return rvpaa.parameterAnnotations().stream()
-                        .map(annots -> annots.stream().map(ClassFileScanner::buildAnnotationInfo).toList())
-                        .toList();
+                return parameterAnnotations(rvpaa);
             }
         }
         return List.of();
     }
 
+    private static List<List<AnnotationInfo>> parameterAnnotations(
+            RuntimeVisibleParameterAnnotationsAttribute attribute) {
+        var all = new ArrayList<List<AnnotationInfo>>(attribute.parameterAnnotations().size());
+        for (var declared : attribute.parameterAnnotations()) {
+            var annotations = new ArrayList<AnnotationInfo>(declared.size());
+            addAnnotations(declared, annotations);
+            all.add(Collections.unmodifiableList(annotations));
+        }
+        return Collections.unmodifiableList(all);
+    }
+
     private static List<TypeInfo> extractExceptionTypes(MethodModel mm) {
         for (var attr : mm.attributes()) {
             if (attr instanceof ExceptionsAttribute ea) {
-                return ea.exceptions().stream()
-                        .map(ce -> (TypeInfo) new ClassType(DotName.fromInternal(ce.asInternalName())))
-                        .toList();
+                return exceptionTypes(ea);
             }
         }
         return List.of();
+    }
+
+    private static List<TypeInfo> exceptionTypes(ExceptionsAttribute attribute) {
+        var types = new ArrayList<TypeInfo>(attribute.exceptions().size());
+        for (var ce : attribute.exceptions()) {
+            types.add(new ClassType(DotName.fromInternal(ce.asInternalName())));
+        }
+        return Collections.unmodifiableList(types);
     }
 
     private static List<AnnotationInfo> extractAnnotations(FieldModel fm) {
         var annotations = new ArrayList<AnnotationInfo>();
         for (var attr : fm.attributes()) {
             if (attr instanceof RuntimeVisibleAnnotationsAttribute rvaa) {
-                rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
+                addAnnotations(rvaa.annotations(), annotations);
             }
         }
         return annotations;
@@ -593,13 +675,19 @@ public final class ClassFileScanner {
         var annotations = new ArrayList<AnnotationInfo>();
         for (var attr : mm.attributes()) {
             if (attr instanceof RuntimeVisibleAnnotationsAttribute rvaa) {
-                rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
+                addAnnotations(rvaa.annotations(), annotations);
             }
         }
         return annotations;
     }
 
-    private static AnnotationInfo buildAnnotationInfo(java.lang.classfile.Annotation ann) {
+    private static void addAnnotations(List<java.lang.classfile.Annotation> read, List<AnnotationInfo> annotations) {
+        for (var annotation : read) {
+            annotations.add(buildAnnotationInfo(annotation));
+        }
+    }
+
+    static AnnotationInfo buildAnnotationInfo(java.lang.classfile.Annotation ann) {
         var name = DotName.fromDescriptor(ann.classSymbol().descriptorString());
         var members = new LinkedHashMap<String, io.vidocq.vauban.indexer.model.AnnotationValue>();
         for (var element : ann.elements()) {
@@ -640,9 +728,17 @@ public final class ClassFileScanner {
                     new io.vidocq.vauban.indexer.model.AnnotationValue.AnnotationVal(
                             buildAnnotationInfo(a.annotation()));
             case java.lang.classfile.AnnotationValue.OfArray arr ->
-                    new io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal(
-                            arr.values().stream().map(ClassFileScanner::buildAnnotationValue).toList());
+                    new io.vidocq.vauban.indexer.model.AnnotationValue.ArrayVal(arrayValues(arr));
         };
+    }
+
+    private static List<io.vidocq.vauban.indexer.model.AnnotationValue> arrayValues(
+            java.lang.classfile.AnnotationValue.OfArray array) {
+        var values = new ArrayList<io.vidocq.vauban.indexer.model.AnnotationValue>(array.values().size());
+        for (var value : array.values()) {
+            values.add(buildAnnotationValue(value));
+        }
+        return Collections.unmodifiableList(values);
     }
 
     static TypeInfo parseTypeFromDesc(ClassDesc desc) {

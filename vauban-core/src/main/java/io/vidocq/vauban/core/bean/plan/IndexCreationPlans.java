@@ -88,13 +88,23 @@ public final class IndexCreationPlans {
         for (var type : hierarchy.get()) {
             for (var method : methods(type)) {
                 var member = method(type, method);
-                result.removeIf(m -> m.name().equals(member.name()) && m.parameters().equals(member.parameters()));
+                removeSameSignature(result, member);
                 if (has(method.annotations(), annotation)) {
                     result.add(member);
                 }
             }
         }
         return Optional.of(List.copyOf(result));
+    }
+
+    /** Removes the callbacks of {@code callbacks} with the name and the parameter types of {@code member}. */
+    private static void removeSameSignature(List<Member> callbacks, Member member) {
+        for (var it = callbacks.iterator(); it.hasNext(); ) {
+            var callback = it.next();
+            if (callback.name().equals(member.name()) && callback.parameters().equals(member.parameters())) {
+                it.remove();
+            }
+        }
     }
 
     private static Optional<List<ClassInfo>> hierarchySuperFirst(ClassInfo leaf, VaubanIndex index) {
@@ -139,7 +149,13 @@ public final class IndexCreationPlans {
     }
 
     private static List<MethodInfo> methods(ClassInfo type) {
-        return type.methods().stream().filter(m -> !m.isConstructor() && !m.isStaticInitializer()).toList();
+        var methods = new ArrayList<MethodInfo>();
+        for (var m : type.methods()) {
+            if (!m.isConstructor() && !m.isStaticInitializer()) {
+                methods.add(m);
+            }
+        }
+        return methods;
     }
 
     private static Member method(ClassInfo type, MethodInfo method) {
@@ -149,7 +165,9 @@ public final class IndexCreationPlans {
     /** The erased parameter types, as {@code Method.getParameterTypes()} gives them, in descriptor form. */
     static String parameters(MethodInfo method) {
         var sb = new StringBuilder("(");
-        method.parameters().forEach(p -> sb.append(descriptor(p.type())));
+        for (var p : method.parameters()) {
+            sb.append(descriptor(p.type()));
+        }
         return sb.append(')').toString();
     }
 
@@ -175,6 +193,11 @@ public final class IndexCreationPlans {
     }
 
     private static boolean has(List<io.vidocq.vauban.indexer.model.AnnotationInfo> annotations, DotName name) {
-        return annotations.stream().anyMatch(a -> a.name().equals(name));
+        for (var a : annotations) {
+            if (a.name().equals(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

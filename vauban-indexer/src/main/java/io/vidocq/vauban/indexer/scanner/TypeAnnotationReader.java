@@ -19,7 +19,6 @@
  */
 package io.vidocq.vauban.indexer.scanner;
 
-import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Step;
@@ -32,7 +31,6 @@ import java.lang.classfile.ClassModel;
 import java.lang.classfile.TypeAnnotation;
 import java.lang.classfile.TypeAnnotation.TypePathComponent;
 import java.lang.classfile.attribute.InnerClassInfo;
-import java.lang.classfile.attribute.RuntimeVisibleTypeAnnotationsAttribute;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -59,23 +57,16 @@ final class TypeAnnotationReader {
     private static final TypeInfo OBJECT = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
 
     private final ClassModel model;
-    private final Function<java.lang.classfile.Annotation, AnnotationInfo> annotations;
     /** The {@code InnerClasses} entries of the class file by binary name, read the first time a type needs them. */
     private Map<DotName, InnerClassInfo> entries;
 
-    private TypeAnnotationReader(ClassModel model,
-            Function<java.lang.classfile.Annotation, AnnotationInfo> annotations) {
+    private TypeAnnotationReader(ClassModel model) {
         this.model = model;
-        this.annotations = annotations;
     }
 
-    /**
-     * A reader for the members of {@code model}, which reads an annotation with {@code annotations}. It reads nothing
-     * until an element with type annotations asks.
-     */
-    static TypeAnnotationReader of(ClassModel model,
-            Function<java.lang.classfile.Annotation, AnnotationInfo> annotations) {
-        return new TypeAnnotationReader(model, annotations);
+    /** A reader for the members of {@code model}. It reads nothing until an element with type annotations asks. */
+    static TypeAnnotationReader of(ClassModel model) {
+        return new TypeAnnotationReader(model);
     }
 
     /** Whether {@code element} has type annotations: an element without them needs no reading at all. */
@@ -86,8 +77,12 @@ final class TypeAnnotationReader {
     private Map<DotName, InnerClassInfo> entries() {
         if (entries == null) {
             entries = new HashMap<>();
-            model.findAttribute(Attributes.innerClasses()).ifPresent(attribute -> attribute.classes().forEach(
-                    inner -> entries.put(DotName.fromInternal(inner.innerClass().asInternalName()), inner)));
+            var attribute = model.findAttribute(Attributes.innerClasses());
+            if (attribute.isPresent()) {
+                for (var inner : attribute.get().classes()) {
+                    entries.put(entryName(inner), inner);
+                }
+            }
         }
         return entries;
     }
@@ -110,8 +105,7 @@ final class TypeAnnotationReader {
         var seen = new HashSet<DotName>();
         var entry = entries().get(name);
         while (entry != null && !isStatic(entry) && entry.outerClass().isPresent() && seen.add(entryName(entry))) {
-            entry = entry.outerClass().map(outer -> entries().get(DotName.fromInternal(outer.asInternalName())))
-                    .orElse(null);
+            entry = entries().get(DotName.fromInternal(entry.outerClass().orElseThrow().asInternalName()));
         }
         return seen.size();
     }
@@ -126,18 +120,27 @@ final class TypeAnnotationReader {
 
     /** The type annotations of an element, each placed by {@code place}; empty when it has none. */
     List<TypeAnnotationInfo> read(AttributedElement element, Function<TypeAnnotation, Placed> place) {
-        var found = element.findAttribute(Attributes.runtimeVisibleTypeAnnotations())
-                .map(RuntimeVisibleTypeAnnotationsAttribute::annotations).orElse(List.of());
         var result = new ArrayList<TypeAnnotationInfo>();
-        for (var annotation : found) {
+        var found = element.findAttribute(Attributes.runtimeVisibleTypeAnnotations());
+        if (found.isEmpty()) {
+            return result;
+        }
+        for (var annotation : found.get().annotations()) {
             var placed = place.apply(annotation);
             if (placed != null) {
-                path(annotation.targetPath(), placed.type()).ifPresent(path -> result.add(new TypeAnnotationInfo(
-                        placed.target(), placed.index(), placed.boundIndex(), path,
-                        annotations.apply(annotation.annotation()))));
+                add(annotation, placed, result);
             }
         }
         return result;
+    }
+
+    /** Adds {@code annotation} to {@code result}, when its path is one the type of {@code placed} has. */
+    private void add(TypeAnnotation annotation, Placed placed, List<TypeAnnotationInfo> result) {
+        var path = path(annotation.targetPath(), placed.type());
+        if (path.isPresent()) {
+            result.add(new TypeAnnotationInfo(placed.target(), placed.index(), placed.boundIndex(), path.get(),
+                    ClassFileScanner.buildAnnotationInfo(annotation.annotation())));
+        }
     }
 
     /**

@@ -37,13 +37,20 @@ import java.util.TreeMap;
  * <p>The body of a bean's method and the debug information of a class file do not count (see {@link ClassChecksums}):
  * a {@code jlink} image, whose classes lost their debug information, keeps the record of its build
  * (BUG-20261113-17). The models are the ones the builder scans to index the classes, so the fingerprint costs a pass
- * over what is already in memory. The beans the embedding runtime adds itself are left out by the builder, which
- * never gives them here.
+ * over what is already in memory, and only when it is read: a start without a record, which freezes nothing, never
+ * computes it (vauban#347). The beans the embedding runtime adds itself are left out by the builder, which never
+ * gives them here.
  */
 final class DeploymentFingerprint {
 
-    private final TreeMap<String, String> classes = new TreeMap<>();
+    /** A class to fingerprint: its model, null without a class file, and the class file of an extension. */
+    private record Source(ClassInfo model, byte[] classFile) {
+    }
+
+    private final TreeMap<String, Source> sources = new TreeMap<>();
     private final String settings;
+    /** The checksum of each class, by name, computed at the first read. */
+    private TreeMap<String, String> classes;
 
     /** @param settings the builder settings that change what discovery finds, as one line */
     DeploymentFingerprint(String settings) {
@@ -55,22 +62,19 @@ final class DeploymentFingerprint {
      * the resources, which counts by its name.
      */
     void add(String className, ClassInfo model) {
-        classes.put(className, model == null ? "-" : Long.toHexString(ClassChecksums.ofModel(model)));
+        sources.put(className, new Source(model, null));
+        classes = null;
     }
 
     /** One build compatible extension, by what the extensions see of it and by its code. */
     void addExtension(String className, ClassInfo model, byte[] classFile) {
-        if (model == null) {
-            add(className, null);
-        } else {
-            classes.put(className, Long.toHexString(ClassChecksums.ofModel(model)) + "+"
-                    + Long.toHexString(ClassChecksums.ofCode(classFile)));
-        }
+        sources.put(className, new Source(model, model == null ? null : classFile));
+        classes = null;
     }
 
     /** What the fingerprint is computed from, for the record to keep and a refused start to compare. */
     FrozenExtensions.Deployment deployment() {
-        return new FrozenExtensions.Deployment(settings, classes);
+        return new FrozenExtensions.Deployment(settings, classes());
     }
 
     /** The fingerprint: the same for the same classes whatever the order they came in. */
@@ -78,11 +82,34 @@ final class DeploymentFingerprint {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(settings.getBytes(StandardCharsets.UTF_8));
-            classes.forEach((name, checksum) ->
-                    digest.update(("\n" + name + ":" + checksum).getBytes(StandardCharsets.UTF_8)));
+            for (var entry : classes().entrySet()) {
+                digest.update(("\n" + entry.getKey() + ":" + entry.getValue()).getBytes(StandardCharsets.UTF_8));
+            }
             return HexFormat.of().formatHex(digest.digest(), 0, 16);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is a required algorithm of every Java platform", e);
         }
+    }
+
+    private TreeMap<String, String> classes() {
+        var computed = classes;
+        if (computed == null) {
+            computed = new TreeMap<>();
+            for (var entry : sources.entrySet()) {
+                computed.put(entry.getKey(), checksum(entry.getValue()));
+            }
+            classes = computed;
+        }
+        return computed;
+    }
+
+    private static String checksum(Source source) {
+        if (source.model() == null) {
+            return "-";
+        }
+        String model = Long.toHexString(ClassChecksums.ofModel(source.model()));
+        return source.classFile() == null
+                ? model
+                : model + "+" + Long.toHexString(ClassChecksums.ofCode(source.classFile()));
     }
 }

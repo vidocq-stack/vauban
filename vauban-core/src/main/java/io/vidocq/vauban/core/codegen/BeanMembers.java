@@ -84,10 +84,25 @@ public final class BeanMembers {
      * which depends on the classes the JVM loaded before: a generated class built in that order would
      * differ from one build to the next (BUG-20261007-02).
      */
-    public static final Comparator<Method> STABLE_ORDER = Comparator.comparing(Method::getName)
-            .thenComparing(m -> descriptorOf(m.getParameterTypes()))
-            .thenComparing(m -> m.getReturnType().descriptorString())
-            .thenComparing(m -> m.getDeclaringClass().getName());
+    public static final Comparator<Method> STABLE_ORDER = new StableOrder();
+
+    private static final class StableOrder implements Comparator<Method> {
+
+        @Override
+        public int compare(Method a, Method b) {
+            int order = a.getName().compareTo(b.getName());
+            if (order == 0) {
+                order = descriptorOf(a.getParameterTypes()).compareTo(descriptorOf(b.getParameterTypes()));
+            }
+            if (order == 0) {
+                order = a.getReturnType().descriptorString().compareTo(b.getReturnType().descriptorString());
+            }
+            if (order == 0) {
+                order = a.getDeclaringClass().getName().compareTo(b.getDeclaringClass().getName());
+            }
+            return order;
+        }
+    }
 
     /** A copy of {@code methods} in {@link #STABLE_ORDER}. */
     public static Method[] inStableOrder(Method[] methods) {

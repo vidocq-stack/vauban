@@ -186,11 +186,13 @@ public final class VaubanContainer implements AutoCloseable {
      * such as a REST runtime sort bean classes by annotation without reflection.
      */
     public java.util.Optional<java.util.Set<String>> indexedAnnotationNames(Class<?> type) {
-        return index.getClassByName(DotName.of(type.getName())).map(info -> {
-            java.util.Set<String> names = new java.util.HashSet<>();
-            for (var annotation : info.annotations()) names.add(annotation.name().toString());
-            return java.util.Set.copyOf(names);
-        });
+        var info = index.getClassByName(DotName.of(type.getName()));
+        if (info.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (var annotation : info.get().annotations()) names.add(annotation.name().toString());
+        return java.util.Optional.of(java.util.Set.copyOf(names));
     }
 
     /**
@@ -211,8 +213,18 @@ public final class VaubanContainer implements AutoCloseable {
      * container: a managed bean without an {@code @Inject} constructor, as {@code createManagedBeanFactory} decides.
      */
     boolean builtBySuppliedFactory(BeanDescriptor descriptor) {
-        return suppliedFactories.get().contains(descriptor.beanClass()) && descriptor.injectionPoints().stream()
-                .noneMatch(ip -> ip.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER);
+        return suppliedFactories.get().contains(descriptor.beanClass()) && constructorParameters(descriptor) == 0;
+    }
+
+    /** How many parameters the {@code @Inject} constructor of the bean takes; none without such a constructor. */
+    private static int constructorParameters(BeanDescriptor descriptor) {
+        int count = 0;
+        for (var ip : descriptor.injectionPoints()) {
+            if (ip.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private final java.util.concurrent.atomic.AtomicReference<Set<DotName>> suppliedFactories =
@@ -239,10 +251,12 @@ public final class VaubanContainer implements AutoCloseable {
         this.frozenInterfaceProxies = frozenInterfaceProxies(frozenSynthetic);
         this.index = index;
         this.qualifierMatcher = qualifierMatcher;
-        this.managedDescriptors = descriptors.stream()
-                .filter(d -> d.kind() == BeanDescriptor.BeanKind.MANAGED)
-                .collect(java.util.stream.Collectors.toMap(BeanDescriptor::beanClass, d -> d,
-                        (first, second) -> first));
+        this.managedDescriptors = new java.util.HashMap<>();
+        for (var descriptor : descriptors) {
+            if (descriptor.kind() == BeanDescriptor.BeanKind.MANAGED) {
+                managedDescriptors.putIfAbsent(descriptor.beanClass(), descriptor);
+            }
+        }
         this.vaubanLookup = vaubanLookup;
         this.componentProviders = componentProviders == null
                 ? new ComponentProviders(List.of()) : componentProviders;
@@ -255,10 +269,10 @@ public final class VaubanContainer implements AutoCloseable {
         this.requestContext = new RequestContext();
         this.dependentContext = new DependentContext();
 
-        contexts.computeIfAbsent(jakarta.enterprise.context.ApplicationScoped.class, k -> new java.util.ArrayList<>()).add(applicationContext);
-        contexts.computeIfAbsent(jakarta.enterprise.context.RequestScoped.class, k -> new java.util.ArrayList<>()).add(requestContext);
-        contexts.computeIfAbsent(jakarta.enterprise.context.Dependent.class, k -> new java.util.ArrayList<>()).add(dependentContext);
-        contexts.computeIfAbsent(jakarta.inject.Singleton.class, k -> new java.util.ArrayList<>()).add(applicationContext);
+        addBuiltInContext(jakarta.enterprise.context.ApplicationScoped.class, applicationContext);
+        addBuiltInContext(jakarta.enterprise.context.RequestScoped.class, requestContext);
+        addBuiltInContext(jakarta.enterprise.context.Dependent.class, dependentContext);
+        addBuiltInContext(jakarta.inject.Singleton.class, applicationContext);
 
         for (var descriptor : descriptors) {
             var factory = createFactory(descriptor, factories);
@@ -917,20 +931,28 @@ public final class VaubanContainer implements AutoCloseable {
         beanLifecycle.callPostConstruct(instance, descriptor, ctx);
     }
 
+    /** Registers a context of the container itself, while the constructor runs: no other thread sees the map yet. */
+    private void addBuiltInContext(Class<? extends Annotation> scope, Context context) {
+        var scoped = contexts.get(scope);
+        if (scoped == null) {
+            scoped = new java.util.ArrayList<>();
+            contexts.put(scope, scoped);
+        }
+        scoped.add(context);
+    }
+
     private BeanFactory<?> createManagedBeanFactory(BeanDescriptor descriptor,
                                                      Map<DotName, BeanFactory<?>> factories) {
         // Check if bean has @Inject constructor parameters
-        var ctorParams = descriptor.injectionPoints().stream()
-                .filter(ip -> ip.kind() == InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER)
-                .toList();
+        int ctorParams = constructorParameters(descriptor);
 
-        if (ctorParams.isEmpty()) {
+        if (ctorParams == 0) {
             // No @Inject constructor — use the pre-registered factory (no-arg constructor)
             return factories.get(descriptor.beanClass());
         }
 
         // Has @Inject constructor — create a factory that resolves parameters
-        return new InjectionConstructorFactory(descriptor, ctorParams.size());
+        return new InjectionConstructorFactory(descriptor, ctorParams);
     }
 
     /**

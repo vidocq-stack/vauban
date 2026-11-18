@@ -35,7 +35,6 @@ import java.lang.classfile.constantpool.PoolEntry;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.TreeMap;
-import java.util.function.Consumer;
 import java.util.zip.CRC32C;
 
 /**
@@ -69,7 +68,10 @@ final class ClassChecksums {
         crc.update(classFile, 0, endOfConstantPool(classFile));
         for (MethodModel method : ClassFile.of().parse(classFile).methods()) {
             update(crc, method.methodName().stringValue() + method.methodType().stringValue());
-            method.findAttribute(Attributes.code()).ifPresent(code -> updateCode(crc, code));
+            var code = method.findAttribute(Attributes.code());
+            if (code.isPresent()) {
+                updateCode(crc, code.get());
+            }
         }
         return crc.getValue();
     }
@@ -133,14 +135,26 @@ final class ClassChecksums {
             text.append('C');
             name(type.name());
             name(type.superName());
-            list(type.interfaces(), this::name);
+            open(type.interfaces());
+            for (DotName name : type.interfaces()) {
+                name(name);
+            }
+            text.append(']');
             number(type.accessFlags());
-            list(type.fields(), this::field);
-            list(type.methods(), this::method);
-            list(type.annotations(), this::annotation);
+            open(type.fields());
+            for (FieldInfo field : type.fields()) {
+                field(field);
+            }
+            text.append(']');
+            open(type.methods());
+            for (MethodInfo method : type.methods()) {
+                method(method);
+            }
+            text.append(']');
+            annotations(type.annotations());
             string(type.kind().name());
             string(type.simpleName());
-            list(type.typeParameters(), this::type);
+            types(type.typeParameters());
             text.append(type.genericMembers() ? 'g' : 'e');
             // The supertypes as the class declares them, which the extensions see (BUG-20261117-22), count where they
             // differ from the raw ones: a class without a type argument there keeps the checksum it had before the
@@ -148,7 +162,7 @@ final class ClassChecksums {
             if (hasTypeArguments(type)) {
                 text.append('S');
                 type(type.genericSuperclass());
-                list(type.genericInterfaces(), this::type);
+                types(type.genericInterfaces());
             }
             typeAnnotations(type.typeAnnotations());
             // The class enclosing an inner member class, whose constructors the extensions now see a receiver type
@@ -174,21 +188,32 @@ final class ClassChecksums {
                 return;
             }
             text.append('Y');
-            list(annotations, annotation -> {
+            open(annotations);
+            for (TypeAnnotationInfo annotation : annotations) {
                 string(annotation.target().name());
                 number(annotation.index());
                 number(annotation.boundIndex());
-                list(annotation.path(), step -> {
+                open(annotation.path());
+                for (var step : annotation.path()) {
                     string(step.kind().name());
                     number(step.typeArgumentIndex());
-                });
+                }
+                text.append(']');
                 annotation(annotation.annotation());
-            });
+            }
+            text.append(']');
         }
 
         private static boolean hasTypeArguments(ClassInfo type) {
-            return type.genericSuperclass() instanceof TypeInfo.ParameterizedType
-                    || type.genericInterfaces().stream().anyMatch(TypeInfo.ParameterizedType.class::isInstance);
+            if (type.genericSuperclass() instanceof TypeInfo.ParameterizedType) {
+                return true;
+            }
+            for (TypeInfo implemented : type.genericInterfaces()) {
+                if (implemented instanceof TypeInfo.ParameterizedType) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void field(FieldInfo field) {
@@ -196,7 +221,7 @@ final class ClassChecksums {
             string(field.name());
             type(field.type());
             number(field.accessFlags());
-            list(field.annotations(), this::annotation);
+            annotations(field.annotations());
             typeAnnotations(field.typeAnnotations());
         }
 
@@ -205,15 +230,17 @@ final class ClassChecksums {
             string(method.name());
             type(method.returnType());
             // A parameter by its type and annotations: its name comes from debug information jlink strips.
-            list(method.parameters(), parameter -> {
+            open(method.parameters());
+            for (var parameter : method.parameters()) {
                 type(parameter.type());
-                list(parameter.annotations(), this::annotation);
-            });
-            list(method.exceptionTypes(), this::type);
+                annotations(parameter.annotations());
+            }
+            text.append(']');
+            types(method.exceptionTypes());
             number(method.accessFlags());
-            list(method.annotations(), this::annotation);
+            annotations(method.annotations());
             value(method.defaultValue());
-            list(method.typeParameters(), this::type);
+            types(method.typeParameters());
             typeAnnotations(method.typeAnnotations());
         }
 
@@ -222,10 +249,10 @@ final class ClassChecksums {
             name(annotation.name());
             var members = new TreeMap<>(annotation.members());
             text.append(members.size()).append('{');
-            members.forEach((member, value) -> {
-                string(member);
-                value(value);
-            });
+            for (var member : members.entrySet()) {
+                string(member.getKey());
+                value(member.getValue());
+            }
             text.append('}');
         }
 
@@ -258,7 +285,11 @@ final class ClassChecksums {
                 case AnnotationValue.AnnotationVal(var nested) -> annotation(nested);
                 case AnnotationValue.ArrayVal(var values) -> {
                     text.append('[');
-                    list(values, this::value);
+                    open(values);
+                    for (AnnotationValue element : values) {
+                        value(element);
+                    }
+                    text.append(']');
                 }
             }
         }
@@ -279,7 +310,7 @@ final class ClassChecksums {
                 case TypeInfo.ParameterizedType(var rawType, var typeArguments, var owner) -> {
                     text.append('Q');
                     name(rawType);
-                    list(typeArguments, this::type);
+                    types(typeArguments);
                     // The enclosing type the bean types now read (BUG-20261117-21): any other type keeps its checksum
                     if (owner != null) {
                         text.append('W');
@@ -289,7 +320,7 @@ final class ClassChecksums {
                 case TypeInfo.TypeVariable(var name, var bounds) -> {
                     text.append('T');
                     string(name);
-                    list(bounds, this::type);
+                    types(bounds);
                 }
                 case TypeInfo.WildcardType(var upperBound, var lowerBound) -> {
                     text.append('?');
@@ -315,9 +346,24 @@ final class ClassChecksums {
             text.append(number).append(';');
         }
 
-        private <T> void list(List<T> items, Consumer<? super T> each) {
+        /** Opens a list, which says its size; the caller writes its items, then {@code ]}. */
+        private void open(List<?> items) {
             text.append(items.size()).append('[');
-            items.forEach(each);
+        }
+
+        private void annotations(List<AnnotationInfo> annotations) {
+            open(annotations);
+            for (AnnotationInfo annotation : annotations) {
+                annotation(annotation);
+            }
+            text.append(']');
+        }
+
+        private void types(List<? extends TypeInfo> types) {
+            open(types);
+            for (TypeInfo type : types) {
+                type(type);
+            }
             text.append(']');
         }
 

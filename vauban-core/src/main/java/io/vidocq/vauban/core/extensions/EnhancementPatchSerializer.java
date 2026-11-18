@@ -145,20 +145,31 @@ public final class EnhancementPatchSerializer {
             Map<DotName, List<AnnotationInfo>> patch, VaubanIndex index) {
         var configs = new LinkedHashMap<DotName, VaubanClassConfig>();
         var lookup = new IndexLookup(index);
-        patch.forEach((target, annotations) -> {
-            var parts = target.value().split("#", -1);
-            if (parts.length == 1) return;
-            var name = owner(target);
-            var indexed = index.getClassByName(name);
-            if (indexed.isEmpty()) return;
-            var indexedClass = indexed.get();
-            var config = configs.computeIfAbsent(name, _ -> new VaubanClassConfig(
-                    new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexedClass, lookup)));
-            restore(config, parts, target, annotations, lookup);
-        });
+        for (var entry : patch.entrySet()) {
+            restoreMember(configs, entry.getKey(), entry.getValue(), index, lookup);
+        }
         var result = new LinkedHashMap<DotName, List<VaubanClassConfig>>();
-        configs.forEach((name, config) -> result.put(name, List.of(config)));
+        for (var entry : configs.entrySet()) {
+            result.put(entry.getKey(), List.of(entry.getValue()));
+        }
         return result;
+    }
+
+    /** Restores the member addition {@code target} names, when it names a member of a class the index holds. */
+    private static void restoreMember(Map<DotName, VaubanClassConfig> configs, DotName target,
+            List<AnnotationInfo> annotations, VaubanIndex index, IndexLookup lookup) {
+        var parts = target.value().split("#", -1);
+        if (parts.length == 1) return;
+        var name = owner(target);
+        var indexed = index.getClassByName(name);
+        if (indexed.isEmpty()) return;
+        var config = configs.get(name);
+        if (config == null) {
+            config = new VaubanClassConfig(
+                    new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexed.get(), lookup));
+            configs.put(name, config);
+        }
+        restore(config, parts, target, annotations, lookup);
     }
 
     /**
@@ -183,7 +194,9 @@ public final class EnhancementPatchSerializer {
 
     private static void add(jakarta.enterprise.inject.build.compatible.spi.DeclarationConfig member,
             List<AnnotationInfo> annotations, IndexLookup lookup) {
-        annotations.forEach(annotation -> member.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
+        for (AnnotationInfo annotation : annotations) {
+            member.addAnnotation(new VaubanAnnotationInfo(annotation, lookup));
+        }
     }
 
     /** The class a key of {@code size} parts names last: the one that declares the inherited member. */
@@ -195,17 +208,23 @@ public final class EnhancementPatchSerializer {
     }
 
     private static VaubanFieldConfig field(VaubanClassConfig config, String name, String declaring, DotName target) {
-        return config.getFieldConfigs().stream()
-                .filter(candidate -> candidate.info().name().equals(name) && declaredBy(
-                        candidate.info().declaringClass(), config.isConfigurable(candidate), declaring))
-                .findFirst().orElseThrow(() -> new IllegalStateException("Enhanced field is missing: " + target));
+        for (var candidate : config.getFieldConfigs()) {
+            if (candidate.info().name().equals(name) && declaredBy(
+                    candidate.info().declaringClass(), config.isConfigurable(candidate), declaring)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Enhanced field is missing: " + target);
     }
 
     private static VaubanMethodConfig method(VaubanClassConfig config, String key, String declaring, DotName target) {
-        return config.getMethodConfigs().stream()
-                .filter(candidate -> methodKey(candidate).equals(key) && declaredBy(
-                        candidate.info().declaringClass(), config.isConfigurable(candidate), declaring))
-                .findFirst().orElseThrow(() -> new IllegalStateException("Enhanced method is missing: " + target));
+        for (var candidate : config.getMethodConfigs()) {
+            if (methodKey(candidate).equals(key) && declaredBy(
+                    candidate.info().declaringClass(), config.isConfigurable(candidate), declaring)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Enhanced method is missing: " + target);
     }
 
     /**
@@ -262,8 +281,11 @@ public final class EnhancementPatchSerializer {
     /** {@link #methodKey(VaubanMethodConfig)} of a method of the language model. */
     static String methodKey(jakarta.enterprise.lang.model.declarations.MethodInfo method) {
         var name = method.isConstructor() ? "<init>" : method.name();
-        return name + InjectionPointInfo.methodDescriptor(method.parameters().stream()
-                .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList());
+        var types = new ArrayList<io.vidocq.vauban.indexer.model.TypeInfo>(method.parameters().size());
+        for (var parameter : method.parameters()) {
+            types.add(LangModelTypeMapper.toIndexType(parameter.type()));
+        }
+        return name + InjectionPointInfo.methodDescriptor(types);
     }
 
     /**

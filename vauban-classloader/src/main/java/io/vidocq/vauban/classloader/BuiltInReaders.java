@@ -79,8 +79,12 @@ final class BuiltInReaders {
         public List<String> classEntries() throws IOException {
             try (Stream<Path> walk = Files.walk(root)) {
                 var entries = new ArrayList<String>();
-                walk.filter(p -> p.getFileName().toString().endsWith(".class"))
-                        .forEach(p -> entries.add(root.relativize(p).toString().replace('\\', '/')));
+                for (var it = walk.iterator(); it.hasNext(); ) {
+                    var p = it.next();
+                    if (p.getFileName().toString().endsWith(".class")) {
+                        entries.add(root.relativize(p).toString().replace('\\', '/'));
+                    }
+                }
                 return entries;
             }
         }
@@ -151,10 +155,14 @@ final class BuiltInReaders {
 
         @Override
         public List<String> classEntries() throws IOException {
-            return jar().versionedStream()
-                    .filter(entry -> !entry.isDirectory() && entry.getName().endsWith(".class"))
-                    .map(JarEntry::getName)
-                    .toList();
+            var entries = new ArrayList<String>();
+            for (var it = jar().versionedStream().iterator(); it.hasNext(); ) {
+                JarEntry entry = it.next();
+                if (!entry.isDirectory() && entry.getName().endsWith(".class")) {
+                    entries.add(entry.getName());
+                }
+            }
+            return java.util.Collections.unmodifiableList(entries);
         }
 
         @Override

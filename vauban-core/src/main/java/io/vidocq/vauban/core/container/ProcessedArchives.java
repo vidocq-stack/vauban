@@ -69,8 +69,16 @@ final class ProcessedArchives {
         }
         var codeSource = clazz.getProtectionDomain().getCodeSource();
         var url = codeSource == null ? null : codeSource.getLocation();
-        return url != null
-                && answers.computeIfAbsent(url.toExternalForm(), spelling -> locations.contains(location(spelling)));
+        if (url == null) {
+            return false;
+        }
+        var spelling = url.toExternalForm();
+        var answer = answers.get(spelling);
+        if (answer == null) {
+            answer = locations.contains(location(spelling));
+            answers.put(spelling, answer);
+        }
+        return answer;
     }
 
     boolean isEmpty() {

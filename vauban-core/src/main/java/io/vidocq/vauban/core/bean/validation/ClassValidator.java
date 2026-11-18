@@ -29,6 +29,7 @@ import io.vidocq.vauban.indexer.model.ParameterInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -88,9 +89,12 @@ public final class ClassValidator {
         boolean isBean = hasBeanDefiningAnnotation(classInfo, index);
 
         // Multiple @Inject constructors
-        long injectCtorCount = classInfo.methods().stream()
-                .filter(m -> m.isConstructor() && hasAnn(m.annotations(), INJECT))
-                .count();
+        int injectCtorCount = 0;
+        for (var m : classInfo.methods()) {
+            if (m.isConstructor() && hasAnn(m.annotations(), INJECT)) {
+                injectCtorCount++;
+            }
+        }
         if (injectCtorCount > 1) {
             errors.add(PREFIX_BEAN + className + " has multiple @Inject constructors");
         }
@@ -139,23 +143,28 @@ public final class ClassValidator {
     /** Multiple scopes, declared directly or contributed by conflicting stereotypes. */
     private static void validateScopes(ClassInfo classInfo, VaubanIndex index, String className,
             List<String> errors) {
-        var scopes = classInfo.annotations().stream()
-                .filter(a -> isScopeAnnotation(a.name(), index))
-                .toList();
+        int scopes = 0;
+        for (var a : classInfo.annotations()) {
+            if (isScopeAnnotation(a.name(), index)) {
+                scopes++;
+            }
+        }
         // Also count scopes from stereotypes
         var stereotypeScopes = new ArrayList<DotName>();
         for (var ann : classInfo.annotations()) {
             if (isStereotype(ann.name(), index)) {
-                index.getClassByName(ann.name())
-                        .ifPresent(stereoClass -> addScopes(stereoClass, index, stereotypeScopes));
+                var stereoClass = index.getClassByName(ann.name());
+                if (stereoClass.isPresent()) {
+                    addScopes(stereoClass.get(), index, stereotypeScopes);
+                }
             }
         }
         // Direct scopes
-        if (scopes.size() > 1) {
+        if (scopes > 1) {
             errors.add(PREFIX_BEAN + className + " has multiple scope annotations");
         }
         // Stereotype scope conflicts (multiple different scopes from stereotypes, no direct scope)
-        if (scopes.isEmpty() && stereotypeScopes.stream().distinct().count() > 1) {
+        if (scopes == 0 && new HashSet<>(stereotypeScopes).size() > 1) {
             errors.add(PREFIX_BEAN + className + " has conflicting scope stereotypes");
         }
     }
@@ -193,8 +202,10 @@ public final class ClassValidator {
             List<String> errors) {
         // Interceptor must be @Dependent
         boolean hasDependentScope = classInfo.hasAnnotation(DEPENDENT);
-        boolean hasAnyScope = classInfo.annotations().stream()
-                .anyMatch(a -> isScopeAnnotation(a.name(), index));
+        boolean hasAnyScope = false;
+        for (var a : classInfo.annotations()) {
+            hasAnyScope = hasAnyScope || isScopeAnnotation(a.name(), index);
+        }
         if (hasAnyScope && !hasDependentScope) {
             errors.add(PREFIX_INTERCEPTOR + className + " must be @Dependent");
         }
@@ -248,10 +259,9 @@ public final class ClassValidator {
 
     /** An {@code @Observes(notifyObserver = IF_EXISTS)} parameter. */
     private static boolean isConditionalObserver(List<AnnotationInfo> parameterAnnotations) {
-        var observesAnn = parameterAnnotations.stream()
-                .filter(a -> a.name().equals(OBSERVES)).findFirst();
-        return observesAnn.isPresent()
-                && observesAnn.get().member("notifyObserver") instanceof AnnotationValue.EnumVal ev
+        var observesAnn = findAnn(parameterAnnotations, OBSERVES);
+        return observesAnn != null
+                && observesAnn.member("notifyObserver") instanceof AnnotationValue.EnumVal ev
                 && "IF_EXISTS".equals(ev.constantName());
     }
 
@@ -291,7 +301,7 @@ public final class ClassValidator {
         // Producer method return type validation — done via reflection in VaubanContainer.Builder
 
         // Disposer method that is also @Inject (initializer)
-        boolean hasDisposes = params.stream().anyMatch(p -> hasAnn(p.annotations(), DISPOSES));
+        boolean hasDisposes = countAnnotated(params, DISPOSES) > 0;
         if (hasDisposes && hasAnn(method.annotations(), INJECT)) {
             errors.add("Disposer method " + location + " cannot also be an initializer method");
         }
@@ -318,18 +328,12 @@ public final class ClassValidator {
     /** A method is at most one of an observer, a producer and a disposer, each with one such parameter. */
     private static void validateMethodRoles(MethodInfo method, String location, List<String> errors) {
         var params = method.parameters();
-        long observesCount = params.stream()
-                .filter(p -> hasAnn(p.annotations(), OBSERVES))
-                .count();
-        long asyncObservesCount = params.stream()
-                .filter(p -> hasAnn(p.annotations(), OBSERVES_ASYNC))
-                .count();
-        long totalObservesCount = observesCount + asyncObservesCount;
+        int observesCount = countAnnotated(params, OBSERVES);
+        int asyncObservesCount = countAnnotated(params, OBSERVES_ASYNC);
+        int totalObservesCount = observesCount + asyncObservesCount;
         boolean hasObserves = totalObservesCount > 0;
         boolean hasProduces = hasAnn(method.annotations(), PRODUCES);
-        long disposesCount = params.stream()
-                .filter(p -> hasAnn(p.annotations(), DISPOSES))
-                .count();
+        int disposesCount = countAnnotated(params, DISPOSES);
         boolean hasDisposes = disposesCount > 0;
 
         // @Observes + @Produces
@@ -406,12 +410,11 @@ public final class ClassValidator {
     }
 
     private static boolean hasNamedWithoutValue(ParameterInfo param) {
-        var namedAnn = param.annotations().stream()
-                .filter(a -> a.name().equals(NAMED)).findFirst();
-        if (namedAnn.isEmpty()) {
+        var namedAnn = findAnn(param.annotations(), NAMED);
+        if (namedAnn == null) {
             return false;
         }
-        var nameValue = namedAnn.get().member(MEMBER_VALUE);
+        var nameValue = namedAnn.member(MEMBER_VALUE);
         return nameValue == null
                 || (nameValue instanceof AnnotationValue.StringVal(var name) && name.isEmpty());
     }
@@ -474,7 +477,7 @@ public final class ClassValidator {
 
         if (priorityValues.size() > 1) {
             // Check if they all have the same value
-            boolean allSame = priorityValues.stream().distinct().count() == 1;
+            boolean allSame = new HashSet<>(priorityValues).size() == 1;
             if (!allSame) {
                 errors.add(PREFIX_BEAN + className + " has conflicting @Priority values from stereotypes: "
                         + stereotypesWithPriority);
@@ -509,7 +512,28 @@ public final class ClassValidator {
     }
 
     private static boolean hasAnn(List<AnnotationInfo> annotations, DotName name) {
-        return annotations.stream().anyMatch(a -> a.name().equals(name));
+        return findAnn(annotations, name) != null;
+    }
+
+    /** The first annotation of type {@code name}, or {@code null}. */
+    private static AnnotationInfo findAnn(List<AnnotationInfo> annotations, DotName name) {
+        for (var a : annotations) {
+            if (a.name().equals(name)) {
+                return a;
+            }
+        }
+        return null;
+    }
+
+    /** How many of {@code params} carry the annotation {@code name}. */
+    private static int countAnnotated(List<ParameterInfo> params, DotName name) {
+        int count = 0;
+        for (var p : params) {
+            if (hasAnn(p.annotations(), name)) {
+                count++;
+            }
+        }
+        return count;
     }
 
 }

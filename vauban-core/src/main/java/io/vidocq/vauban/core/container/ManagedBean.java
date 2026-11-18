@@ -185,7 +185,11 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         if ((callerContext != null ? callerContext : creationalContext)
                 instanceof io.vidocq.vauban.core.context.CreationalContextImpl<?> cc) {
             // Remove ourselves from the dependent list before releasing to avoid recursive destroy
-            cc.getDependentInstances().removeIf(dep -> dep.instance() == instance);
+            for (var dependents = cc.getDependentInstances().iterator(); dependents.hasNext();) {
+                if (dependents.next().instance() == instance) {
+                    dependents.remove();
+                }
+            }
             cc.release();
         }
     }

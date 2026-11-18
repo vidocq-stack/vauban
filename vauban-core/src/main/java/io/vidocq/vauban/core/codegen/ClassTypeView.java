@@ -31,6 +31,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -103,9 +104,11 @@ public record ClassTypeView(Class<?> type, Class<?> root) implements TypeView {
     @Override
     public List<TypeView.Member> methods() {
         var bindings = bindings();
-        return Arrays.stream(BeanMembers.inStableOrder(type.getDeclaredMethods()))
-                .<TypeView.Member>map(m -> new MethodMember(m, bindings))
-                .toList();
+        var members = new ArrayList<TypeView.Member>();
+        for (var m : BeanMembers.inStableOrder(type.getDeclaredMethods())) {
+            members.add(new MethodMember(m, bindings));
+        }
+        return List.copyOf(members);
     }
 
     /**
@@ -154,7 +157,11 @@ public record ClassTypeView(Class<?> type, Class<?> root) implements TypeView {
 
     @Override
     public List<TypeView.Member> constructors() {
-        return Arrays.stream(type.getDeclaredConstructors()).<TypeView.Member>map(ConstructorMember::new).toList();
+        var members = new ArrayList<TypeView.Member>();
+        for (var constructor : type.getDeclaredConstructors()) {
+            members.add(new ConstructorMember(constructor));
+        }
+        return List.copyOf(members);
     }
 
     private static EnumSet<Flag> flags(int modifiers) {
@@ -179,9 +186,11 @@ public record ClassTypeView(Class<?> type, Class<?> root) implements TypeView {
     }
 
     private static List<String> names(Executable executable) {
-        return Arrays.stream(executable.getParameterTypes())
-                .map(ClassTypeView::typeName)
-                .toList();
+        var names = new ArrayList<String>();
+        for (var parameterType : executable.getParameterTypes()) {
+            names.add(typeName(parameterType));
+        }
+        return List.copyOf(names);
     }
 
     private static String typeName(Class<?> type) {

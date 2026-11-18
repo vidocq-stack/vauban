@@ -84,10 +84,9 @@ public final class DeploymentValidator {
      * The name of the first final method a subclass of the named class would have to override
      * ({@link io.vidocq.vauban.core.proxy.ForwardedMethods#firstFinalMethod}), read where the index walk of a
      * proxyable class stops at a superclass the index does not hold: by reflection by default, on the compiler's
-     * elements in the processor (BUG-20261118-19).
+     * elements in the processor (BUG-20261118-19). {@code null} stands for the default.
      */
-    private java.util.function.Function<String, java.util.Optional<String>> finalMethodBeyondTheIndex =
-            DeploymentValidator::finalMethodByReflection;
+    private java.util.function.Function<String, java.util.Optional<String>> finalMethodBeyondTheIndex;
 
     /** Reflection-only fallback — proxyability checks are blind to unloadable classes. */
     public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver) {
@@ -127,8 +126,8 @@ public final class DeploymentValidator {
     /** The first final method of the named class, read by reflection; empty for a class this loader cannot load. */
     private static java.util.Optional<String> finalMethodByReflection(String className) {
         try {
-            return java.util.Optional.ofNullable(firstOverridableFinalMethod(DeploymentClasses.load(className)))
-                    .map(java.lang.reflect.Method::getName);
+            var method = firstOverridableFinalMethod(DeploymentClasses.load(className));
+            return method == null ? java.util.Optional.empty() : java.util.Optional.of(method.getName());
         } catch (ClassNotFoundException _) {
             return java.util.Optional.empty();
         }
@@ -201,9 +200,11 @@ public final class DeploymentValidator {
         if (bean.kind() != BeanDescriptor.BeanKind.MANAGED) {
             return false;
         }
-        if (index != null && index.getClassByName(bean.beanClass())
-                .filter(indexed -> indexed.hasAnnotation(INTERCEPTOR_ANNOTATION)).isPresent()) {
-            return true;
+        if (index != null) {
+            var indexed = index.getClassByName(bean.beanClass());
+            if (indexed.isPresent() && indexed.get().hasAnnotation(INTERCEPTOR_ANNOTATION)) {
+                return true;
+            }
         }
         try {
             var clazz = DeploymentClasses.load(bean.beanClass().value());
@@ -286,14 +287,16 @@ public final class DeploymentValidator {
                     && bean.kind() != BeanDescriptor.BeanKind.PRODUCER_FIELD)) {
             return;
         }
-        bean.types().stream()
-                .filter(type -> type instanceof TypeInfo.PrimitiveType
-                        || (type instanceof TypeInfo.ClassType(var name) && PRIMITIVE_NAMES.contains(name.value())))
-                .findFirst()
-                .ifPresent(type -> errors.add(new ValidationError(
+        for (var type : bean.types()) {
+            if (type instanceof TypeInfo.PrimitiveType
+                    || (type instanceof TypeInfo.ClassType(var name) && PRIMITIVE_NAMES.contains(name.value()))) {
+                errors.add(new ValidationError(
                         ValidationError.Kind.DEPLOYMENT_ERROR,
                         "Normal-scoped producer " + bean.id() + " has primitive return type " + type,
-                        bean)));
+                        bean));
+                break;
+            }
+        }
     }
 
     /**
@@ -339,9 +342,8 @@ public final class DeploymentValidator {
      * io.vidocq.vauban.core.proxy.ForwardedMethods#firstFinalMethod}). {@code null} when there is none.
      */
     public static java.lang.reflect.Method firstOverridableFinalMethod(Class<?> clazz) {
-        return io.vidocq.vauban.core.proxy.ForwardedMethods.firstFinalMethod(ClassTypeView.of(clazz))
-                .map(ClassTypeView::method)
-                .orElse(null);
+        var member = io.vidocq.vauban.core.proxy.ForwardedMethods.firstFinalMethod(ClassTypeView.of(clazz));
+        return member.isPresent() ? ClassTypeView.method(member.get()) : null;
     }
 
     /** CDI spec: Duplicate bean names (two non-alternative beans with the same EL name). */
@@ -349,15 +351,23 @@ public final class DeploymentValidator {
         var nameMap = new java.util.HashMap<String, List<BeanDescriptor>>();
         for (var bean : beans) {
             if (bean.name() != null) {
-                nameMap.computeIfAbsent(bean.name(), k -> new ArrayList<>()).add(bean);
+                var named = nameMap.get(bean.name());
+                if (named == null) {
+                    named = new ArrayList<>();
+                    nameMap.put(bean.name(), named);
+                }
+                named.add(bean);
             }
         }
         for (var entry : nameMap.entrySet()) {
             // CDI spec: ambiguous EL name is only an error if there are non-alternative beans
             // or multiple enabled alternatives with the same priority
-            var nonAlternatives = entry.getValue().stream()
-                    .filter(b -> !b.isAlternative())
-                    .toList();
+            var nonAlternatives = new ArrayList<BeanDescriptor>();
+            for (var b : entry.getValue()) {
+                if (!b.isAlternative()) {
+                    nonAlternatives.add(b);
+                }
+            }
             if (nonAlternatives.size() > 1) {
                 errors.add(new ValidationError(
                         ValidationError.Kind.AMBIGUOUS_DEPENDENCY,
@@ -400,12 +410,16 @@ public final class DeploymentValidator {
             try {
                 var clazz = DeploymentClasses.load(interceptor.interceptorClass().value());
                 var constructors = clazz.getDeclaredConstructors();
-                long injectCtors = java.util.Arrays.stream(constructors)
-                        .filter(ctor -> ctor.isAnnotationPresent(jakarta.inject.Inject.class))
-                        .count();
-                boolean hasNoArgCtor = java.util.Arrays.stream(constructors)
-                        .anyMatch(ctor -> ctor.getParameterCount() == 0
-                                && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers()));
+                int injectCtors = 0;
+                boolean hasNoArgCtor = false;
+                for (var ctor : constructors) {
+                    if (ctor.isAnnotationPresent(jakarta.inject.Inject.class)) {
+                        injectCtors++;
+                    }
+                    if (ctor.getParameterCount() == 0 && !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())) {
+                        hasNoArgCtor = true;
+                    }
+                }
                 String problem = null;
                 if (injectCtors > 1) {
                     problem = " declares more than one @Inject constructor";
@@ -488,10 +502,17 @@ public final class DeploymentValidator {
             return;
         }
 
-        boolean hasExplicitCtor = info.methods().stream().anyMatch(m -> m.isConstructor());
-        boolean hasProxyEntryCtor = !hasExplicitCtor // implicit no-arg constructor
-                || info.methods().stream().anyMatch(m -> m.isConstructor() && !m.isPrivate()
+        boolean hasExplicitCtor = false;
+        boolean hasEntryCtor = false;
+        for (var m : info.methods()) {
+            if (m.isConstructor()) {
+                hasExplicitCtor = true;
+                hasEntryCtor = hasEntryCtor || (!m.isPrivate()
                         && (m.parameters().isEmpty() || ClientProxyShape.isProxyLinkConstructor(m)));
+            }
+        }
+        boolean hasProxyEntryCtor = !hasExplicitCtor // implicit no-arg constructor
+                || hasEntryCtor;
         if (!hasProxyEntryCtor && !settledByLoadTimeWeaving(info.name().value())) {
             // Distinct kind: the vauban-maven-plugin can weave the marker at process-classes,
             // so the processor downgrades this one to a warning (final members it cannot fix).
@@ -516,8 +537,12 @@ public final class DeploymentValidator {
             var next = superName == null || index == null
                     ? null : index.getClassByName(superName).orElse(null);
             if (next == null && superName != null && !JAVA_LANG_OBJECT.equals(superName.value())) {
-                finalMethodBeyondTheIndex.apply(info.name().value())
-                        .ifPresent(name -> errors.add(finalMethodError(bean, name, contextBean)));
+                var finalMethod = finalMethodBeyondTheIndex == null
+                        ? finalMethodByReflection(info.name().value())
+                        : finalMethodBeyondTheIndex.apply(info.name().value());
+                if (finalMethod.isPresent()) {
+                    errors.add(finalMethodError(bean, finalMethod.get(), contextBean));
+                }
                 return;
             }
             current = next;
@@ -551,9 +576,11 @@ public final class DeploymentValidator {
                     contextBean));
             return;
         }
-        boolean hasProxyEntryCtor = java.util.Arrays.stream(clazz.getDeclaredConstructors())
-                .anyMatch(ctor -> !java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())
-                        && (ctor.getParameterCount() == 0 || ClientProxyShape.isProxyLinkConstructor(ctor)));
+        boolean hasProxyEntryCtor = false;
+        for (var ctor : clazz.getDeclaredConstructors()) {
+            hasProxyEntryCtor = hasProxyEntryCtor || (!java.lang.reflect.Modifier.isPrivate(ctor.getModifiers())
+                    && (ctor.getParameterCount() == 0 || ClientProxyShape.isProxyLinkConstructor(ctor)));
+        }
         if (!hasProxyEntryCtor && !settledByLoadTimeWeaving(clazz.getName())) {
             errors.add(new ValidationError(
                     ValidationError.Kind.UNPROXYABLE_BEAN,

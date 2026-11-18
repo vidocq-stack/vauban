@@ -47,7 +47,7 @@ final class ClassFileDeclarations implements Function<DotName, Optional<ClassInf
 
     /** @param loader the deployment's loader; {@code null} for the system class loader */
     ClassFileDeclarations(ClassLoader loader) {
-        this.loader = Objects.requireNonNullElseGet(loader, ClassLoader::getSystemClassLoader);
+        this.loader = loader != null ? loader : ClassLoader.getSystemClassLoader();
     }
 
     @Override

@@ -41,7 +41,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * The application layer of the universal loader (study §6, work package M2): the
@@ -77,10 +76,11 @@ public final class VaubanLayerFactory {
     public static AppLayer createAppLayer(List<Path> appPaths, ModuleLayer parentLayer,
             ClassLoader parentLoader, PluginContext pluginContext) throws IOException {
         var finder = promotingServices(
-                withPluginPackages(ModuleFinder.of(appPaths.toArray(Path[]::new)), pluginContext), parentLayer);
-        var roots = finder.findAll().stream()
-                .map(ref -> ref.descriptor().name())
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+                withPluginPackages(ModuleFinder.of(appPaths.toArray(new Path[0])), pluginContext), parentLayer);
+        var roots = new LinkedHashSet<String>();
+        for (var reference : finder.findAll()) {
+            roots.add(reference.descriptor().name());
+        }
         if (roots.isEmpty()) {
             throw new IOException("No Java module found on the application path " + appPaths);
         }
@@ -92,9 +92,10 @@ public final class VaubanLayerFactory {
         Configuration configuration = parentLayer.configuration()
                 .resolveAndBind(finder, ModuleFinder.of(), roots);
         for (var resolved : configuration.modules()) {
-            resolved.reference().location()
-                    .flatMap(VaubanLayerFactory::archiveOf)
-                    .ifPresent(path -> archives.put(resolved.name(), path));
+            Path archive = archiveOrNull(resolved.reference());
+            if (archive != null) {
+                archives.put(resolved.name(), archive);
+            }
         }
 
         var loader = VaubanClassLoader.forLayer(archives, parentLoader, pluginContext);
@@ -167,10 +168,10 @@ public final class VaubanLayerFactory {
         keepWhatKeptModulesRead(configuration, kept, queue);
         var paths = new LinkedHashSet<Path>();
         for (var resolved : configuration.modules()) {
-            if (kept.contains(resolved)) continue;
-            resolved.reference().location()
-                    .flatMap(VaubanLayerFactory::archiveOf)
-                    .ifPresent(paths::add);
+            Path archive = kept.contains(resolved) ? null : archiveOrNull(resolved.reference());
+            if (archive != null) {
+                paths.add(archive);
+            }
         }
         return List.copyOf(paths);
     }
@@ -247,14 +248,17 @@ public final class VaubanLayerFactory {
         return new ModuleFinder() {
             @Override
             public Optional<ModuleReference> find(String name) {
-                return base.find(name).map(reference -> promoteServices(reference, base, parent));
+                var found = base.find(name);
+                return found.isPresent() ? Optional.of(promoteServices(found.get(), base, parent)) : found;
             }
 
             @Override
             public Set<ModuleReference> findAll() {
-                return base.findAll().stream()
-                        .map(reference -> promoteServices(reference, base, parent))
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                var all = new LinkedHashSet<ModuleReference>();
+                for (var reference : base.findAll()) {
+                    all.add(promoteServices(reference, base, parent));
+                }
+                return all;
             }
         };
     }
@@ -276,8 +280,7 @@ public final class VaubanLayerFactory {
 
         var merged = new LinkedHashMap<String, LinkedHashSet<String>>();
         for (var provides : descriptor.provides()) {
-            merged.computeIfAbsent(provides.service(), s -> new LinkedHashSet<>())
-                    .addAll(provides.providers());
+            providersOf(merged, provides.service()).addAll(provides.providers());
         }
         if (!mergeServiceFiles(merged, fromFiles, descriptor, base, parent)) {
             return reference;
@@ -312,12 +315,21 @@ public final class VaubanLayerFactory {
                     continue;
                 }
             }
-            var providers = merged.computeIfAbsent(service, s -> new LinkedHashSet<>());
-            if (addOwnProviders(providers, entry.getValue(), descriptor)) {
+            if (addOwnProviders(providersOf(merged, service), entry.getValue(), descriptor)) {
                 changed = true;
             }
         }
         return changed;
+    }
+
+    /** The providers of {@code service} in {@code merged}, an empty set added there when it has none yet. */
+    private static Set<String> providersOf(Map<String, LinkedHashSet<String>> merged, String service) {
+        var providers = merged.get(service);
+        if (providers == null) {
+            providers = new LinkedHashSet<>();
+            merged.put(service, providers);
+        }
+        return providers;
     }
 
     /**
@@ -348,17 +360,28 @@ public final class VaubanLayerFactory {
         var readable = new LinkedHashSet<>(descriptor.packages());
         var queue = new ArrayDeque<String>();
         queue.add("java.base");
-        descriptor.requires().forEach(r -> queue.add(r.name()));
+        for (var requires : descriptor.requires()) {
+            queue.add(requires.name());
+        }
         var seen = new LinkedHashSet<String>();
         while (!queue.isEmpty()) {
             var name = queue.poll();
-            if (seen.add(name)) {
-                base.find(name).map(ModuleReference::descriptor)
-                        .or(() -> parent.findModule(name).map(Module::getDescriptor))
-                        .ifPresent(module -> addReadPackages(module, descriptor.name(), readable, queue));
+            var module = seen.add(name) ? descriptorOf(name, base, parent) : null;
+            if (module != null) {
+                addReadPackages(module, descriptor.name(), readable, queue);
             }
         }
         return readable;
+    }
+
+    /** The descriptor of the module {@code name}, found in {@code base} or else in {@code parent}; {@code null}. */
+    private static ModuleDescriptor descriptorOf(String name, ModuleFinder base, ModuleLayer parent) {
+        var found = base.find(name);
+        if (found.isPresent()) {
+            return found.get().descriptor();
+        }
+        var module = parent.findModule(name);
+        return module.isPresent() ? module.get().getDescriptor() : null;
     }
 
     /**
@@ -391,27 +414,15 @@ public final class VaubanLayerFactory {
             throws IOException {
         var result = new LinkedHashMap<String, List<String>>();
         try (ModuleReader reader = reference.open()) {
-            List<String> serviceEntries = reader.list()
-                    .filter(e -> e.startsWith(SERVICES_PREFIX)
-                            && e.length() > SERVICES_PREFIX.length()
-                            && !e.endsWith("/"))
-                    .toList();
-            for (var entry : serviceEntries) {
+            for (var entry : serviceEntries(reader)) {
                 var service = entry.substring(SERVICES_PREFIX.length());
                 var buffer = reader.read(entry).orElse(null);
                 if (buffer == null) continue;
-                var impls = new ArrayList<String>();
+                List<String> impls;
                 try {
                     var bytes = new byte[buffer.remaining()];
                     buffer.get(bytes);
-                    new String(bytes, StandardCharsets.UTF_8)
-                            .lines()
-                            .map(line -> {
-                                int hash = line.indexOf('#');
-                                return (hash >= 0 ? line.substring(0, hash) : line).strip();
-                            })
-                            .filter(line -> !line.isEmpty())
-                            .forEach(impls::add);
+                    impls = providerNames(new String(bytes, StandardCharsets.UTF_8));
                 } finally {
                     reader.release(buffer);
                 }
@@ -421,6 +432,35 @@ public final class VaubanLayerFactory {
             }
         }
         return result;
+    }
+
+    /** The services files {@code reader} lists. */
+    private static List<String> serviceEntries(ModuleReader reader) throws IOException {
+        var entries = new ArrayList<String>();
+        try (var listed = reader.list()) {
+            for (var it = listed.iterator(); it.hasNext(); ) {
+                var entry = it.next();
+                if (entry.startsWith(SERVICES_PREFIX) && entry.length() > SERVICES_PREFIX.length()
+                        && !entry.endsWith("/")) {
+                    entries.add(entry);
+                }
+            }
+        }
+        return entries;
+    }
+
+    /** The provider names of a services file: one per line, without comments and blanks. */
+    private static List<String> providerNames(String content) {
+        var names = new ArrayList<String>();
+        for (var it = content.lines().iterator(); it.hasNext(); ) {
+            var line = it.next();
+            int hash = line.indexOf('#');
+            var name = (hash >= 0 ? line.substring(0, hash) : line).strip();
+            if (!name.isEmpty()) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     /**
@@ -434,29 +474,32 @@ public final class VaubanLayerFactory {
         return new ModuleFinder() {
             @Override
             public Optional<ModuleReference> find(String name) {
-                return base.find(name).map(reference -> withPluginPackages(reference, pluginContext));
+                var found = base.find(name);
+                return found.isPresent() ? Optional.of(withPluginPackages(found.get(), pluginContext)) : found;
             }
 
             @Override
             public Set<ModuleReference> findAll() {
-                return base.findAll().stream()
-                        .map(reference -> withPluginPackages(reference, pluginContext))
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                var all = new LinkedHashSet<ModuleReference>();
+                for (var reference : base.findAll()) {
+                    all.add(withPluginPackages(reference, pluginContext));
+                }
+                return all;
             }
         };
     }
 
     private static ModuleReference withPluginPackages(ModuleReference reference, PluginContext pluginContext) {
         var descriptor = reference.descriptor();
-        var archive = reference.location().flatMap(VaubanLayerFactory::archiveOf);
-        if (descriptor.isAutomatic() || archive.isEmpty()) {
+        Path archive = archiveOrNull(reference);
+        if (descriptor.isAutomatic() || archive == null) {
             return reference;
         }
         Set<String> packages;
         try {
-            packages = VaubanClassLoader.pluginPackages(archive.get(), pluginContext);
+            packages = VaubanClassLoader.pluginPackages(archive, pluginContext);
         } catch (IOException e) {
-            throw new UncheckedIOException("Cannot read the classes of " + archive.get(), e);
+            throw new UncheckedIOException("Cannot read the classes of " + archive, e);
         }
         if (descriptor.packages().containsAll(packages)) {
             return reference;
@@ -486,7 +529,10 @@ public final class VaubanLayerFactory {
     private static ModuleDescriptor rebuild(ModuleDescriptor descriptor,
             java.util.Map<String, LinkedHashSet<String>> provides, Set<String> packages) {
         var builder = ModuleDescriptor.newModule(descriptor.name(), descriptor.modifiers());
-        descriptor.rawVersion().ifPresent(builder::version);
+        var version = descriptor.rawVersion();
+        if (version.isPresent()) {
+            builder.version(version.get());
+        }
         for (var requires : descriptor.requires()) {
             builder.requires(requires);
         }
@@ -502,10 +548,21 @@ public final class VaubanLayerFactory {
             builder.uses(uses);
         }
         builder.packages(packages);
-        descriptor.mainClass().ifPresent(builder::mainClass);
-        provides.forEach((service, providers) ->
-                builder.provides(service, List.copyOf(providers)));
+        var mainClass = descriptor.mainClass();
+        if (mainClass.isPresent()) {
+            builder.mainClass(mainClass.get());
+        }
+        for (var entry : provides.entrySet()) {
+            builder.provides(entry.getKey(), List.copyOf(entry.getValue()));
+        }
         return builder.build();
+    }
+
+    /** The archive the module of {@code reference} can be read from, as {@link #archiveOf}; {@code null}. */
+    private static Path archiveOrNull(ModuleReference reference) {
+        var location = reference.location();
+        var archive = location.isPresent() ? archiveOf(location.get()) : Optional.<Path>empty();
+        return archive.isPresent() ? archive.get() : null;
     }
 
     /**

@@ -27,12 +27,11 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.IntFunction;
-import java.util.stream.IntStream;
 
 /**
  * Converts the member values of a live annotation into the index model, as the bytecode scan records
@@ -59,7 +58,10 @@ public final class AnnotationValues {
         AnnotationReflection.check("reading the members of", type.getName());
         var members = new LinkedHashMap<String, AnnotationValue>();
         for (var member : members(type)) {
-            read(member, annotation).ifPresent(value -> members.put(member.getName(), of(value)));
+            var value = read(member, annotation);
+            if (value.isPresent()) {
+                members.put(member.getName(), of(value.get()));
+            }
         }
         return new AnnotationInfo(DotName.of(type.getName()), members);
     }
@@ -97,21 +99,37 @@ public final class AnnotationValues {
             case long[] a -> arrayOf(a.length, i -> new AnnotationValue.LongVal(a[i]));
             case float[] a -> arrayOf(a.length, i -> new AnnotationValue.FloatVal(a[i]));
             case double[] a -> arrayOf(a.length, i -> new AnnotationValue.DoubleVal(a[i]));
-            case Object[] a -> arrayOf(a.length, i -> of(a[i]));
+            case Object[] a -> arrayOf(a);
             default -> throw new IllegalArgumentException("not an annotation member value: " + value.getClass().getName());
         };
     }
 
     /** The members an annotation type declares. */
     static List<Method> members(Class<?> annotationType) {
-        return Arrays.stream(annotationType.getDeclaredMethods())
-                .filter(method -> method.getParameterCount() == 0 && !Modifier.isStatic(method.getModifiers())
-                        && !method.isSynthetic())
-                .toList();
+        var members = new ArrayList<Method>();
+        for (var method : annotationType.getDeclaredMethods()) {
+            if (method.getParameterCount() == 0 && !Modifier.isStatic(method.getModifiers())
+                    && !method.isSynthetic()) {
+                members.add(method);
+            }
+        }
+        return List.copyOf(members);
+    }
+
+    private static AnnotationValue.ArrayVal arrayOf(Object[] items) {
+        var elements = new ArrayList<AnnotationValue>(items.length);
+        for (var item : items) {
+            elements.add(of(item));
+        }
+        return new AnnotationValue.ArrayVal(elements);
     }
 
     private static AnnotationValue.ArrayVal arrayOf(int length, IntFunction<AnnotationValue> element) {
-        return new AnnotationValue.ArrayVal(IntStream.range(0, length).mapToObj(element).toList());
+        var elements = new ArrayList<AnnotationValue>(length);
+        for (int i = 0; i < length; i++) {
+            elements.add(element.apply(i));
+        }
+        return new AnnotationValue.ArrayVal(elements);
     }
 
     private static Optional<Object> read(Method member, Annotation annotation) {

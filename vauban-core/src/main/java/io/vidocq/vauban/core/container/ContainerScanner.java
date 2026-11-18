@@ -139,10 +139,13 @@ final class ContainerScanner {
                 var url = urls.nextElement();
                 try (var reader = new java.io.BufferedReader(
                         new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
-                    reader.lines()
-                            .map(String::strip)
-                            .filter(line -> !line.isEmpty() && !line.startsWith("#"))
-                            .forEach(className -> tryAddBeanClass(className, cl));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        var className = line.strip();
+                        if (!className.isEmpty() && !className.startsWith("#")) {
+                            tryAddBeanClass(className, cl);
+                        }
+                    }
                 }
             }
         } catch (java.io.IOException e) {
@@ -173,13 +176,14 @@ final class ContainerScanner {
                 var url = urls.nextElement();
                 try (var reader = new java.io.BufferedReader(
                         new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
-                    reader.lines()
-                            .map(line -> {
-                                int hash = line.indexOf('#');
-                                return (hash >= 0 ? line.substring(0, hash) : line).strip();
-                            })
-                            .filter(line -> !line.isEmpty())
-                            .forEach(className -> tryAddBeanClass(className, cl));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        int hash = line.indexOf('#');
+                        var className = (hash >= 0 ? line.substring(0, hash) : line).strip();
+                        if (!className.isEmpty()) {
+                            tryAddBeanClass(className, cl);
+                        }
+                    }
                 }
             }
         } catch (java.io.IOException _) {

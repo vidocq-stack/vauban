@@ -31,6 +31,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -72,8 +73,11 @@ final class IndexPlans {
         if (index == null) {
             return Optional.empty();
         }
-        var plan = index.getClassByName(DotName.of(beanClass.getName()))
-                .flatMap(info -> IndexCreationPlans.injectionOrder(info, index));
+        var info = index.getClassByName(DotName.of(beanClass.getName()));
+        if (info.isEmpty()) {
+            return Optional.empty();
+        }
+        var plan = IndexCreationPlans.injectionOrder(info.get(), index);
         if (plan.isEmpty()) {
             return Optional.empty();
         }
@@ -89,21 +93,40 @@ final class IndexPlans {
         if (index == null) {
             return Optional.empty();
         }
-        return index.getClassByName(DotName.of(beanClass.getName()))
-                .flatMap(info -> IndexCreationPlans.lifecycleCallbacks(info, index, DotName.of(annotation.getName())))
-                .flatMap(plan -> resolve(beanClass, plan))
-                .map(members -> members.stream().map(Method.class::cast).toList());
+        var info = index.getClassByName(DotName.of(beanClass.getName()));
+        if (info.isEmpty()) {
+            return Optional.empty();
+        }
+        var plan = IndexCreationPlans.lifecycleCallbacks(info.get(), index, DotName.of(annotation.getName()));
+        if (plan.isEmpty()) {
+            return Optional.empty();
+        }
+        var members = resolve(beanClass, plan.get());
+        if (members.isEmpty()) {
+            return Optional.empty();
+        }
+        var methods = new ArrayList<Method>(members.get().size());
+        for (Member member : members.get()) {
+            methods.add((Method) member);
+        }
+        return Optional.of(Collections.unmodifiableList(methods));
     }
 
     /** An {@code @Enhancement} may have made a field injected: then the descriptor has a point the plan lacks. */
     private static boolean coversFieldPoints(List<Member> members, BeanDescriptor descriptor) {
-        long fieldPoints = descriptor.injectionPoints().stream()
-                .filter(p -> p.kind() == InjectionPointInfo.InjectionKind.FIELD)
-                .count();
-        long covered = members.stream()
-                .filter(Field.class::isInstance)
-                .filter(f -> QualifierHelper.fieldPoint(descriptor.injectionPoints(), (Field) f) != null)
-                .count();
+        int fieldPoints = 0;
+        for (InjectionPointInfo point : descriptor.injectionPoints()) {
+            if (point.kind() == InjectionPointInfo.InjectionKind.FIELD) {
+                fieldPoints++;
+            }
+        }
+        int covered = 0;
+        for (Member member : members) {
+            if (member instanceof Field field
+                    && QualifierHelper.fieldPoint(descriptor.injectionPoints(), field) != null) {
+                covered++;
+            }
+        }
         return covered == fieldPoints;
     }
 

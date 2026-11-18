@@ -102,9 +102,6 @@ public record TypeAnnotationInfo(Target target, int index, int boundIndex, List<
         }
     }
 
-    private static final Comparator<Step> STEP_ORDER = Comparator.comparing(Step::kind)
-            .thenComparingInt(Step::typeArgumentIndex);
-
     public TypeAnnotationInfo {
         Objects.requireNonNull(target);
         Objects.requireNonNull(annotation);
@@ -133,12 +130,17 @@ public record TypeAnnotationInfo(Target target, int index, int boundIndex, List<
 
     private static int comparePaths(List<Step> first, List<Step> second) {
         for (int i = 0; i < Math.min(first.size(), second.size()); i++) {
-            int compared = STEP_ORDER.compare(first.get(i), second.get(i));
+            int compared = compareSteps(first.get(i), second.get(i));
             if (compared != 0) {
                 return compared;
             }
         }
         return Integer.compare(first.size(), second.size());
+    }
+
+    private static int compareSteps(Step first, Step second) {
+        int kinds = first.kind().compareTo(second.kind());
+        return kinds != 0 ? kinds : Integer.compare(first.typeArgumentIndex(), second.typeArgumentIndex());
     }
 
     /** Whether the annotation is on the type {@code target} and {@code index} name, or inside it. */

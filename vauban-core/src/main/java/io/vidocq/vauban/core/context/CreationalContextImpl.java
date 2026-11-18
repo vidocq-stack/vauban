@@ -119,7 +119,9 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
             // The contexts of intercepted instances no dependent destruction took (BUG-20261118-36)
             var left = List.copyOf(intercepted.values());
             intercepted.clear();
-            left.forEach(CreationalContextImpl::release);
+            for (CreationalContextImpl<?> context : left) {
+                context.release();
+            }
             incompleteInstances.clear();
         } finally {
             releasing = false;

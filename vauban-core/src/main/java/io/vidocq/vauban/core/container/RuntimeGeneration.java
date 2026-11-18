@@ -66,13 +66,14 @@ final class RuntimeGeneration {
 
     private final Set<Generated> atBoot = new LinkedHashSet<>();
     private final Set<Generated> announced = ConcurrentHashMap.newKeySet();
+    /** Where a warning goes; {@code null} for the {@code System.Logger} of this class. */
     private final Consumer<String> warn;
     /** Guarded by {@link #atBoot}. */
     private boolean booted;
 
     /** Warns through the {@code System.Logger} of this class. */
     RuntimeGeneration() {
-        this(message -> LOG.log(System.Logger.Level.WARNING, message));
+        this(null);
     }
 
     RuntimeGeneration(Consumer<String> warn) {
@@ -92,7 +93,7 @@ final class RuntimeGeneration {
             }
         }
         if (announced.add(generated)) {
-            warn.accept(warning(List.of(generated), "now, after the boot"));
+            warn(warning(List.of(generated), "now, after the boot"));
         }
     }
 
@@ -105,7 +106,15 @@ final class RuntimeGeneration {
         }
         announced.addAll(generated);
         if (!generated.isEmpty()) {
-            warn.accept(warning(generated, "at boot"));
+            warn(warning(generated, "at boot"));
+        }
+    }
+
+    private void warn(String message) {
+        if (warn == null) {
+            LOG.log(System.Logger.Level.WARNING, message);
+        } else {
+            warn.accept(message);
         }
     }
 

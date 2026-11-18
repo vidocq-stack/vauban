@@ -88,7 +88,12 @@ public final class InterceptorManager {
 
     public void registerEnhancedBindings(String beanClassName, List<java.lang.annotation.Annotation> annotations) {
         if (annotations != null && !annotations.isEmpty()) {
-            enhancedBindings.computeIfAbsent(beanClassName, k -> new ArrayList<>()).addAll(annotations);
+            var bindings = enhancedBindings.get(beanClassName);
+            if (bindings == null) {
+                bindings = new ArrayList<>();
+                enhancedBindings.put(beanClassName, bindings);
+            }
+            bindings.addAll(annotations);
             // Boot-time, before any invocation — but a binding added after a chain was worked out
             // would make it stale, and nothing else would say so.
             chainCache.clear();
@@ -691,25 +696,24 @@ public final class InterceptorManager {
             List<java.lang.annotation.Annotation> beanBindings) {
         if (interceptorBindings.isEmpty()) return true;
         for (var interceptorBinding : interceptorBindings) {
-            var matchingBeanBindings = beanBindings.stream()
-                    .filter(b -> b.annotationType() == interceptorBinding.annotationType())
-                    .toList();
-            if (matchingBeanBindings.isEmpty()) {
-                return false; // Must match presence and members
-            }
-            
-            boolean matched = false;
-            for (var beanBinding : matchingBeanBindings) {
-                if (annotationMembersEqual(interceptorBinding, beanBinding)) {
-                    matched = true;
-                    break;
-                }
-            }
-            if (!matched) {
+            // Must match presence and members
+            if (!matchesOneOf(interceptorBinding, beanBindings)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /** Whether a bean binding of the type of {@code interceptorBinding} has its binding members. */
+    private boolean matchesOneOf(java.lang.annotation.Annotation interceptorBinding,
+            List<java.lang.annotation.Annotation> beanBindings) {
+        for (var beanBinding : beanBindings) {
+            if (beanBinding.annotationType() == interceptorBinding.annotationType()
+                    && annotationMembersEqual(interceptorBinding, beanBinding)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean bindingMembersMatchWherePresent(
@@ -718,12 +722,16 @@ public final class InterceptorManager {
         if (interceptorBindings.isEmpty() || beanBindings.isEmpty()) {
             return true;
         }
-        var beanTypes = beanBindings.stream()
-                .map(java.lang.annotation.Annotation::annotationType)
-                .collect(java.util.stream.Collectors.toSet());
-        var comparable = interceptorBindings.stream()
-                .filter(ann -> beanTypes.contains(ann.annotationType()))
-                .toList();
+        var beanTypes = new java.util.HashSet<Class<? extends java.lang.annotation.Annotation>>();
+        for (var beanBinding : beanBindings) {
+            beanTypes.add(beanBinding.annotationType());
+        }
+        var comparable = new ArrayList<java.lang.annotation.Annotation>();
+        for (var interceptorBinding : interceptorBindings) {
+            if (beanTypes.contains(interceptorBinding.annotationType())) {
+                comparable.add(interceptorBinding);
+            }
+        }
         if (comparable.isEmpty()) {
             return true;
         }
@@ -839,9 +847,10 @@ public final class InterceptorManager {
 
     public List<InterceptorDescriptor> resolveInterceptors(List<java.lang.annotation.Annotation> beanAnnotations) {
         var result = new ArrayList<InterceptorDescriptor>();
-        var bindings = beanAnnotations.stream()
-                .map(a -> DotName.of(a.annotationType().getName()))
-                .collect(java.util.stream.Collectors.toSet());
+        var bindings = new java.util.HashSet<DotName>();
+        for (var annotation : beanAnnotations) {
+            bindings.add(DotName.of(annotation.annotationType().getName()));
+        }
 
         for (var descriptor : interceptors) {
             if (!descriptor.enabled()) continue;

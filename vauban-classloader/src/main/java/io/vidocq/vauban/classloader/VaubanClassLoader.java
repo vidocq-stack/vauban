@@ -170,15 +170,13 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
 
         private Optional<Set<String>> readBeansList() {
             try {
-                return reader.readResource("META-INF/vauban-beans.list")
-                        .map(bytes -> {
-                            var names = new LinkedHashSet<String>();
-                            new String(bytes, StandardCharsets.UTF_8).lines()
-                                    .map(String::strip)
-                                    .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                                    .forEach(names::add);
-                            return Collections.unmodifiableSet(names);
-                        });
+                var bytes = reader.readResource("META-INF/vauban-beans.list");
+                if (bytes.isEmpty()) {
+                    return Optional.empty();
+                }
+                var names = new LinkedHashSet<String>();
+                addListedNames(bytes.get(), names);
+                return Optional.of(Collections.unmodifiableSet(names));
             } catch (IOException _) {
                 return Optional.empty();
             }
@@ -187,6 +185,16 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
 
     /** The bean list of an archive, as read once: {@code names} is {@code null} when the archive ships none. */
     private record BeansList(Set<String> names) {
+    }
+
+    /** Adds to {@code names} the names a list file holds: one per line, stripped, without blanks and comments. */
+    private static void addListedNames(byte[] bytes, Set<String> names) {
+        for (var it = new String(bytes, StandardCharsets.UTF_8).lines().iterator(); it.hasNext(); ) {
+            var line = it.next().strip();
+            if (!line.isEmpty() && !line.startsWith("#")) {
+                names.add(line);
+            }
+        }
     }
 
     /**
@@ -220,7 +228,9 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
     static VaubanClassLoader forLayer(Map<String, Path> moduleArchives, ClassLoader parent,
             PluginContext pluginContext) throws IOException {
         var moduleNames = new HashMap<Path, String>();
-        moduleArchives.forEach((module, path) -> moduleNames.put(path, module));
+        for (var archive : moduleArchives.entrySet()) {
+            moduleNames.put(archive.getValue(), archive.getKey());
+        }
         return new VaubanClassLoader("vauban-app-layer", List.copyOf(new LinkedHashSet<>(moduleArchives.values())),
                 moduleNames, parent, pluginContext, List.of(), true);
     }
@@ -306,9 +316,12 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
 
     private static List<ByteSourcePlugin> sourcePlugins() {
         var plugins = new ArrayList<ByteSourcePlugin>();
-        ServiceLoader.load(ByteSourcePlugin.class, VaubanClassLoader.class.getClassLoader())
-                .forEach(plugins::add);
-        plugins.sort(Comparator.comparingInt(ByteSourcePlugin::priority));
+        for (var plugin : ServiceLoader.load(ByteSourcePlugin.class, VaubanClassLoader.class.getClassLoader())) {
+            plugins.add(plugin);
+        }
+        if (plugins.size() > 1) {
+            plugins.sort(Comparator.comparingInt(ByteSourcePlugin::priority));
+        }
         return plugins;
     }
 
@@ -316,16 +329,16 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
         var disabled = Set.of(System.getProperty(DISABLED_TRANSFORMERS_PROPERTY, "")
                 .split("\\s*,\\s*"));
         var plugins = new ArrayList<ClassTransformerPlugin>();
-        ServiceLoader.load(ClassTransformerPlugin.class, VaubanClassLoader.class.getClassLoader())
-                .forEach(p -> {
-                    if (disabled.contains(p.name())) {
-                        LOG.log(System.Logger.Level.INFO,
-                                () -> "Transformer disabled by configuration: " + p.name());
-                    } else {
-                        plugins.add(p);
-                    }
-                });
-        plugins.sort(Comparator.comparingInt(ClassTransformerPlugin::priority));
+        for (var p : ServiceLoader.load(ClassTransformerPlugin.class, VaubanClassLoader.class.getClassLoader())) {
+            if (disabled.contains(p.name())) {
+                LOG.log(System.Logger.Level.INFO, "Transformer disabled by configuration: " + p.name());
+            } else {
+                plugins.add(p);
+            }
+        }
+        if (plugins.size() > 1) {
+            plugins.sort(Comparator.comparingInt(ClassTransformerPlugin::priority));
+        }
         return plugins;
     }
 
@@ -374,11 +387,10 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
             var names = new LinkedHashSet<String>();
             for (var archive : archives) {
                 try {
-                    archive.reader.readResource(PLACEMENT_MANIFEST).ifPresent(bytes ->
-                            new String(bytes, StandardCharsets.UTF_8).lines()
-                                    .map(String::strip)
-                                    .filter(l -> !l.isEmpty() && !l.startsWith("#"))
-                                    .forEach(names::add));
+                    var bytes = archive.reader.readResource(PLACEMENT_MANIFEST);
+                    if (bytes.isPresent()) {
+                        addListedNames(bytes.get(), names);
+                    }
                 } catch (IOException _) {
                     // an unreadable manifest places nothing from that archive
                 }
@@ -635,8 +647,10 @@ public class VaubanClassLoader extends ClassLoader implements AutoCloseable {
                         + "' failed on " + name + " (" + archive.path + ")", e);
             }
             if (transformed != null) {
-                LOG.log(System.Logger.Level.DEBUG, () -> "Transformed " + name
-                        + " with '" + transformer.name() + "' (" + archive.path.getFileName() + ")");
+                if (LOG.isLoggable(System.Logger.Level.DEBUG)) {
+                    LOG.log(System.Logger.Level.DEBUG, "Transformed " + name
+                            + " with '" + transformer.name() + "' (" + archive.path.getFileName() + ")");
+                }
                 dump(name, transformer.name(), transformed);
                 bytes = transformed;
             }

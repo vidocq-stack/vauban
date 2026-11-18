@@ -203,7 +203,11 @@ public final class EventDispatcher {
         var keys = observerKeys;
         if (keys == null) {
             var matcher = container.qualifierMatcher();
-            keys = observers.stream().map(observer -> matcher.keys(observer.qualifiers())).toList();
+            var computed = new ArrayList<Set<AnnotationKey>>(observers.size());
+            for (var observer : observers) {
+                computed.add(matcher.keys(observer.qualifiers()));
+            }
+            keys = java.util.Collections.unmodifiableList(computed);
             observerKeys = keys;
         }
         return keys.get(index);

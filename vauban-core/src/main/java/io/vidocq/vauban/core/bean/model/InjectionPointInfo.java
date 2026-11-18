@@ -98,7 +98,9 @@ public record InjectionPointInfo(
 
     public static String methodDescriptor(java.util.List<io.vidocq.vauban.indexer.model.TypeInfo> parameterTypes) {
         var descriptor = new StringBuilder("(");
-        parameterTypes.forEach(type -> descriptor.append(jvmDescriptor(type)));
+        for (var type : parameterTypes) {
+            descriptor.append(jvmDescriptor(type));
+        }
         return descriptor.append(")V").toString();
     }
 

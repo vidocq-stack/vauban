@@ -195,15 +195,26 @@ public final class VaubanContainerBuilder {
 
     private VaubanContainerBuilder addClass(Class<?> beanClass) {
         // Idempotent by class name (not identity) — same class from different ClassLoaders is deduplicated
-        if (beanClasses.stream().noneMatch(c -> c.getName().equals(beanClass.getName()))) {
-            beanClasses.add(beanClass);
+        for (var added : beanClasses) {
+            if (added.getName().equals(beanClass.getName())) {
+                return this;
+            }
         }
+        beanClasses.add(beanClass);
         return this;
     }
 
     /** The names of the bean classes added so far, in the order they were added. */
     List<String> beanClassNames() {
-        return beanClasses.stream().map(Class::getName).toList();
+        return namesOf(beanClasses);
+    }
+
+    private static List<String> namesOf(List<Class<?>> classes) {
+        var names = new ArrayList<String>(classes.size());
+        for (var type : classes) {
+            names.add(type.getName());
+        }
+        return java.util.Collections.unmodifiableList(names);
     }
 
     /**
@@ -426,12 +437,17 @@ public final class VaubanContainerBuilder {
     /** Merges {@code patch} into {@code merged}, each added annotation once. */
     private static void mergeEnhancementPatch(Map<String, List<AnnotationInfo>> patch,
             Map<DotName, List<AnnotationInfo>> merged) {
-        patch.forEach((target, anns) -> {
-            var list = merged.computeIfAbsent(DotName.of(target), _ -> new ArrayList<>());
-            for (var ann : anns) {
+        for (var entry : patch.entrySet()) {
+            var target = DotName.of(entry.getKey());
+            var list = merged.get(target);
+            if (list == null) {
+                list = new ArrayList<>();
+                merged.put(target, list);
+            }
+            for (var ann : entry.getValue()) {
                 if (!list.contains(ann)) list.add(ann);
             }
-        });
+        }
     }
 
     /**
@@ -540,14 +556,17 @@ public final class VaubanContainerBuilder {
      * composite parented elsewhere would hide the layer's providers (generated _VaubanComponents, Cassini adapters…).
      */
     private static java.util.SequencedSet<ClassLoader> layerLoaderFirst(java.util.LinkedHashSet<ClassLoader> loaders) {
-        var layerLoader = loaders.stream()
-                .filter(io.vidocq.vauban.classloader.VaubanClassLoader.class::isInstance)
-                .findFirst();
-        if (layerLoader.isEmpty() || loaders.getFirst().equals(layerLoader.get())) {
+        ClassLoader layerLoader = null;
+        for (var loader : loaders) {
+            if (layerLoader == null && loader instanceof io.vidocq.vauban.classloader.VaubanClassLoader) {
+                layerLoader = loader;
+            }
+        }
+        if (layerLoader == null || loaders.getFirst().equals(layerLoader)) {
             return loaders;
         }
         var reordered = new java.util.LinkedHashSet<ClassLoader>();
-        reordered.add(layerLoader.get());
+        reordered.add(layerLoader);
         reordered.addAll(loaders);
         return reordered;
     }
@@ -939,8 +958,8 @@ public final class VaubanContainerBuilder {
      */
     private static String readChecksum(java.util.function.Function<DotName, java.util.Optional<ClassInfo>> classFiles,
             String name) {
-        return classFiles.apply(DotName.of(name)).map(model -> Long.toHexString(ClassChecksums.ofModel(model)))
-                .orElse(FrozenExtensions.ABSENT);
+        var model = classFiles.apply(DotName.of(name));
+        return model.isPresent() ? Long.toHexString(ClassChecksums.ofModel(model.get())) : FrozenExtensions.ABSENT;
     }
 
     /**
@@ -973,28 +992,21 @@ public final class VaubanContainerBuilder {
      */
     private ExtensionPlan planExtensions(boolean capturing, ClassLoader discoveryClassLoader,
             DeploymentFingerprint fingerprint) {
-        List<Class<?>> deploymentExtensions = beanClasses.stream()
-                .filter(ReflectionValidator::isBuildCompatibleExtension)
-                .toList();
+        List<Class<?>> deploymentExtensions = deploymentExtensions();
         var found = capturing || deploymentExtensions.isEmpty()
                 ? new FrozenExtensions.Found(null, null)
                 : frozenExtensionsOf(discoveryClassLoader, fingerprint);
         var frozen = found.frozen();
 
         // Classes from sources WITHOUT vauban-bce-processed marker need runtime @Enhancement
-        List<Class<?>> unmarkedArchiveClasses = beanClasses.stream()
-                .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
-                .filter(c -> !bceProcessedSources.holds(c))
-                .toList();
+        List<Class<?>> unmarkedArchiveClasses = unmarkedArchiveClasses();
 
         // If ALL sources are pre-processed AND we have a replay list, skip full BCE
         // lifecycle (cleaner: BCEs from pre-processed JARs are already digested).
         boolean allSourcesProcessed = unmarkedArchiveClasses.isEmpty() && !bceProcessedSources.isEmpty();
         List<Class<?>> toRun;
         if (frozen != null) {
-            toRun = deploymentExtensions.stream()
-                    .filter(extension -> frozen.startExtensions().contains(extension.getName()))
-                    .toList();
+            toRun = startExtensions(deploymentExtensions, frozen);
         } else {
             toRun = allSourcesProcessed ? List.of() : deploymentExtensions;
         }
@@ -1005,9 +1017,7 @@ public final class VaubanContainerBuilder {
         // Pre-processed JARs ship this list so the runtime can replay BCE @Enhancement
         // on a precise set of classes (no re-scan, no full BCE lifecycle). With a record, only the pairs of the
         // extensions that run at start are replayed: the build captured the others.
-        var replayPairs = loadRuntimeReplayList(discoveryClassLoader).stream()
-                .filter(pair -> frozen == null || toRun.contains(pair.getKey()))
-                .toList();
+        var replayPairs = replayPairsOf(loadRuntimeReplayList(discoveryClassLoader), frozen, toRun);
 
         // Frozen @Enhancement result (target -> added annotation FQNs). When present for a
         // target, it replaces the reflective replay below: we apply the annotations directly
@@ -1016,14 +1026,81 @@ public final class VaubanContainerBuilder {
         if (frozen != null) {
             mergeEnhancementPatch(frozen.enhancements(), enhancementPatch);
         }
-        var frozenEnhancementClasses = enhancementPatch.keySet().stream()
-                .map(io.vidocq.vauban.core.extensions.EnhancementPatchSerializer::owner)
-                .collect(java.util.stream.Collectors.toSet());
-        var effectiveReplayPairs = replayPairs.stream()
-                .filter(p -> !frozenEnhancementClasses.contains(DotName.of(p.getValue().getName())))
-                .toList();
+        var effectiveReplayPairs = notCoveredBy(enhancementPatch, replayPairs);
         return new ExtensionPlan(found, toRun, toEnhance, replayPairs, enhancementPatch, effectiveReplayPairs,
                 allSourcesProcessed && !deploymentExtensions.isEmpty());
+    }
+
+    /** The build compatible extensions among the bean classes. */
+    private List<Class<?>> deploymentExtensions() {
+        var extensions = new ArrayList<Class<?>>();
+        for (var beanClass : beanClasses) {
+            if (ReflectionValidator.isBuildCompatibleExtension(beanClass)) {
+                extensions.add(beanClass);
+            }
+        }
+        return java.util.Collections.unmodifiableList(extensions);
+    }
+
+    /** The bean classes that are no build compatible extension. */
+    private List<Class<?>> nonExtensionClasses() {
+        var classes = new ArrayList<Class<?>>();
+        for (var beanClass : beanClasses) {
+            if (!ReflectionValidator.isBuildCompatibleExtension(beanClass)) {
+                classes.add(beanClass);
+            }
+        }
+        return java.util.Collections.unmodifiableList(classes);
+    }
+
+    /** The bean classes, extensions aside, of the sources without the {@code vauban-bce-processed} marker. */
+    private List<Class<?>> unmarkedArchiveClasses() {
+        var classes = new ArrayList<Class<?>>();
+        for (var beanClass : beanClasses) {
+            if (!ReflectionValidator.isBuildCompatibleExtension(beanClass) && !bceProcessedSources.holds(beanClass)) {
+                classes.add(beanClass);
+            }
+        }
+        return java.util.Collections.unmodifiableList(classes);
+    }
+
+    /** The extensions the record says run again at start. */
+    private static List<Class<?>> startExtensions(List<Class<?>> deploymentExtensions, FrozenExtensions frozen) {
+        var extensions = new ArrayList<Class<?>>();
+        for (var extension : deploymentExtensions) {
+            if (frozen.startExtensions().contains(extension.getName())) {
+                extensions.add(extension);
+            }
+        }
+        return java.util.Collections.unmodifiableList(extensions);
+    }
+
+    /** The replay pairs to consider: all of them without a record, else those of the extensions that run. */
+    private static List<Map.Entry<Class<?>, Class<?>>> replayPairsOf(List<Map.Entry<Class<?>, Class<?>>> listed,
+            FrozenExtensions frozen, List<Class<?>> toRun) {
+        var pairs = new ArrayList<Map.Entry<Class<?>, Class<?>>>();
+        for (var pair : listed) {
+            if (frozen == null || toRun.contains(pair.getKey())) {
+                pairs.add(pair);
+            }
+        }
+        return java.util.Collections.unmodifiableList(pairs);
+    }
+
+    /** The replay pairs whose class the frozen patch does not cover. */
+    private static List<Map.Entry<Class<?>, Class<?>>> notCoveredBy(
+            Map<DotName, List<AnnotationInfo>> enhancementPatch, List<Map.Entry<Class<?>, Class<?>>> replayPairs) {
+        var frozenEnhancementClasses = new java.util.HashSet<DotName>();
+        for (var target : enhancementPatch.keySet()) {
+            frozenEnhancementClasses.add(io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.owner(target));
+        }
+        var pairs = new ArrayList<Map.Entry<Class<?>, Class<?>>>();
+        for (var pair : replayPairs) {
+            if (!frozenEnhancementClasses.contains(DotName.of(pair.getValue().getName()))) {
+                pairs.add(pair);
+            }
+        }
+        return java.util.Collections.unmodifiableList(pairs);
     }
 
     /** What {@code @Discovery} registered: the extensions that ran, the record of the frozen ones, or both. */
@@ -1052,10 +1129,16 @@ public final class VaubanContainerBuilder {
     /** What this start did with the extensions, for {@link VaubanContainer#extensionsAtStart()}. */
     private static ExtensionsAtStart extensionsAtStart(ExtensionPlan plan) {
         var frozen = plan.frozen();
-        List<String> frozenAtBuild = frozen == null ? List.of() : frozen.extensions().stream()
-                .filter(extension -> !frozen.startExtensions().contains(extension)).toList();
-        return new ExtensionsAtStart(frozen != null, frozenAtBuild,
-                plan.toRun().stream().map(Class::getName).toList(), plan.lookup().note());
+        var frozenAtBuild = new ArrayList<String>();
+        if (frozen != null) {
+            for (var extension : frozen.extensions()) {
+                if (!frozen.startExtensions().contains(extension)) {
+                    frozenAtBuild.add(extension);
+                }
+            }
+        }
+        return new ExtensionsAtStart(frozen != null, java.util.Collections.unmodifiableList(frozenAtBuild),
+                namesOf(plan.toRun()), plan.lookup().note());
     }
 
     public VaubanContainer build() {
@@ -1079,12 +1162,27 @@ public final class VaubanContainerBuilder {
                 () -> build(capture, discoveryClassLoader));
     }
 
+    /** The names of the classes discovery is forced to keep, sorted. */
+    private Set<String> forcedClassNames() {
+        var names = new java.util.TreeSet<String>();
+        for (var forced : forcedDiscoveryClasses) {
+            names.add(forced.getName());
+        }
+        return names;
+    }
+
+    private static void addManagedClasses(io.vidocq.vauban.core.access.ModuleLookups.Registration moduleLookups,
+            List<Class<?>> classes) {
+        for (var added : classes) {
+            moduleLookups.addManagedClass(added);
+        }
+    }
+
     /** {@link #build(ExtensionCapture)}, its extensions reading the classes outside the index through its loader. */
     private VaubanContainer build(ExtensionCapture capture, ClassLoader discoveryClassLoader) {
         var indexBuilder = new IndexBuilder();
         var fingerprint = new DeploymentFingerprint("beanArchive=" + isBeanArchive + ";strictScannedDiscovery="
-                + strictScannedDiscovery + ";forced=" + new java.util.TreeSet<>(forcedDiscoveryClasses.stream()
-                        .map(Class::getName).toList()));
+                + strictScannedDiscovery + ";forced=" + forcedClassNames());
         indexBeanClasses(indexBuilder, fingerprint);
 
         // Set TCCL to the loader that can resolve classes from ALL sources
@@ -1130,15 +1228,13 @@ public final class VaubanContainerBuilder {
         // @Enhancement phase on; the container withdraws them at shutdown, a failed build right away.
         var moduleLookups = io.vidocq.vauban.core.access.ModuleLookups.register(
                 componentProviders.providers(), beanClasses);
-        extensionAddedClasses.forEach(moduleLookups::addManagedClass);
+        addManagedClasses(moduleLookups, extensionAddedClasses);
 
         try (var scope = new BuildScope(previousCl, moduleLookups)) {
             // Validate the class-level CDI rules before bean discovery. The validation reads
             // generic signatures by reflection, as the bytecode index does not hold them, and it
             // leaves out the build compatible extensions, which are not beans.
-            var nonBceClasses = beanClasses.stream()
-                    .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
-                    .toList();
+            var nonBceClasses = nonExtensionClasses();
             validateClassDefinitions(index, nonBceClasses, extensionAddedClasses);
 
             // --- Collect Enhancement modifications: full BCE for unprocessed JARs +
@@ -1354,13 +1450,22 @@ public final class VaubanContainerBuilder {
      * the class: a veto changes what discovery finds, and the package of a bean only the runtime adds stays out.
      */
     private void indexVetoedPackages(IndexBuilder indexBuilder, DeploymentFingerprint fingerprint) {
-        java.util.stream.Stream.concat(beanClasses.stream(), packageInfoClasses.stream()).forEach(clazz ->
-                vetoedPackageOf(clazz.getName(), clazz.getClassLoader()).ifPresent(packageInfo -> {
-                    indexBuilder.add(packageInfo);
-                    if (inFingerprint(clazz)) {
-                        fingerprint.add(packageInfo.name().value(), packageInfo);
-                    }
-                }));
+        for (var clazz : beanClasses) {
+            indexVetoedPackage(clazz, indexBuilder, fingerprint);
+        }
+        for (var clazz : packageInfoClasses) {
+            indexVetoedPackage(clazz, indexBuilder, fingerprint);
+        }
+    }
+
+    private void indexVetoedPackage(Class<?> clazz, IndexBuilder indexBuilder, DeploymentFingerprint fingerprint) {
+        var packageInfo = vetoedPackageOf(clazz.getName(), clazz.getClassLoader());
+        if (packageInfo.isPresent()) {
+            indexBuilder.add(packageInfo.get());
+            if (inFingerprint(clazz)) {
+                fingerprint.add(packageInfo.get().name().value(), packageInfo.get());
+            }
+        }
     }
 
     /**
@@ -1370,8 +1475,10 @@ public final class VaubanContainerBuilder {
     private java.util.Optional<ClassInfo> vetoedPackageOf(String className, ClassLoader loader) {
         var packageName = DotName.of(className).packageName();
         if (packagesLookedUp.add(packageName)) {
-            PackageInfos.vetoed(className, loader)
-                    .ifPresent(packageInfo -> vetoedPackages.put(packageName, packageInfo));
+            var vetoed = PackageInfos.vetoed(className, loader);
+            if (vetoed.isPresent()) {
+                vetoedPackages.put(packageName, vetoed.get());
+            }
         }
         return java.util.Optional.ofNullable(vetoedPackages.get(packageName));
     }
@@ -1399,7 +1506,10 @@ public final class VaubanContainerBuilder {
             bceClassLoader.register(cls);
             extensionAddedClasses.add(cls);
             indexClassResource(className, discoveryClassLoader, indexBuilder);
-            vetoedPackageOf(className, discoveryClassLoader).ifPresent(indexBuilder::add);
+            var packageInfo = vetoedPackageOf(className, discoveryClassLoader);
+            if (packageInfo.isPresent()) {
+                indexBuilder.add(packageInfo.get());
+            }
             if (!factories.containsKey(DotName.of(className))) {
                 var lkp = getBuilderLookup();
                 factories.put(DotName.of(className), () -> instantiate(cls, lkp));
@@ -1431,11 +1541,15 @@ public final class VaubanContainerBuilder {
             throw new jakarta.enterprise.inject.spi.DefinitionException(failureMessage(DEFINITION_FAILED, classErrors));
         }
         // The index plans the creation of these classes (VAU-PERF-003 step 2), keyed by the Class itself.
-        nonBceClasses.forEach(beanClass -> IndexPlans.register(beanClass, index));
+        for (var beanClass : nonBceClasses) {
+            IndexPlans.register(beanClass, index);
+        }
         var validated = new LinkedHashSet<Class<?>>(nonBceClasses);
-        extensionAddedClasses.stream()
-                .filter(added -> !ReflectionValidator.isBuildCompatibleExtension(added))
-                .forEach(validated::add);
+        for (var added : extensionAddedClasses) {
+            if (!ReflectionValidator.isBuildCompatibleExtension(added)) {
+                validated.add(added);
+            }
+        }
         var reflectionErrors = definitionErrors(index, List.copyOf(validated));
         if (!reflectionErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(
@@ -1472,8 +1586,7 @@ public final class VaubanContainerBuilder {
         if (classes.isEmpty()) {
             return List.of();
         }
-        return definitionErrors(index, classes, classes.stream().map(Class::getName).collect(
-                java.util.stream.Collectors.toUnmodifiableSet()));
+        return definitionErrors(index, classes, Set.copyOf(namesOf(classes)));
     }
 
     /**
@@ -1484,16 +1597,15 @@ public final class VaubanContainerBuilder {
             Set<String> descriptorBeans) {
         var validator = new io.vidocq.vauban.core.bean.validation.IndexClassValidator(index,
                 VaubanContainerBuilder::annotationTypeOrNull,
-                name -> VaubanBeanManager.customInterceptorBindingTypes().stream()
-                        .anyMatch(type -> type.getName().equals(name.value())))
+                VaubanContainerBuilder::isCustomInterceptorBinding)
                 .withBeanClasses(name -> descriptorBeans.contains(name.value()));
         var errors = new java.util.ArrayList<String>();
         var reflected = new java.util.ArrayList<Class<?>>();
         for (var beanClass : beanClasses) {
-            var fromIndex = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(beanClass.getName()))
-                    .flatMap(validator::validate);
-            if (fromIndex.isPresent()) {
-                errors.addAll(fromIndex.get());
+            var info = index.getClassByName(io.vidocq.vauban.indexer.model.DotName.of(beanClass.getName()));
+            List<String> fromIndex = info.isPresent() ? validator.validate(info.get()).orElse(null) : null;
+            if (fromIndex != null) {
+                errors.addAll(fromIndex);
             } else {
                 reflected.add(beanClass);
             }
@@ -1501,6 +1613,15 @@ public final class VaubanContainerBuilder {
         errors.addAll(ReflectionValidator.validateWithReflection(reflected,
                 clazz -> descriptorBeans.contains(clazz.getName())));
         return errors;
+    }
+
+    private static boolean isCustomInterceptorBinding(DotName name) {
+        for (var type : VaubanBeanManager.customInterceptorBindingTypes()) {
+            if (type.getName().equals(name.value())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Class<?> annotationTypeOrNull(String name) {
@@ -1550,20 +1671,32 @@ public final class VaubanContainerBuilder {
         if (!enhancing.classes().isEmpty() && !enhancing.extensions().isEmpty()) {
             var enhMods = BceProcessor.processEnhancementOnly(List.copyOf(enhancing.extensions()),
                     enhancing.classes(), index, bceClassLoader, enhancing.instances());
-            enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+            addEnhancements(combinedEnhMods, enhMods);
         }
 
         // Legacy reflective replay — only for targets NOT covered by the frozen patch.
         if (!effectiveReplayPairs.isEmpty()) {
             var replayMods = BceProcessor.replayEnhancementForTargets(
                     effectiveReplayPairs, index);
-            replayMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+            addEnhancements(combinedEnhMods, replayMods);
         }
 
-        io.vidocq.vauban.core.extensions.EnhancementPatchSerializer
-                .memberConfigurations(enhancementPatch, index).forEach((name, configs) ->
-                        combinedEnhMods.computeIfAbsent(name, _ -> new ArrayList<>()).addAll(configs));
+        addEnhancements(combinedEnhMods, io.vidocq.vauban.core.extensions.EnhancementPatchSerializer
+                .memberConfigurations(enhancementPatch, index));
         return combinedEnhMods;
+    }
+
+    /** Adds the modifications of {@code added} to those {@code combined} holds for the same class. */
+    private static void addEnhancements(Map<DotName, List<VaubanClassConfig>> combined,
+            Map<DotName, List<VaubanClassConfig>> added) {
+        for (var entry : added.entrySet()) {
+            var configs = combined.get(entry.getKey());
+            if (configs == null) {
+                configs = new ArrayList<>();
+                combined.put(entry.getKey(), configs);
+            }
+            configs.addAll(entry.getValue());
+        }
     }
 
     /** {@code index} with the annotations the Enhancement modifications and the frozen patch add to its classes. */
@@ -1657,9 +1790,10 @@ public final class VaubanContainerBuilder {
 
         // Classes added via ScannedClasses bypass annotation check
         if (!registered.scannedClasses().isEmpty()) {
-            var scannedDotNames = registered.scannedClasses().stream()
-                    .map(DotName::of)
-                    .collect(java.util.stream.Collectors.toSet());
+            var scannedDotNames = new java.util.HashSet<DotName>();
+            for (var scanned : registered.scannedClasses()) {
+                scannedDotNames.add(DotName.of(scanned));
+            }
             discovery.setForcedBeanClasses(scannedDotNames);
             // When not a bean archive, also restrict discovery to scanned classes only
             if (!isBeanArchive) {
@@ -1669,9 +1803,11 @@ public final class VaubanContainerBuilder {
     }
 
     private static <T> Set<DotName> dotNames(java.util.Collection<Class<? extends T>> classes) {
-        return classes.stream()
-                .map(c -> DotName.of(c.getName()))
-                .collect(java.util.stream.Collectors.toSet());
+        var names = new java.util.HashSet<DotName>();
+        for (var c : classes) {
+            names.add(DotName.of(c.getName()));
+        }
+        return names;
     }
 
     /**
@@ -1815,7 +1951,9 @@ public final class VaubanContainerBuilder {
         frozenEntries.addAll(io.vidocq.vauban.core.extensions.FrozenContexts.read(discoveryClassLoader));
         for (var frozen : frozenEntries) {
             var key = frozen.scope() + ";" + frozen.contextClass();
-            contextRegistrations.computeIfAbsent(key, _ -> loadFrozenContext(frozen, discoveryClassLoader));
+            if (!contextRegistrations.containsKey(key)) {
+                contextRegistrations.put(key, loadFrozenContext(frozen, discoveryClassLoader));
+            }
         }
         return contextRegistrations;
     }

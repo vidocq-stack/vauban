@@ -22,7 +22,9 @@ package io.vidocq.vauban.core.annotation;
 import io.vidocq.vauban.indexer.model.AnnotationValue;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.MethodInfo;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,15 +63,30 @@ public record AnnotationTypeInfo(DotName name, List<Member> members) {
         if (!type.isAnnotation()) {
             throw new IllegalArgumentException(type.name() + " is not an annotation type");
         }
-        var members = type.methods().stream()
-                .filter(method -> method.parameters().isEmpty() && !method.isStatic() && !method.isSynthetic())
-                .map(method -> new Member(method.name(), method.defaultValue(),
-                        method.annotations().stream().anyMatch(annotation -> annotation.name().equals(NONBINDING))))
-                .toList();
+        var members = new ArrayList<Member>();
+        for (var method : type.methods()) {
+            if (method.parameters().isEmpty() && !method.isStatic() && !method.isSynthetic()) {
+                members.add(new Member(method.name(), method.defaultValue(), isNonbinding(method)));
+            }
+        }
         return new AnnotationTypeInfo(type.name(), members);
     }
 
+    private static boolean isNonbinding(MethodInfo method) {
+        for (var annotation : method.annotations()) {
+            if (annotation.name().equals(NONBINDING)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Optional<Member> member(String memberName) {
-        return members.stream().filter(member -> member.name().equals(memberName)).findFirst();
+        for (var member : members) {
+            if (member.name().equals(memberName)) {
+                return Optional.of(member);
+            }
+        }
+        return Optional.empty();
     }
 }

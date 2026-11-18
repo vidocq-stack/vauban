@@ -46,7 +46,12 @@ public final class DependencyGraph {
     }
 
     public void addDependency(BeanId from, BeanId to) {
-        adjacency.computeIfAbsent(from, k -> new LinkedHashSet<>()).add(to);
+        var dependencies = adjacency.get(from);
+        if (dependencies == null) {
+            dependencies = new LinkedHashSet<>();
+            adjacency.put(from, dependencies);
+        }
+        dependencies.add(to);
     }
 
     /**

@@ -23,9 +23,11 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.types.AssignabilityRules;
+import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -68,12 +70,17 @@ public final class BeanResolver {
         this.assignability = Objects.requireNonNull(assignability);
         this.interceptorManager = new io.vidocq.vauban.core.interceptor.InterceptorManager(interceptors);
         // CDI spec: interceptors are not eligible for injection as regular beans
-        var interceptorClasses = interceptors.stream()
-                .map(io.vidocq.vauban.core.bean.model.InterceptorDescriptor::interceptorClass)
-                .collect(java.util.stream.Collectors.toSet());
-        this.beans = beans.stream()
-                .filter(b -> !interceptorClasses.contains(b.beanClass()))
-                .toList();
+        var interceptorClasses = new HashSet<DotName>();
+        for (var interceptor : interceptors) {
+            interceptorClasses.add(interceptor.interceptorClass());
+        }
+        var injectable = new ArrayList<BeanDescriptor>();
+        for (var b : beans) {
+            if (!interceptorClasses.contains(b.beanClass())) {
+                injectable.add(b);
+            }
+        }
+        this.beans = List.copyOf(injectable);
     }
 
     public List<io.vidocq.vauban.core.bean.model.InterceptorDescriptor> getInterceptors() {
@@ -147,29 +154,36 @@ public final class BeanResolver {
         if (candidates.size() <= 1) return candidates;
 
         // Separate alternatives and non-alternatives
-        var alternatives = candidates.stream()
-                .filter(b -> b.isAlternative() && b.priorityDeclared())
-                .toList();
-        
-        var nonAlternatives = candidates.stream()
-                .filter(b -> !b.isAlternative())
-                .toList();
+        var alternatives = new ArrayList<BeanDescriptor>();
+        var nonAlternatives = new ArrayList<BeanDescriptor>();
+        for (var b : candidates) {
+            if (!b.isAlternative()) {
+                nonAlternatives.add(b);
+            } else if (b.priorityDeclared()) {
+                alternatives.add(b);
+            }
+        }
 
         if (alternatives.isEmpty()) {
-            return nonAlternatives;
+            return List.copyOf(nonAlternatives);
         }
 
         // Find max priority among alternatives
-        int maxPriority = alternatives.stream()
-                .mapToInt(BeanDescriptor::priority)
-                .max().orElse(0);
+        int maxPriority = alternatives.getFirst().priority();
+        for (var b : alternatives) {
+            maxPriority = Math.max(maxPriority, b.priority());
+        }
 
         // CDI 4.1 Section 5.2.2:
-        // "An alternative with higher priority prevails over an alternative with lower priority, 
+        // "An alternative with higher priority prevails over an alternative with lower priority,
         // and over a bean which is not an alternative."
-        return alternatives.stream()
-                .filter(b -> b.priority() == maxPriority)
-                .toList();
+        var selected = new ArrayList<BeanDescriptor>();
+        for (var b : alternatives) {
+            if (b.priority() == maxPriority) {
+                selected.add(b);
+            }
+        }
+        return List.copyOf(selected);
     }
 
     /**

@@ -254,11 +254,11 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
      */
     public List<String> readClassesChanged(java.util.function.UnaryOperator<String> now) {
         var changed = new ArrayList<String>();
-        read.forEach((name, checksum) -> {
-            if (!checksum.equals(now.apply(name))) {
-                changed.add(name);
+        for (var entry : read.entrySet()) {
+            if (!entry.getValue().equals(now.apply(entry.getKey()))) {
+                changed.add(entry.getKey());
             }
-        });
+        }
         return changed;
     }
 

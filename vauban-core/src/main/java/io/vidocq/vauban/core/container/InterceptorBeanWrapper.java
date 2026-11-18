@@ -35,6 +35,7 @@ import jakarta.enterprise.inject.spi.DeploymentException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -279,9 +280,12 @@ final class InterceptorBeanWrapper {
     private Constructor<?> findConstructor(Class<?> clazz) throws NoSuchMethodException {
         // The (ProxyLink) client-proxy entry constructor is never an instantiation
         // candidate (Vidocq/vauban#24) — real instances must run a business constructor.
-        var candidates = java.util.Arrays.stream(clazz.getDeclaredConstructors())
-                .filter(c -> !io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(c))
-                .toList();
+        var candidates = new ArrayList<Constructor<?>>();
+        for (var c : clazz.getDeclaredConstructors()) {
+            if (!io.vidocq.vauban.core.proxy.ClientProxyShape.isProxyLinkConstructor(c)) {
+                candidates.add(c);
+            }
+        }
         for (var c : candidates) {
             if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
                 return c;
@@ -338,7 +342,9 @@ final class InterceptorBeanWrapper {
             if (java.lang.reflect.Modifier.isFinal(type.getModifiers())) {
                 return java.util.Optional.of("is final");
             }
-            return java.util.Optional.ofNullable(firstFinalMethod(type)).map(m -> "has final method " + m.getName());
+            var finalMethod = firstFinalMethod(type);
+            return finalMethod == null ? java.util.Optional.empty()
+                    : java.util.Optional.of("has final method " + finalMethod.getName());
         }
     };
 
@@ -656,8 +662,12 @@ final class InterceptorBeanWrapper {
      */
     void bootCompleted(java.util.Collection<ManagedBean<?>> beans) {
         var providers = container.componentProviders();
-        var coverages = providers == null ? List.<io.vidocq.vauban.api.GeneratedCoverage>of()
-                : providers.providers().stream().map(io.vidocq.vauban.api.VaubanComponentProvider::coverage).toList();
+        var coverages = new ArrayList<io.vidocq.vauban.api.GeneratedCoverage>();
+        if (providers != null) {
+            for (var provider : providers.providers()) {
+                coverages.add(provider.coverage());
+            }
+        }
         if (!coverages.contains(null)) {
             for (var bean : beans) {
                 try {
@@ -680,8 +690,10 @@ final class InterceptorBeanWrapper {
         }
         Class<?> target = resolveProxyTargetClass(bean);
         String key = io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.proxyClassName(target);
-        if (coverages.stream().anyMatch(coverage -> coverage.clientProxies().contains(key))) {
-            return;
+        for (var coverage : coverages) {
+            if (coverage.clientProxies().contains(key)) {
+                return;
+            }
         }
         if (target.isInterface()) {
             if (frozenInterfaceProxyClass(target) == null) {
@@ -1047,9 +1059,12 @@ final class InterceptorBeanWrapper {
         for (var ann : beanClass.getAnnotations()) {
             classAnnotationTypes.add(ann.annotationType().getName());
         }
-        var enhancedOnly = descriptor.interceptorBindingAnnotations().stream()
-                .filter(ann -> !classAnnotationTypes.contains(ann.annotationType().getName()))
-                .toList();
+        var enhancedOnly = new ArrayList<Annotation>();
+        for (var ann : descriptor.interceptorBindingAnnotations()) {
+            if (!classAnnotationTypes.contains(ann.annotationType().getName())) {
+                enhancedOnly.add(ann);
+            }
+        }
         if (!enhancedOnly.isEmpty()) {
             interceptorManager.registerEnhancedBindings(
                     descriptor.beanClass().value(), enhancedOnly);
@@ -1080,12 +1095,20 @@ final class InterceptorBeanWrapper {
                 });
     }
 
+    /** The bindings as annotations, comma-separated. */
+    private static String bindingNames(Set<DotName> bindings) {
+        var names = new java.util.StringJoiner(", ");
+        for (var name : bindings) {
+            names.add("@" + name.value());
+        }
+        return names.toString();
+    }
+
     private String interceptedBecause(io.vidocq.vauban.core.interceptor.InterceptionTargets.Cause cause,
                                       Class<?> beanClass, Set<DotName> classBindings) {
         return switch (cause) {
             case io.vidocq.vauban.core.interceptor.InterceptionTargets.ClassLevel _ ->
-                    "its class-level interceptor bindings " + classBindings.stream()
-                            .map(name -> "@" + name.value()).collect(java.util.stream.Collectors.joining(", "));
+                    "its class-level interceptor bindings " + bindingNames(classBindings);
             case io.vidocq.vauban.core.interceptor.InterceptionTargets.BoundMethod(var m) ->
                     interceptorManager.describeMethodBindings(beanClass, m);
             case io.vidocq.vauban.core.interceptor.InterceptionTargets.BoundConstructor(var ctor) ->
@@ -1321,15 +1344,19 @@ final class InterceptorBeanWrapper {
                 var byArity = constructorWithArity(beanClass, argumentCount);
                 if (byArity != null) return byArity;
             }
-            var ctorParamCount = descriptor.injectionPoints().stream()
-                    .filter(ip -> ip.kind() == io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER)
-                    .count();
+            int ctorParamCount = 0;
+            for (var ip : descriptor.injectionPoints()) {
+                if (ip.kind()
+                        == io.vidocq.vauban.core.bean.model.InjectionPointInfo.InjectionKind.CONSTRUCTOR_PARAMETER) {
+                    ctorParamCount++;
+                }
+            }
             for (var c : ClassMetadataCache.constructorsOf(beanClass)) {
                 if (c.isAnnotationPresent(jakarta.inject.Inject.class)) {
                     return c;
                 }
             }
-            var byPoints = constructorWithArity(beanClass, Math.toIntExact(ctorParamCount));
+            var byPoints = constructorWithArity(beanClass, ctorParamCount);
             return byPoints != null ? byPoints : ClassMetadataCache.constructorsOf(beanClass).get(0);
         }
 

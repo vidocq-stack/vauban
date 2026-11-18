@@ -65,11 +65,14 @@ record ExtensionDiscovery(Set<Class<? extends Annotation>> qualifiers,
      */
     static ExtensionDiscovery of(FrozenExtensions.Discovery frozen, ClassLoader loader) {
         var stereotypeAnnotations = new LinkedHashMap<Class<? extends Annotation>, Set<Class<? extends Annotation>>>();
-        frozen.stereotypes().forEach((stereotype, carried) ->
-                stereotypeAnnotations.put(annotationType(stereotype, loader), annotationTypes(carried, loader)));
+        for (var stereotype : frozen.stereotypes().entrySet()) {
+            stereotypeAnnotations.put(annotationType(stereotype.getKey(), loader),
+                    annotationTypes(stereotype.getValue(), loader));
+        }
         var nonbinding = new LinkedHashMap<String, Set<String>>();
-        frozen.nonbindingMembers().forEach((annotation, members) ->
-                nonbinding.put(annotation, new LinkedHashSet<>(members)));
+        for (var annotation : frozen.nonbindingMembers().entrySet()) {
+            nonbinding.put(annotation.getKey(), new LinkedHashSet<>(annotation.getValue()));
+        }
         return new ExtensionDiscovery(annotationTypes(frozen.qualifiers(), loader),
                 annotationTypes(frozen.interceptorBindings(), loader),
                 new LinkedHashSet<>(stereotypeAnnotations.keySet()), stereotypeAnnotations, nonbinding,

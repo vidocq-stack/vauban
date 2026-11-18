@@ -35,6 +35,9 @@ module io.vidocq.vauban.moduleit {
     // The session context: a session that holds client proxies moves to another container on the module path
     // (SessionMoveModulePathTest, foy#114).
     requires io.vidocq.vauban.webcontexts;
+    // StartProbe defines an application layer before it starts a container, as a Vidocq application does (vauban#347).
+    requires io.vidocq.vauban.classloader;
+    requires io.vidocq.vauban.classloader.spi;
 
     requires jakarta.cdi;
     requires jakarta.inject;

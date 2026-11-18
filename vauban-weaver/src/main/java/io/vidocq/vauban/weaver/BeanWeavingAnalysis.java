@@ -82,11 +82,15 @@ public final class BeanWeavingAnalysis {
 
     private static boolean isCustomNormalScope(String descriptor, ByteResolver resolver,
             Map<String, Boolean> scopeCache) {
-        return scopeCache.computeIfAbsent(descriptor, d -> {
-            if (!d.startsWith("L") || !d.endsWith(";")) return false;
-            var bytes = resolver.bytesOf(d.substring(1, d.length() - 1).replace('/', '.'));
-            return bytes != null && isMetaAnnotatedNormalScope(bytes);
-        });
+        var cached = scopeCache.get(descriptor);
+        if (cached != null) return cached;
+        boolean normalScope = false;
+        if (descriptor.startsWith("L") && descriptor.endsWith(";")) {
+            var bytes = resolver.bytesOf(descriptor.substring(1, descriptor.length() - 1).replace('/', '.'));
+            normalScope = bytes != null && isMetaAnnotatedNormalScope(bytes);
+        }
+        scopeCache.put(descriptor, normalScope);
+        return normalScope;
     }
 
     /**
@@ -97,8 +101,7 @@ public final class BeanWeavingAnalysis {
         try {
             for (var attribute : ClassFile.of().parse(bytes).attributes()) {
                 if (attribute instanceof RuntimeVisibleAnnotationsAttribute annotations
-                        && annotations.annotations().stream()
-                                .anyMatch(a -> NORMAL_SCOPE_DESCRIPTOR.equals(a.className().stringValue()))) {
+                        && hasNormalScope(annotations)) {
                     return true;
                 }
             }
@@ -106,6 +109,15 @@ public final class BeanWeavingAnalysis {
         } catch (IllegalArgumentException _) {
             return false;
         }
+    }
+
+    private static boolean hasNormalScope(RuntimeVisibleAnnotationsAttribute annotations) {
+        for (var annotation : annotations.annotations()) {
+            if (NORMAL_SCOPE_DESCRIPTOR.equals(annotation.className().stringValue())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
