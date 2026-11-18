@@ -896,16 +896,37 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-06 — The processor misses a type-use-only annotation on a constructor
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
-- **Module**: `vauban-processor` (`apt.MirrorTypeAnnotations`)
+- **Status**: FIXED
+- **Module**: `vauban-processor` (`apt.MirrorTypeAnnotations`, `apt.ConstructorTypeUses`)
 - **Symptom**: `@A Fixture(int size) {}`, `@A` targeting `TYPE_USE` only: the class file records `@A` on the
   constructor's return type (`METHOD_RETURN`), the bytecode scan indexes it on the constructor's `RETURN` target, the
   processor does not. An annotation that targets `TYPE_USE` and `CONSTRUCTOR` is indexed by both.
 - **Repro**: `ElementScannerTypeAnnotationsTest#aTypeUseOnlyAnnotationOnAConstructor` in `vauban-processor`,
   disabled with this id.
-- **Cause (hypothesis)**: javac's model has the annotation neither in the constructor's `getAnnotationMirrors()` nor
-  on its `void` return type; it may be reachable through the tree API (`com.sun.source`), which the processor does
-  not use.
+- **Cause, proved**: red on 1706478a with the `@Disabled` lifted (`stack-l2d-red.log`, "RED BUG-20261118-06 on
+  1706478a (assertions fixed)": `expected: <[RETURN 0 0 [] A{}]> but was: <null>`, and the same for an annotation
+  with members). A probe processor on javac 25 printed, for `@A Fixture(int)`, no annotation in
+  `getAnnotationMirrors()`, none on `getReturnType()` nor on the `ExecutableType`'s return type, and `@A` in the
+  tree's modifiers (`Trees.getTree(constructor).getModifiers()`): javac keeps the type annotation in its symbol's
+  type attributes, which no `javax.lang.model` call gives.
+- **Fix**: `ConstructorTypeUses` reads the constructor's annotations from its tree (`com.sun.source.util.Trees`,
+  `jdk.compiler`, which the processor already requires), keeps those whose `@Target` names `TYPE_USE` and not
+  `CONSTRUCTOR`, and evaluates their members as javac does: a literal converted to the member's type, a sign, a
+  cast, parentheses, a constant or an enum constant by its field, a class literal, an array written whole or as one
+  element, a nested annotation. `MirrorTypeAnnotations.constructor` adds them after the model's, on `RETURN`. The
+  scanner reads them through `new ElementScanner(ProcessingEnvironment)`, which the processor and
+  `CompilerDeclarations` now use; a compiler without trees, and a class read from the class path, give none.
+- **Verification**: `ElementScannerTypeAnnotationsTest`, 12 tests: the repro, an annotation with each kind of member,
+  one with each primitive written with a cast, a sign and a character, and `theMethods` comparing every method
+  without the removal it carried (`stack-l2d-dev06.log`, "BUG-18-06 fix (5)"); `ConstructorTypeUsesValueTest`;
+  processor 444 (14 skipped), maven-plugin 172, architecture 56 (`stack-l2d-dev06.log`, "BUG-18-06 fix (6)" and
+  "(8)"). New code covered 100 of 111 lines (JaCoCo, "(8)").
+- **What stays**: a member written as a constant expression of several operands that names a constant,
+  `NAME + "!"`, is not evaluated: the processor leaves out the annotation that holds it
+  (`aComputedMemberIsLeftOut`). javac joins literals alone as it parses them.
+  The type-use-only annotations come after those that also target `CONSTRUCTOR`: a constructor that writes one of
+  the second kind after one of the first has them in another order than the class file's (by construction, not
+  tested).
 - **Found by**: BUG-20261117-60, lane L2.
 
 ---

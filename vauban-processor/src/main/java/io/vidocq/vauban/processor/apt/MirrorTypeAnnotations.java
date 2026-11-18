@@ -126,16 +126,21 @@ final class MirrorTypeAnnotations {
 
     /**
      * Reads the annotations on what a constructor builds: those of its annotations that apply to a type use, which
-     * the class file records on its return type, where the compiler's model gives a constructor a {@code void} one.
+     * the class file records on its return type, where the compiler's model gives a constructor a {@code void} one,
+     * then {@code typeUseOnly}, those that apply to a type use only, which the model does not hold and its source
+     * gives (BUG-20261118-06).
      */
-    MirrorTypeAnnotations constructor(ExecutableElement constructor) {
-        add(constructor.getAnnotationMirrors().stream().filter(MirrorTypeAnnotations::appliesToTypeUse).toList(),
-                Target.RETURN, 0, 0, List.of());
+    MirrorTypeAnnotations constructor(ExecutableElement constructor, List<AnnotationMirror> typeUseOnly) {
+        var annotations = new ArrayList<AnnotationMirror>(constructor.getAnnotationMirrors().stream()
+                .filter(annotation -> appliesTo((TypeElement) annotation.getAnnotationType().asElement(), "TYPE_USE"))
+                .toList());
+        annotations.addAll(typeUseOnly);
+        add(annotations, Target.RETURN, 0, 0, List.of());
         return this;
     }
 
-    private static boolean appliesToTypeUse(AnnotationMirror annotation) {
-        var type = (TypeElement) annotation.getAnnotationType().asElement();
+    /** Whether the {@code @Target} of annotation type {@code type} names the element type {@code elementType}. */
+    static boolean appliesTo(TypeElement type, String elementType) {
         return type.getAnnotationMirrors().stream()
                 .filter(meta -> named(meta, TARGET))
                 .flatMap(meta -> meta.getElementValues().values().stream())
@@ -143,7 +148,7 @@ final class MirrorTypeAnnotations {
                 .flatMap(List::stream)
                 .anyMatch(target -> target instanceof AnnotationValue value
                         && value.getValue() instanceof VariableElement constant
-                        && constant.getSimpleName().contentEquals("TYPE_USE"));
+                        && constant.getSimpleName().contentEquals(elementType));
     }
 
     private static boolean named(AnnotationMirror annotation, String name) {

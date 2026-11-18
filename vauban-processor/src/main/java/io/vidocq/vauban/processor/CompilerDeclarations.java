@@ -24,9 +24,9 @@ import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.processor.apt.ElementScanner;
 
+import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,9 +51,9 @@ final class CompilerDeclarations {
     private final ElementScanner scanner;
     private final Map<DotName, Lookup> described = new ConcurrentHashMap<>();
 
-    CompilerDeclarations(Elements elements, Types types) {
-        this.elements = elements;
-        this.scanner = new ElementScanner(elements, types);
+    CompilerDeclarations(ProcessingEnvironment environment) {
+        this.elements = environment.getElementUtils();
+        this.scanner = new ElementScanner(environment);
     }
 
     /** The class as the compiler sees it, for the language model alone; empty when the compiler sees no such class. */

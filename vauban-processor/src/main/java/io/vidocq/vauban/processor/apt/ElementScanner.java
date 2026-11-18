@@ -30,6 +30,7 @@ import io.vidocq.vauban.indexer.model.ParameterInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
+import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
@@ -67,9 +68,10 @@ public final class ElementScanner {
             | ClassFile.ACC_SYNTHETIC;
 
     private final Elements elements;
+    private final Optional<ConstructorTypeUses> constructorTypeUses;
 
     /**
-     * Creates a scanner.
+     * Creates a scanner that reads no source: a constructor's annotations that apply to a type use only are left out.
      *
      * @param elements the element utilities of the processing environment
      * @param types    the type utilities of the processing environment; checked, not kept
@@ -78,6 +80,16 @@ public final class ElementScanner {
     public ElementScanner(Elements elements, Types types) {
         this.elements = Objects.requireNonNull(elements);
         Objects.requireNonNull(types);
+        this.constructorTypeUses = Optional.empty();
+    }
+
+    /**
+     * Creates a scanner of the compiler of {@code environment}, which reads, where the compiler gives the source, the
+     * annotations on a constructor that apply to a type use only, as the bytecode scan reads them (BUG-20261118-06).
+     */
+    public ElementScanner(ProcessingEnvironment environment) {
+        this.elements = Objects.requireNonNull(environment.getElementUtils());
+        this.constructorTypeUses = ConstructorTypeUses.of(environment);
     }
 
     /**
@@ -286,7 +298,8 @@ public final class ElementScanner {
             typeAnnotations.type(method.getReceiverType(), Target.RECEIVER, 0);
         }
         if (method.getKind() == ElementKind.CONSTRUCTOR) {
-            typeAnnotations.constructor(method);
+            typeAnnotations.constructor(method, constructorTypeUses.map(reader -> reader.typeUseOnly(method))
+                    .orElse(List.of()));
         }
 
         return new MethodInfo(name, returnType, parameters, exceptionTypes, accessFlags, annotations, defaultValue,

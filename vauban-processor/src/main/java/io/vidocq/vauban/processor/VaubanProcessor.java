@@ -315,7 +315,7 @@ public class VaubanProcessor extends AbstractProcessor {
         recordCompiledModules(roundEnv);
 
         // Accumulate types annotated this round into the cross-round index.
-        var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        var scanner = new ElementScanner(processingEnv);
         indexedThisRound.clear();
         for (var annotation : annotations) {
             if (isIndexTrigger(annotation)) {
@@ -335,7 +335,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // arguments of its supertypes as the compiler reads them, as at start (BUG-20261117-14). The language model
         // describes the JDK's classes too, as the container does from their class files (BUG-20261117-31).
         var parameterized = new ParameterizedSupertypes(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
-        var declarations = new CompilerDeclarations(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        var declarations = new CompilerDeclarations(processingEnv);
         try (var _ = BceLogBridge.install(processingEnv.getMessager(), BCE_PREFIX)) {
             return CompiledSupertypes.where(parameterized, () -> IndexLookup.whereUnindexedDescribedBy(
                     declarations::unindexed, declarations::declaration, () -> processDeployment(scanner)));
@@ -703,7 +703,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // These classes come from dependency jars (added via ScannedClasses.add()), not from
         // the module being compiled — track them as external so we skip factory/proxy generation.
         // The package-info of a vetoed package comes along: no type of the package is a bean (BUG-20261117-01).
-        var scanner = new ElementScanner(processingEnv.getElementUtils(), processingEnv.getTypeUtils());
+        var scanner = new ElementScanner(processingEnv);
         for (var className : discoveryResult.scannedClasses().getAddedClasses()) {
             var bytes = ProcessorPathArchives.classFile(aptClassLoader, className);
             if (bytes.length > 0) {

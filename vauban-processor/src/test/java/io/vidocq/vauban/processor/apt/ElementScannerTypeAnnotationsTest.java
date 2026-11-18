@@ -49,6 +49,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -67,6 +68,24 @@ class ElementScannerTypeAnnotationsTest {
             @Retention(RetentionPolicy.RUNTIME) @Target(ElementType.TYPE_USE) @interface A {}
             @Retention(RetentionPolicy.RUNTIME) @Target({ElementType.TYPE_USE, ElementType.CONSTRUCTOR}) @interface B {
                 String value() default "";
+            }
+            @Retention(RetentionPolicy.RUNTIME) @Target(ElementType.TYPE_USE) @interface Valued {
+                String name();
+                long size() default 0;
+                Level level() default Level.LOW;
+                Class<?> type() default Object.class;
+                int[] codes() default {};
+                B nested() default @B;
+            }
+            @Retention(RetentionPolicy.RUNTIME) @Target(ElementType.TYPE_USE) @interface Primitives {
+                boolean flag();
+                byte tiny();
+                short small();
+                char letter();
+                int number();
+                float ratio();
+                double precise();
+                long[] longs();
             }
             @Retention(RetentionPolicy.CLASS) @Target(ElementType.TYPE_USE) @interface Hidden {}
             @Target(ElementType.TYPE_USE) @interface Unretained {}
@@ -95,6 +114,18 @@ class ElementScannerTypeAnnotationsTest {
                 }
                 @A Fixture(int size) {
                 }
+                @Valued(name = "n", size = 2, level = Level.HIGH, type = int[].class, codes = {1, -2},
+                        nested = @B("b")) @Hidden Fixture(long size, String label) {
+                }
+                @Valued(name = Fixture.NAME, codes = 3, type = String.class) Fixture(String label, long size,
+                        int more) {
+                }
+                @Primitives(flag = true, tiny = (byte) -1, small = -(2), letter = 'x', number = 'a', ratio = -1.5f,
+                        precise = +2, longs = {-1, 'b'}) Fixture(char a, char b, char c, char d) {
+                }
+                @Valued(name = NAME + "!") Fixture(double a, double b, double c, double d, double e) {
+                }
+                static final String NAME = "named";
                 <@A W extends @B Exception, X extends @A Object> @A String method(@A Fixture<T, U, V> this,
                         @B List<@A ? super W> first, @A int second) throws @B W, @A IllegalStateException {
                     return null;
@@ -117,6 +148,9 @@ class ElementScannerTypeAnnotationsTest {
     /** {@code @A Fixture(int size)}: {@code @A} applies to a type use only. */
     private static final String TYPE_USE_ONLY_CONSTRUCTOR = "<init>/1";
 
+    /** {@code @Valued(name = NAME + "!") Fixture(double, ...)}: what stays of BUG-20261118-06. */
+    private static final String COMPUTED_MEMBER_CONSTRUCTOR = "<init>/5";
+
     private static final Map<String, ClassInfo> PROCESSOR = new HashMap<>();
     private static final Map<String, ClassInfo> BYTECODE = new HashMap<>();
 
@@ -133,7 +167,7 @@ class ElementScannerTypeAnnotationsTest {
         @Override
         public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
             var elements = processingEnv.getElementUtils();
-            var scanner = new ElementScanner(elements, processingEnv.getTypeUtils());
+            var scanner = new ElementScanner(processingEnv);
             if (scanned.isEmpty() && elements.getTypeElement("app.Fixture") != null) {
                 CLASSES.forEach(name -> scanned.put(name, scanner.scan(elements.getTypeElement("app." + name))));
             }
@@ -190,7 +224,7 @@ class ElementScannerTypeAnnotationsTest {
     @DisplayName("the methods: return, receiver, parameters, throws, type parameters, a constructor's return")
     void theMethods() {
         var bytecode = byMember(BYTECODE.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
-        bytecode.remove(TYPE_USE_ONLY_CONSTRUCTOR);
+        bytecode.remove(COMPUTED_MEMBER_CONSTRUCTOR);
         assertEquals(bytecode, byMember(PROCESSOR.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations));
         assertEquals("[RETURN 0 0 [] A{}, RECEIVER 0 0 [] A{}, PARAMETER 0 0 [] B{},"
                 + " PARAMETER 0 0 [TYPE_ARGUMENT 0] A{}, PARAMETER 1 0 [] A{}, THROWS 0 0 [] B{}, THROWS 1 0 [] A{},"
@@ -205,13 +239,54 @@ class ElementScannerTypeAnnotationsTest {
      * annotations nor on its {@code void} return type, so the processor does not see it (BUG-20261118-06).
      */
     @Test
-    @Disabled("BUG-20261118-06: a type-use-only annotation on a constructor is missing in the processor")
     @DisplayName("a constructor's type-use-only annotation is on its return type")
     void aTypeUseOnlyAnnotationOnAConstructor() {
-        assertEquals(byMember(BYTECODE.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations)
-                        .get(TYPE_USE_ONLY_CONSTRUCTOR),
-                byMember(PROCESSOR.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations)
-                        .get(TYPE_USE_ONLY_CONSTRUCTOR));
+        var bytecode = byMember(BYTECODE.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        var processor = byMember(PROCESSOR.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        assertEquals(bytecode.get(TYPE_USE_ONLY_CONSTRUCTOR), processor.get(TYPE_USE_ONLY_CONSTRUCTOR));
+        assertEquals("[RETURN 0 0 [] A{}]", bytecode.get(TYPE_USE_ONLY_CONSTRUCTOR));
+    }
+
+    /**
+     * A type-use-only annotation with members on a constructor: a string, a long written as an {@code int}, an enum
+     * constant, a class literal, an array written whole or as one element, a nested annotation, a constant named by
+     * its field; a class-retained one is left out, both ways (BUG-20261118-06).
+     */
+    @Test
+    @DisplayName("a constructor's type-use-only annotation keeps its members")
+    void aTypeUseOnlyAnnotationWithMembersOnAConstructor() {
+        var bytecode = byMember(BYTECODE.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        var processor = byMember(PROCESSOR.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        assertEquals(bytecode.get("<init>/2"), processor.get("<init>/2"));
+        assertEquals(bytecode.get("<init>/3"), processor.get("<init>/3"));
+        assertTrue(bytecode.get("<init>/2").startsWith("[RETURN 0 0 [] Valued{"), bytecode.get("<init>/2"));
+    }
+
+    /**
+     * A type-use-only annotation on a constructor holding each primitive, written with a cast, a sign, parentheses
+     * and a character where a number is expected, as the compiler converts them (BUG-20261118-06).
+     */
+    @Test
+    @DisplayName("a constructor's type-use-only annotation holds each primitive as the class file does")
+    void aTypeUseOnlyAnnotationWithPrimitivesOnAConstructor() {
+        var bytecode = byMember(BYTECODE.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        var processor = byMember(PROCESSOR.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        assertEquals(bytecode.get("<init>/4"), processor.get("<init>/4"));
+        assertTrue(bytecode.get("<init>/4").startsWith("[RETURN 0 0 [] Primitives{"));
+    }
+
+    /**
+     * What stays: a member written as a constant expression of several operands, one a constant named by its field,
+     * is not read from the source, and the processor leaves out the annotation that holds it, which the class file
+     * records (BUG-20261118-06). Literals alone the compiler joins as it parses them.
+     */
+    @Test
+    @DisplayName("a constructor's type-use-only annotation with a computed member is left out in the processor")
+    void aComputedMemberIsLeftOut() {
+        var bytecode = byMember(BYTECODE.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        var processor = byMember(PROCESSOR.get("Fixture").methods(), SIGNATURE, MethodInfo::typeAnnotations);
+        assertEquals("[RETURN 0 0 [] Valued{name=StringVal[value=named!]}]", bytecode.get(COMPUTED_MEMBER_CONSTRUCTOR));
+        assertNull(processor.get(COMPUTED_MEMBER_CONSTRUCTOR));
     }
 
     /**
