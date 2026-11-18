@@ -2337,6 +2337,145 @@ class VetoedInterceptorCompileTimeTest {
                 "serializable producer of java.lang.String[]", SERIALIZABLE + LOGGER));
     }
 
+    /** Records the member, the disposer and the stereotypes of each bean of {@code vi.Stock} and {@code vi.Shown}. */
+    public static class MemberRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void members(BeanInfo bean) {
+            var declaring = bean.declaringClass().name();
+            if (!declaring.equals("vi.Stock") && !declaring.equals("vi.Shown")) {
+                return;
+            }
+            var disposer = bean.disposer() == null ? "no disposer" : "disposer " + bean.disposer().disposerMethod()
+                    .name() + "(" + bean.disposer().disposedParameter().type().asClass().declaration().simpleName()
+                    + ")";
+            var stereotypes = bean.stereotypes().stream().map(stereotype -> (stereotype.defaultScope() == null
+                    ? "no scope" : stereotype.defaultScope().name()) + " priority " + stereotype.priority()
+                    + (stereotype.isAlternative() ? " alternative" : "") + (stereotype.isNamed() ? " named" : ""))
+                    .collect(Collectors.joining(", ", "[", "]"));
+            String member;
+            if (bean.isProducerMethod()) {
+                member = "method " + bean.producerMethod().name();
+            } else if (bean.isProducerField()) {
+                member = "field " + bean.producerField().name();
+            } else {
+                member = "class " + declaring;
+            }
+            SEEN.add(member + ", " + disposer + ", " + stereotypes);
+        }
+    }
+
+    /**
+     * CDI 4.1 gives the {@code BeanInfo} of a producer its method or field and its disposer, and that of every bean its
+     * stereotypes. The container gave {@code null} for the three members and no stereotype, in the processor, at start
+     * and frozen alike (BUG-20261117-13).
+     */
+    @Test
+    @DisplayName("a BeanInfo gives its producer member, its disposer and its stereotypes, everywhere")
+    void aBeanInfoGivesItsProducerMemberDisposerAndStereotypesFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Show.java", """
+                package vi;
+                @jakarta.enterprise.inject.Stereotype
+                @jakarta.enterprise.context.ApplicationScoped
+                @jakarta.enterprise.inject.Alternative
+                @jakarta.annotation.Priority(7)
+                @jakarta.inject.Named
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface Show {
+                }
+                """);
+        sources.put("vi/Plain.java", """
+                package vi;
+                @jakarta.enterprise.inject.Stereotype
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface Plain {
+                }
+                """);
+        sources.put("vi/Shown.java", """
+                package vi;
+                @Show
+                public class Shown {
+                }
+                """);
+        sources.put("vi/Stock.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Stock {
+                    @jakarta.enterprise.inject.Produces
+                    Long level = 1L;
+                    @jakarta.enterprise.inject.Produces
+                    @Plain
+                    String label() {
+                        return "label";
+                    }
+                    void drop(@jakarta.enterprise.inject.Disposes String label) {
+                        // Nothing to release.
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, MemberRecorder.class, MemberRecorder.SEEN);
+
+        seen.assertEachIs(List.of(
+                "class vi.Shown, no disposer, [jakarta.enterprise.context.ApplicationScoped priority 7 alternative"
+                        + " named]",
+                "class vi.Stock, no disposer, []",
+                "field level, no disposer, []",
+                "method label, disposer drop(String), [no scope priority null]"));
+    }
+
+    /** Records the disposer of each producer of {@code vi.Lists}. */
+    public static class DisposerRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = java.util.List.class)
+        public void lists(BeanInfo bean) {
+            if (bean.isProducerMethod() && bean.declaringClass().name().equals("vi.Lists")) {
+                SEEN.add(bean.producerMethod().name() + " disposed by " + bean.disposer().disposerMethod().name());
+            }
+        }
+    }
+
+    /**
+     * A disposer method disposes of the producer whose bean type is its disposed parameter's type (CDI 4.1, 3.4.2), as
+     * the container pairs them when it destroys a produced instance: {@code List<String>} and {@code List<Integer>}
+     * are two types. The {@code BeanInfo} matched the erasure, and gave both producers the first disposer
+     * (BUG-20261117-13).
+     */
+    @Test
+    @DisplayName("a BeanInfo gives a producer of a parameterized type its own disposer, everywhere")
+    void aBeanInfoGivesAProducerOfAParameterizedTypeItsOwnDisposerFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Lists.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Lists {
+                    void dropNames(@jakarta.enterprise.inject.Disposes java.util.List<String> names) {
+                        // Nothing to release.
+                    }
+                    void dropCounts(@jakarta.enterprise.inject.Disposes java.util.List<Integer> counts) {
+                        // Nothing to release.
+                    }
+                    @jakarta.enterprise.inject.Produces
+                    java.util.List<String> names() {
+                        return java.util.List.of();
+                    }
+                    @jakarta.enterprise.inject.Produces
+                    java.util.List<Integer> counts() {
+                        return java.util.List.of();
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, DisposerRecorder.class, DisposerRecorder.SEEN);
+
+        seen.assertEachIs(List.of("counts disposed by dropCounts", "names disposed by dropNames"));
+    }
+
     /**
      * A type no annotation brings into the index reaches it when an injection point needs it, as a type of another
      * module would. One of a vetoed package stays no bean: the processor does not list it, and the injection point is

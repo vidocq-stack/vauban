@@ -52,6 +52,22 @@ public record DisposerDescriptor(
         injectionPoints = List.copyOf(injectionPoints);
     }
 
+    /**
+     * Whether a disposer whose disposed parameter has the type {@code disposedType} disposes of {@code producer}: a
+     * bean type of the producer is that type, or a class of the same name. {@code List<String>} and
+     * {@code List<Integer>} are two types (CDI 4.1, 3.4.2).
+     */
+    public static boolean disposes(TypeInfo disposedType, BeanDescriptor producer) {
+        for (var producerType : producer.types()) {
+            if (producerType.equals(disposedType)
+                    || producerType instanceof TypeInfo.ClassType(var name)
+                    && disposedType instanceof TypeInfo.ClassType(var disposedName) && name.equals(disposedName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** A disposer whose other parameters are not described — the pre-vauban#89 shape. */
     public DisposerDescriptor(DotName declaringClass, String methodName, TypeInfo disposedType,
             Set<QualifierInstance> qualifiers, int parameterIndex) {

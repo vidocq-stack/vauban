@@ -1403,7 +1403,7 @@ public final class BeanDiscovery {
     }
 
     /** The erased type name, as {@link Class#getTypeName()} spells it, or {@code null} when it cannot be told. */
-    static String erasedName(TypeInfo type) {
+    public static String erasedName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name.value();
             case TypeInfo.ParameterizedType(var raw, _) -> raw.value();

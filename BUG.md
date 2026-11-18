@@ -3122,7 +3122,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-13 — The `BeanInfo` of a producer bean has no producer method and no producer field
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-core` (`VaubanBceBeanInfo`)
 - **Symptom**: a `@Registration` method gets, for a producer bean, a `BeanInfo` whose `isProducerMethod()` or
   `isProducerField()` answers `true` and whose `producerMethod()` and `producerField()` answer `null`. `disposer()`
@@ -3139,6 +3139,26 @@ suspected cause, status. Updated on every investigation.
   stereotypes the same way. No brick of the workspace reads these four.
 - **Found by**: the repro of BUG-20261117-11, which names a producer bean by its types because its `BeanInfo` gives
   no member.
+- **Cause** (proved): `VaubanBceBeanInfo` returned `null` from `producerMethod()`, `producerField()` and
+  `disposer()`, and `List.of()` from `stereotypes()`, on every path: the processor's, the container's at start and the
+  build's that freezes the extensions all hand `@Registration` that class.
+- **Fix**: `producerMethod()` finds the method in the index by the name the bean id carries after the declaring class
+  and, for one of overloaded methods, by its erased parameter types (`BeanDiscovery.erasedName`, now public, as
+  `BeanId.ofOverloadedProducerMethod` spells them); `producerField()` by its name. `disposer()` gives the method of the
+  declaring class whose `@Disposes` parameter has the type of one of the bean's types, as the container pairs them
+  (`DisposerDescriptor.disposes`, which `DisposerInvoker` now calls too), and qualifiers the bean has, `@Default` for
+  none (`VaubanBceDisposerInfo`). A first version matched the erasure, and gave producers of `List<String>` and
+  `List<Integer>` the same disposer; the L4 review found it, red `stack-l4-44-red.log` "Red run 1" (the three places),
+  green `stack-l4-13b-dev.log` "Dev run 1"
+  (`VetoedInterceptorCompileTimeTest#aBeanInfoGivesAProducerOfAParameterizedTypeItsOwnDisposerFromTheProcessorAtStartAndFrozen`). `stereotypes()` gives the annotations of the class, or of the producer
+  member, whose type is a `@Stereotype`, each described by the language model (`VaubanBceStereotypeInfo`: the scope it
+  declares, `@Alternative`, `@Priority`, `@Named` and its interceptor bindings).
+- **TCK**: not covered; the CDI Lite TCK's `RegistrationTest` reads `qualifiers()` and `isInterceptor()` only.
+- **Verification**: red, `stack-l4-13-red.log`: "Red run 1" (at start, the `NullPointerException` of
+  `producerMethod()` and `producerField()`) and "Red run 2" (the processor, on b546df6e's `VaubanBceBeanInfo`: the same
+  `NullPointerException` fails the compilation). Green, `stack-l4-13-dev.log`: "Dev run 2" (the `BceRegistration*`
+  tests), "Dev run 3" (`VetoedInterceptorCompileTimeTest#aBeanInfoGivesItsProducerMemberDisposerAndStereotypesFromTheProcessorAtStartAndFrozen`),
+  "Dev run 4" (vauban-core, vauban-processor, vauban-maven-plugin).
 
 ## BUG-20261117-12 — `vauban-synthetic-metadata.properties` changes at every compile (its date line)
 

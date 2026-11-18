@@ -19,9 +19,13 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
+import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
+import io.vidocq.vauban.core.langmodel.declarations.VaubanFieldInfo;
+import io.vidocq.vauban.core.langmodel.declarations.VaubanMethodInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.DisposerInfo;
@@ -32,13 +36,18 @@ import jakarta.enterprise.lang.model.declarations.FieldInfo;
 import jakarta.enterprise.lang.model.declarations.MethodInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Adapts Vauban's {@link BeanDescriptor} to the BCE {@link BeanInfo} interface.
  */
 public final class VaubanBceBeanInfo implements BeanInfo {
+
+    private static final String DISPOSES_NAME = jakarta.enterprise.inject.Disposes.class.getName();
 
     private final BeanDescriptor descriptor;
     private final IndexLookup lookup;
@@ -96,14 +105,52 @@ public final class VaubanBceBeanInfo implements BeanInfo {
         return false;
     }
 
+    /**
+     * The producer method of a producer method bean, found in the index by the name its id carries and, for one of
+     * overloaded methods, by its erased parameter types (BUG-20261116-11); {@code null} for any other bean. It was
+     * {@code null} for every bean (BUG-20261117-13).
+     */
     @Override
     public MethodInfo producerMethod() {
-        return null;
+        var declaring = isProducerMethod() ? lookup.getClass(descriptor.beanClass()).orElse(null) : null;
+        if (declaring == null) {
+            return null;
+        }
+        var member = memberName();
+        int open = member.indexOf('(');
+        var name = open < 0 ? member : member.substring(0, open);
+        return declaring.methods().stream()
+                .filter(method -> method.name().equals(name) && !method.isConstructor()
+                        && (open < 0 || member.substring(open).equals(erasedParameters(method))))
+                .findFirst()
+                .map(method -> (MethodInfo) new VaubanMethodInfo(method, new VaubanClassInfo(declaring, lookup),
+                        lookup))
+                .orElse(null);
     }
 
+    /** The producer field of a producer field bean, found in the index by its name; {@code null} for any other bean. */
     @Override
     public FieldInfo producerField() {
-        return null;
+        var declaring = isProducerField() ? lookup.getClass(descriptor.beanClass()).orElse(null) : null;
+        if (declaring == null) {
+            return null;
+        }
+        var name = memberName();
+        return declaring.fields().stream()
+                .filter(field -> field.name().equals(name))
+                .findFirst()
+                .map(field -> (FieldInfo) new VaubanFieldInfo(field, new VaubanClassInfo(declaring, lookup), lookup))
+                .orElse(null);
+    }
+
+    /** What the id of a producer bean names after its declaring class: {@code method(T1,T2)}, or a field name. */
+    private String memberName() {
+        return descriptor.id().value().substring(descriptor.beanClass().value().length() + 1);
+    }
+
+    private static String erasedParameters(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        return method.parameters().stream().map(parameter -> BeanDiscovery.erasedName(parameter.type()))
+                .map(String::valueOf).collect(Collectors.joining(",", "(", ")"));
     }
 
     @Override
@@ -121,14 +168,83 @@ public final class VaubanBceBeanInfo implements BeanInfo {
         return descriptor.name();
     }
 
+    /**
+     * The disposer method of a producer bean: a method of its declaring class whose {@code @Disposes} parameter has
+     * the erasure of one of the bean's types and qualifiers the bean has, {@code @Default} for none (CDI 4.1, 3.4.2);
+     * {@code null} when it has none, and for any other bean (BUG-20261117-13).
+     */
     @Override
     public DisposerInfo disposer() {
+        if (!isProducerMethod() && !isProducerField()) {
+            return null;
+        }
+        var indexClass = lookup.getClass(descriptor.beanClass()).orElse(null);
+        if (indexClass == null) {
+            return null;
+        }
+        var declaringClass = new VaubanClassInfo(indexClass, lookup);
+        var qualifiers = descriptor.qualifiers().stream().map(q -> q.annotationName().value())
+                .collect(Collectors.toSet());
+        for (var indexMethod : indexClass.methods()) {
+            int position = indexMethod.isConstructor() ? -1 : disposedPosition(indexMethod);
+            if (position < 0
+                    || !DisposerDescriptor.disposes(indexMethod.parameters().get(position).type(), descriptor)) {
+                continue;
+            }
+            var method = new VaubanMethodInfo(indexMethod, declaringClass, lookup);
+            var parameter = method.parameters().get(position);
+            if (qualifiers.containsAll(qualifiersOf(parameter))) {
+                return new VaubanBceDisposerInfo(method, parameter);
+            }
+        }
         return null;
     }
 
+    /** The position of the {@code @Disposes} parameter of {@code method}; -1 for none. */
+    private static int disposedPosition(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        var parameters = method.parameters();
+        for (int i = 0; i < parameters.size(); i++) {
+            if (parameters.get(i).annotations().stream()
+                    .anyMatch(annotation -> annotation.name().value().equals(DISPOSES_NAME))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** The qualifiers of a disposed parameter, {@code @Default} for none. */
+    private static Set<String> qualifiersOf(jakarta.enterprise.lang.model.declarations.ParameterInfo parameter) {
+        var names = parameter.annotations(annotation -> annotation.declaration().hasAnnotation(jakarta.inject.Qualifier
+                .class) || annotation.name().equals(jakarta.inject.Named.class.getName())).stream()
+                .map(AnnotationInfo::name).collect(Collectors.toSet());
+        return names.isEmpty() ? Set.of(jakarta.enterprise.inject.Default.class.getName()) : names;
+    }
+
+    /**
+     * The stereotypes the bean declares: the annotations of its class, or of its producer method or field, whose type
+     * is a {@code @Stereotype}. It gave none (BUG-20261117-13).
+     */
     @Override
     public Collection<StereotypeInfo> stereotypes() {
-        return List.of();
+        var declaration = declaration();
+        if (declaration == null) {
+            return List.of();
+        }
+        var stereotypes = new ArrayList<StereotypeInfo>();
+        for (var annotation : declaration.annotations()) {
+            if (annotation.declaration().hasAnnotation(jakarta.enterprise.inject.Stereotype.class)) {
+                stereotypes.add(new VaubanBceStereotypeInfo(annotation.declaration(), lookup));
+            }
+        }
+        return stereotypes;
+    }
+
+    /** What declares the bean: its producer method or field, or its class. */
+    private jakarta.enterprise.lang.model.AnnotationTarget declaration() {
+        if (isProducerMethod()) {
+            return producerMethod();
+        }
+        return isProducerField() ? producerField() : declaringClass();
     }
 
     @Override

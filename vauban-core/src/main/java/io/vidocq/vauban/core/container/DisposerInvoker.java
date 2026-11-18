@@ -522,11 +522,6 @@ final class DisposerInvoker {
     }
 
     static boolean disposerMatchesProducerType(DisposerDescriptor disposer, BeanDescriptor producer) {
-        for (var producerType : producer.types()) {
-            if (sameClassName(producerType, disposer.disposedType()) || producerType.equals(disposer.disposedType())) {
-                return true;
-            }
-        }
-        return false;
+        return DisposerDescriptor.disposes(disposer.disposedType(), producer);
     }
 }
