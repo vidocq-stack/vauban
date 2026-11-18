@@ -100,6 +100,16 @@ final class InterceptorBeanWrapper {
             }
         }
 
+        // Injected into the instance, an Interceptor is its own metadata, an @Intercepted Bean the intercepted bean's
+        // (BUG-20261117-47)
+        return BeanMetadata.creatingInterceptor(new VaubanInterceptor<>(descriptor,
+                interceptorManager::getOrCreateInstance, container.classLoader()), ctx,
+                () -> createdInterceptorInstance(descriptor, ctx));
+    }
+
+    /** An instance of the interceptor {@code descriptor} describes, which {@code ctx} does not hold yet. */
+    private Object createdInterceptorInstance(InterceptorDescriptor descriptor, CreationalContext<?> ctx) {
+        String className = descriptor.interceptorClass().value();
         var asBean = interceptorInstanceAsBean(className, ctx);
         if (asBean != NO_BEAN) {
             return asBean;

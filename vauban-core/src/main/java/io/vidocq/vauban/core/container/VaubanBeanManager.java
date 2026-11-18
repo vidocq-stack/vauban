@@ -157,7 +157,7 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
 
     private List<Bean<?>> getBuiltInBeans() {
         if (builtInBeans == null) {
-            builtInBeans = List.of(
+            var all = new ArrayList<Bean<?>>(List.of(
                 new BuiltInBean<>(BeanManager.class,
                     Set.of(BeanManager.class, jakarta.enterprise.inject.spi.BeanContainer.class),
                     () -> this),
@@ -175,7 +175,10 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
                 new BuiltInBean<>(jakarta.enterprise.context.control.RequestContextController.class,
                     Set.of(jakarta.enterprise.context.control.RequestContextController.class, Object.class),
                     () -> new io.vidocq.vauban.core.context.VaubanRequestContextController(container.requestContext()))
-            );
+            ));
+            // CDI 4.1, 5.5.8: Bean, Interceptor and @Intercepted Bean (BUG-20261117-47)
+            all.addAll(BeanMetadata.builtInBeans());
+            builtInBeans = List.copyOf(all);
         }
         return builtInBeans;
     }

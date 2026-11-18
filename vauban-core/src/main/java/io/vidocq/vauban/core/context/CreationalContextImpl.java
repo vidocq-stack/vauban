@@ -30,6 +30,23 @@ public final class CreationalContextImpl<T> implements CreationalContext<T> {
     private final List<Object> incompleteInstances = new ArrayList<>();
     private final List<DependentInstance> dependentInstances = new ArrayList<>();
     private final Map<String, Object> interceptorInstances = new HashMap<>();
+    /** The intercepted bean whose instance this context creates first: its interceptors' {@code @Intercepted Bean}. */
+    private Contextual<?> interceptedBean;
+
+    /**
+     * Records {@code bean}, an intercepted bean, as the one whose instance this context creates, unless one is already:
+     * the interceptor instances this context holds intercept it (CDI 4.1, 5.5.8; BUG-20261117-47).
+     */
+    public void createsInterceptedInstanceOf(Contextual<?> bean) {
+        if (interceptedBean == null) {
+            interceptedBean = bean;
+        }
+    }
+
+    /** The intercepted bean {@link #createsInterceptedInstanceOf} recorded, or {@code null}. */
+    public Contextual<?> interceptedBean() {
+        return interceptedBean;
+    }
 
     @Override
     @SuppressWarnings("unchecked")

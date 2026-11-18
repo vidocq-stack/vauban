@@ -41,15 +41,19 @@ public final class BuiltInBean<T> implements Bean<T> {
     private final Supplier<T> supplier;
     private final Set<Annotation> qualifiers;
 
-    @SuppressWarnings("unchecked")
     public BuiltInBean(Class<?> beanClass, Set<Type> types, Supplier<?> supplier) {
+        this(beanClass, types, supplier, Set.of(Default.Literal.INSTANCE));
+    }
+
+    /** A built-in bean of {@code qualifiers}, and {@code @Any}: the {@code @Intercepted Bean} (BUG-20261117-47). */
+    @SuppressWarnings("unchecked")
+    public BuiltInBean(Class<?> beanClass, Set<Type> types, Supplier<?> supplier, Set<Annotation> qualifiers) {
         this.beanClass = (Class<T>) beanClass;
         this.types = Set.copyOf(types);
         this.supplier = (Supplier<T>) supplier;
-        this.qualifiers = Set.of(
-            Default.Literal.INSTANCE,
-            Any.Literal.INSTANCE
-        );
+        var all = new java.util.HashSet<Annotation>(qualifiers);
+        all.add(Any.Literal.INSTANCE);
+        this.qualifiers = Set.copyOf(all);
     }
 
     @Override public T create(CreationalContext<T> ctx) { return supplier.get(); }

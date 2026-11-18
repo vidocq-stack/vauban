@@ -179,8 +179,6 @@ class VetoedInterceptorCompileTimeTest {
     private static final String WATCHED_SERVICE = "vi.WatchedService";
     /** What {@code vi.WatchedService} answers when {@code vi.Watcher}, which reads the bean it intercepts, does. */
     private static final String WATCHED_HELLO = "Watcher(vi.WatchedService: hello)";
-    /** Why the repros of the bean metadata of CDI 4.1, 5.5.8, are disabled. */
-    private static final String NO_BEAN_METADATA = "BUG-20261117-47: the container provides no bean metadata bean";
     /** What {@link #startedAnswer} gives of a container it only starts, without calling a bean. */
     private static final String DEPLOYED = "deployed";
     /** Mansart's repository interface, above two interfaces no annotation brings into the index (BUG-20261117-31). */
@@ -2847,7 +2845,6 @@ class VetoedInterceptorCompileTimeTest {
      * processor reports nothing of it, and the container gives it, its extensions run at start as frozen
      * (BUG-20261117-47).
      */
-    @Disabled(NO_BEAN_METADATA)
     @Test
     @DisplayName("a bean gets its own Bean metadata in the processor, at start and frozen")
     void aBeanGetsItsOwnBeanMetadata() throws Exception {
@@ -2873,7 +2870,6 @@ class VetoedInterceptorCompileTimeTest {
      * nothing of it, and the container gives it, its extensions run at start as frozen (BUG-20261117-47; in the
      * processor, BUG-20261117-41 too).
      */
-    @Disabled(NO_BEAN_METADATA)
     @Test
     @DisplayName("an interceptor gets its own Interceptor metadata in the processor, at start and frozen")
     void anInterceptorGetsItsOwnInterceptorMetadata() throws Exception {
@@ -2885,17 +2881,15 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
-     * An interceptor may inject the bean it intercepts, {@code @Intercepted Bean<?>} (CDI 4.1, 5.5.8), and read its
-     * class when it intercepts a call (BUG-20261117-47; BUG-20261117-41 too, which refuses the injection point).
+     * An interceptor may inject the bean it intercepts, {@code @Intercepted Bean<?>} (CDI 4.1, 5.5.8), written
+     * {@code Bean<? extends Object>} too, and read its class when it intercepts a call (BUG-20261117-47; the injection
+     * point was refused before BUG-20261117-41).
      */
-    @Disabled(NO_BEAN_METADATA)
-    @Test
+    @ParameterizedTest(name = "@Intercepted Bean<{0}>")
+    @ValueSource(strings = {"?", "? extends Object"})
     @DisplayName("an interceptor gets the metadata of the bean it intercepts in the processor, at start and frozen")
-    void anInterceptorGetsTheMetadataOfTheBeanItIntercepts() throws Exception {
-        var sources = new LinkedHashMap<String, String>();
-        putMetadataInterceptor(sources, "Watcher", "Watched", INTERCEPTED_BEAN + "<?>");
-
-        assertEachPlaceServes(sources, WATCHED_SERVICE, WATCHED_HELLO);
+    void anInterceptorGetsTheMetadataOfTheBeanItIntercepts(String argument) throws Exception {
+        assertEachPlaceServes(withAWatcher(argument), WATCHED_SERVICE, WATCHED_HELLO);
     }
 
     /** {@link #withAVetoedPackage()}, with {@code vi.Watcher}, which injects {@code @Intercepted Bean<argument>}. */

@@ -1312,55 +1312,58 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-47 — The container provides none of the bean metadata beans of CDI 4.1 §5.5.8
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (the container's built-in beans, `VaubanBeanManager`; `BeanInjector`)
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`)
+- **Module**: `vauban-core` (the container's built-in beans, `VaubanBeanManager`; `InterceptorBeanWrapper`)
 - **Symptom**: CDI 4.1, 5.5.8 "Bean metadata", in Part I.A, CDI Lite: "The container must provide beans allowing a
   bean instance to obtain a `Bean` or `Interceptor` instance containing its metadata: a bean with scope `@Dependent`,
   qualifier `@Default` and type `Bean` which can be injected into any bean instance; a bean with scope `@Dependent`,
   qualifier `@Default` and type `Interceptor` which can be injected into any interceptor instance. Additionally, the
   container must provide beans allowing interceptors to obtain information about the beans they intercept: a bean
   with scope `@Dependent`, qualifier `@Intercepted` and type `Bean` which can be injected into any interceptor
-  instance." Only decorator metadata is CDI Full (16.4.2: `Decorator`, `@Decorated Bean`). Vauban provides none of
-  the three: a bean that injects `Bean<Itself>` fails when the container creates it, with
-  `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Bean`; an interceptor that
-  injects `Interceptor<Itself>` or `@Intercepted Bean<?>` fails with `CreationException: Failed to create
-  interceptor`, caused by the same for `jakarta.enterprise.inject.spi.Interceptor` or `Bean`.
-- **Repro**: three tests of `VetoedInterceptorCompileTimeTest` in `vauban-processor`, disabled (`NO_BEAN_METADATA`).
-  Each checks the processor, then a container started on classes compiled with the processor's validation off, its
-  extensions run at start, then frozen, and calls the bean:
+  instance." Only decorator metadata is CDI Full (16.4.2: `Decorator`, `@Decorated Bean`). Vauban provided none of
+  the three: a bean that injects `Bean<Itself>` failed when the container created it, with
+  `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Bean<…>`; an interceptor
+  that injects `Interceptor<Itself>` or `@Intercepted Bean<?>` failed with `CreationException: Failed to create
+  interceptor`, caused by the same for `Interceptor` or `Bean`.
+- **Repro**: in `vauban-processor`, `VetoedInterceptorCompileTimeTest`, each checking the processor, then a container
+  started on classes compiled with the processor's validation off, its extensions run at start, then frozen, and
+  calling the bean:
   - `aBeanGetsItsOwnBeanMetadata`: `vi.SelfAware` injects `Bean<SelfAware>` and answers its bean class;
   - `anInterceptorGetsItsOwnInterceptorMetadata`: `vi.Introspector` injects `Interceptor<Introspector>` and wraps what
     it intercepts in its own bean class;
-  - `anInterceptorGetsTheMetadataOfTheBeanItIntercepts`: `vi.Watcher` injects `@Intercepted Bean<?>` and wraps what it
-    intercepts in the class of that bean, as the repro of BUG-20261117-41 does.
+  - `anInterceptorGetsTheMetadataOfTheBeanItIntercepts`, for `?` and `? extends Object`: `vi.Watcher` injects
+    `@Intercepted Bean<…>` and wraps what it intercepts in the class of that bean.
 
-  Each run once, enabled, in `vauban-b22-red.log`; none of the three works:
-  - "Round 4: BUG-47 repros run once", on 02b24e3d (BUG-20261117-22):
-    - `Bean<SelfAware>`: the processor accepts it; at start and frozen, `UnsatisfiedResolutionException: No bean found
-      for type: jakarta.enterprise.inject.spi.Bean` when the bean is created;
-    - `Interceptor<Introspector>`: the processor refuses it (BUG-20261117-41, which does not see the interceptor); at
-      start and frozen, `CreationException: Failed to create interceptor: vi.Introspector`, caused by
-      `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Interceptor`;
-    - `@Intercepted Bean<?>`: refused in all three places (BUG-20261117-41), before anything is created;
-  - "Round 4: repro with the parked fix", on 02b24e3d with the parked fix of BUG-20261117-41: the processor accepts
-    all three; at start and frozen, the first two fail as above, and `@Intercepted Bean<?>` with `CreationException:
-    Failed to create interceptor: vi.Watcher`, caused by `No bean found for type: jakarta.enterprise.inject.spi.Bean`,
-    as "Fix round 2 red run 3" saw first.
-- **Cause**: no built-in bean of type `Bean` or `Interceptor` is registered. The container's built-in beans are
-  `BeanManager`, `Event`, `Instance`, `InjectionPoint` and `RequestContextController` (`VaubanBeanManager`), and
-  `BeanInjector` resolves a field of type `Bean` or `Interceptor` as any other, through `VaubanContainer.select`, which
-  finds no bean. The validator counts both types as built-in (`DeploymentValidator.isBuiltInType`), so nothing fails
-  before the creation.
-- **Impact**: any bean or interceptor written to the spec that injects its metadata, or the bean it intercepts, fails
-  when the container creates it: at its first use, not at start.
-- **Not caught by the TCK**: the CDI Lite TCK run (774 tests) passes. In the CDI TCK 4.1.0, the test that injects these
-  beans, `tests.full.implementation.builtin.metadata.BuiltinMetadataBeanTest`, is in the CDI Full part, which the
-  runner leaves out, as it checks the decorator metadata too (`@Decorated`); the Lite tests of
-  `builtin.metadata.broken` expect a definition error, and pass.
-- **Fix order**: this one first, the three beans; then BUG-20261117-41, which needs them.
+  In `vauban-core`, `BeanMetadataTest`, on classes no processor compiled: `Bean<Itself>` at a constructor, a field and
+  an initializer; an interceptor with `Interceptor<Itself>` at its constructor and `@Intercepted Bean<?>` in a field,
+  bound to two beans, a `@Dependent` and an `@ApplicationScoped` one, each seen as itself; the `Interceptor` and
+  `@Intercepted Bean` beans give `null` outside the creation of an interceptor.
+- **Cause** (proved, "BUG-20261117-47 red, on 80e3cff7"): no built-in bean of type `Bean` or `Interceptor` was
+  registered. The container's built-in beans were `BeanManager`, `Event`, `Instance`, `InjectionPoint` and
+  `RequestContextController` (`VaubanBeanManager`), so the resolution of a field or a parameter of type `Bean` or
+  `Interceptor` found no bean. The validator counts both types as built-in (`DeploymentValidator.isBuiltInType`), so
+  nothing failed before the creation.
+- **Fix**: `BeanMetadata` adds the three beans to the container's built-in ones, each `@Dependent`:
+  - `Bean`, `@Default`: the bean of the injection point being injected, as `InjectionPoint` is served;
+  - `Interceptor`, `@Default`, and `Bean`, `@Intercepted`: two `ScopedValue`s, bound while
+    `InterceptorBeanWrapper` creates an interceptor instance, to its `Interceptor` and to the bean whose instance it
+    intercepts. That bean is the one the interceptor's creational context creates: an intercepted `ManagedBean`
+    records itself on the `CreationalContextImpl` it creates an instance with, unless one is already recorded.
+  `BuiltInBean` takes qualifiers other than `@Default`. No reflection is added: the beans read what the container
+  holds.
+- **Limit**: interceptor instances are cached by creational context and interceptor class, as before; an intercepted
+  `@Dependent` bean created with the creational context of another intercepted bean shares its interceptor instances,
+  and so their `@Intercepted Bean`. Nothing here changes which instances are shared.
+- **CDI Lite TCK**: not covered. `tests.full.implementation.builtin.metadata.BuiltinMetadataBeanTest`, which injects
+  these beans, is in the CDI Full part the runner leaves out, as it checks the decorator metadata too (`@Decorated`);
+  the Lite tests of `builtin.metadata.broken` expect a definition error, and the validation that gives it is
+  unchanged.
+- **Verification**: red on 80e3cff7, BUG-20261117-41, the fix set aside (`stack-l3b-red.log`, "BUG-20261117-47 red,
+  on 80e3cff7": the three repros, at start and frozen, `No bean found for type` `Bean<vi.SelfAware>`,
+  `Interceptor<vi.Introspector>`, `Bean<?>`). Green: `stack-l3b-green.log`, "BUG-20261117-47 fix, run 3" (the
+  processor repros), "run 4" (`BeanMetadataTest`), and "BUG-20261117-47 fix: the whole reactor".
 - **Found by**: the review of BUG-20261117-41 (BUG-20261117-22, round 4), against CDI 4.1, 5.5.8; the failure was first
   seen in "Fix round 2 red run 3".
-
 ## BUG-20261117-46 — An error an extension phase throws without a message is reported as "null"
 
 - **Date**: 2026-11-17

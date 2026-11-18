@@ -120,6 +120,11 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
     @Override
     public T create(CreationalContext<T> callerContext) {
         var creationalContext = contextOfItsOwnIfIntercepted(callerContext);
+        if (interceptorManager != null
+                && creationalContext instanceof io.vidocq.vauban.core.context.CreationalContextImpl<T> context) {
+            // Its interceptors, created with this context, inject it as their @Intercepted Bean (BUG-20261117-47)
+            context.createsInterceptedInstanceOf(this);
+        }
         T instance = factory.create(creationalContext);
         
         // CDI spec: producer returning null for non-Dependent scope -> IllegalProductException
