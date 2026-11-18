@@ -1059,7 +1059,17 @@ public final class VaubanContainerBuilder {
             for (var pair : runtimeReplayPairs) {
                 fullBceClasses.add(pair.getKey());
             }
-            var combinedEnhMods = collectEnhancements(unprocessedArchiveClasses, fullBceClasses,
+            // The classes the extensions that run enhance: those of the sources no processor saw, and those their
+            // @Discovery added. Their @Enhancement methods run here once, on the instances @Discovery ran on, and not
+            // again with the other phases (BUG-20261117-08).
+            var toEnhance = new ArrayList<>(unprocessedArchiveClasses);
+            if (!bceClasses.isEmpty()) {
+                extensionAddedClasses.stream().filter(added -> !toEnhance.contains(added)).forEach(toEnhance::add);
+            }
+            var enhancedAtStart = toEnhance.isEmpty() || fullBceClasses.isEmpty()
+                    ? Set.<Class<?>>of() : Set.<Class<?>>copyOf(fullBceClasses);
+            var combinedEnhMods = collectEnhancements(new Enhancing(toEnhance, fullBceClasses,
+                    discoveryResult == null ? Map.of() : discoveryResult.bceInstances()),
                     effectiveReplayPairs, enhancementPatch, index, bceClassLoader);
             // VAU-BCE-002: signatures of every synthetic bean registered during this boot,
             // shared between the runtime BCE path and the APT metadata path so identical
@@ -1097,7 +1107,8 @@ public final class VaubanContainerBuilder {
                         new BceProcessor.RegisteredQualifiers(discovery.getCustomQualifiers(),
                                 discovery.getCustomNonbindingMembers()),
                         // A start checks the invokers' lookups once it registered every synthetic bean, below
-                        capture == null);
+                        capture == null,
+                        enhancedAtStart);
                 failOnExtensionErrors(bceResult);
                 registerExtensionResults(bceResult, descriptors, observers, syntheticDisposers,
                         seenSyntheticSignatures, combinedEnhMods);
@@ -1415,18 +1426,25 @@ public final class VaubanContainerBuilder {
     }
 
     /**
+     * The extensions whose {@code @Enhancement} methods run at start, the classes they enhance, and the instances
+     * their {@code @Discovery} ran on.
+     */
+    private record Enhancing(List<Class<?>> classes, Set<Class<?>> extensions, Map<Class<?>, Object> instances) {
+    }
+
+    /**
      * The Enhancement modifications of the full extension scan of the unprocessed archives, of the legacy reflective
      * replay (only for targets not covered by the frozen patch) and of the members of the frozen patch.
      */
     private static Map<DotName, List<VaubanClassConfig>> collectEnhancements(
-            List<Class<?>> unprocessedArchiveClasses, Set<Class<?>> fullBceClasses,
+            Enhancing enhancing,
             List<Map.Entry<Class<?>, Class<?>>> effectiveReplayPairs,
             Map<DotName, List<AnnotationInfo>> enhancementPatch,
             VaubanIndex index, DeploymentClassLoader bceClassLoader) {
         var combinedEnhMods = new java.util.HashMap<DotName, List<VaubanClassConfig>>();
-        if (!unprocessedArchiveClasses.isEmpty() && !fullBceClasses.isEmpty()) {
-            var enhMods = BceProcessor.processEnhancementOnly(
-                    List.copyOf(fullBceClasses), unprocessedArchiveClasses, index, bceClassLoader);
+        if (!enhancing.classes().isEmpty() && !enhancing.extensions().isEmpty()) {
+            var enhMods = BceProcessor.processEnhancementOnly(List.copyOf(enhancing.extensions()),
+                    enhancing.classes(), index, bceClassLoader, enhancing.instances());
             enhMods.forEach((k, v) -> combinedEnhMods.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
         }
 

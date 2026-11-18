@@ -65,6 +65,20 @@ public final class BceProcessor {
             List<Class<?>> archiveClasses,
             VaubanIndex index,
             ClassLoader classLoader) {
+        return processEnhancementOnly(bceClasses, archiveClasses, index, classLoader, Map.of());
+    }
+
+    /**
+     * {@link #processEnhancementOnly(List, List, VaubanIndex, ClassLoader)}, an extension called on the instance
+     * {@code instances} holds for its class, the one its {@code @Discovery} ran on, so that it keeps one state across
+     * the phases; on an instance of its own when there is none.
+     */
+    public static Map<DotName, List<VaubanClassConfig>> processEnhancementOnly(
+            List<Class<?>> bceClasses,
+            List<Class<?>> archiveClasses,
+            VaubanIndex index,
+            ClassLoader classLoader,
+            Map<Class<?>, Object> instances) {
         var lookup = new IndexLookup(index);
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
         var errors = new ArrayList<String>();
@@ -75,7 +89,8 @@ public final class BceProcessor {
         for (var bceClass : bceClasses) {
             try {
                 ExtensionAsks.<Exception>of(bceClass, () -> {
-                    var bce = instantiateBce(bceClass);
+                    var known = instances.get(bceClass);
+                    var bce = known != null ? known : instantiateBce(bceClass);
                     processEnhancement(bce, bceClass, List.of(), archiveTypes, lookup, classLoader, errors,
                             errorCauses, modifications);
                 });
@@ -316,6 +331,30 @@ public final class BceProcessor {
                                  java.util.function.Function<DotName, BeanDescriptor> managedBean,
                                  RegisteredQualifiers qualifiers,
                                  boolean deferLookups) {
+        return process(bceClasses, beans, observers, interceptors, index, classLoader, bceInstances,
+                allArchiveClasses, managedBean, qualifiers, deferLookups, Set.of());
+    }
+
+    /**
+     * {@link #process(List, List, List, List, VaubanIndex, ClassLoader, Map, List, java.util.function.Function,
+     * RegisteredQualifiers, boolean)}, with no {@code @Enhancement} call for the extensions of {@code enhanced}: the
+     * container ran their {@code @Enhancement} methods already, over the classes of the deployment, before it
+     * discovered the beans, and CDI 4.1 calls each once for each type it matches. It called them a second time here
+     * (BUG-20261117-08).
+     */
+    @SuppressWarnings("java:S107") // CDI BCE processing requires multiple contextual parameters
+    public static Result process(List<Class<?>> bceClasses,
+                                 List<BeanDescriptor> beans,
+                                 List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
+                                 List<io.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
+                                 VaubanIndex index,
+                                 ClassLoader classLoader,
+                                 Map<Class<?>, Object> bceInstances,
+                                 List<Class<?>> allArchiveClasses,
+                                 java.util.function.Function<DotName, BeanDescriptor> managedBean,
+                                 RegisteredQualifiers qualifiers,
+                                 boolean deferLookups,
+                                 Set<Class<?>> enhanced) {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
@@ -346,9 +385,12 @@ public final class BceProcessor {
         var archiveTypes = typesOf(allArchiveClasses);
 
         // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
-        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
+        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
+            if (!enhanced.contains(bceClass)) {
                 processEnhancement(bce, bceClass, beans, archiveTypes, lookup, classLoader, deploymentErrors,
-                        deploymentErrorCauses, allEnhancementMods));
+                        deploymentErrorCauses, allEnhancementMods);
+            }
+        });
 
         // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
         // (BUG-20261008-03)

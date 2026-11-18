@@ -620,7 +620,6 @@ class VetoedInterceptorCompileTimeTest {
      * once more in the full run of the extensions, each with an instance of its own (BUG-20261117-08).
      */
     @Test
-    @Disabled("BUG-20261117-08: the container calls an @Enhancement method twice for each type, at start and frozen")
     @DisplayName("@Enhancement is called once for each type, from the processor, at start and frozen")
     void enhancementIsCalledOnceForEachTypeFromTheProcessorAtStartAndFrozen() throws Exception {
         var seen = seenThreeWays(withListenerSubtypes(), ListenerEnhancer.class, ListenerEnhancer.SEEN);

@@ -3296,7 +3296,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-08 — The container calls an `@Enhancement` method twice for each type, at start and when the build freezes
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-core` (`VaubanContainerBuilder.collectEnhancements`, `BceProcessor.processEnhancementOnly`,
   `BceProcessor.process`)
 - **Symptom**: CDI 4.1 calls an `@Enhancement` method once for each type it matches. When the container runs the
@@ -3327,6 +3327,23 @@ suspected cause, status. Updated on every investigation.
   - the first pass runs on a fresh instance, without the state the `@Discovery` phase built: Dirac's
     `DiracExtension`, Mansart's `MansartDataExtension` and `MansartTransactionsExtension` declare both phases.
 - **Found by**: the test of BUG-20261117-07, which records what `@Enhancement` sees in the three places.
+- **Cause** (proved): at start, `VaubanContainerBuilder.collectEnhancements` ran the `@Enhancement` methods of the
+  extensions over the classes no processor saw (`BceProcessor.processEnhancementOnly`, each extension on a new
+  instance), to enrich the index before discovery; then `BceProcessor.process` ran its `@Enhancement` phase again
+  over the beans, on the `@Discovery` instance. The capture build that freezes the extensions takes the same path.
+- **Fix**: `processEnhancementOnly` takes the instances of `@Discovery` and calls each extension on its own;
+  `collectEnhancements` enhances the classes no processor saw and those `@Discovery` added (`Enhancing`); and
+  `BceProcessor.process` takes the set of extensions already enhanced and does not call their `@Enhancement`
+  methods again. When that pass did not run (every source processed), `process` runs the phase as before.
+- **TCK**: not covered; the CDI Lite TCK extensions do not count their `@Enhancement` calls.
+- **Bricks**: Dirac, Mansart Data and Mansart Transactions declare `@Enhancement` and later phases: their
+  `@Enhancement` method now runs once, on the instance their later phases run on.
+- **Verification**: red, `stack-l4-10-red.log`, "Red run 1" (`VetoedInterceptorCompileTimeTest#enhancementIsCalledOnceForEachTypeFromTheProcessorAtStartAndFrozen`
+  enabled on 3d208491, a lane commit since taken out, whose BceProcessor did not touch this path:
+  `[vi.Impl, vi.Impl, vi.Other, vi.Other]` at start and frozen). `BcePhaseOrderTest` guards that an extension's
+  phases run in order on its one instance; it was green before the fix too.
+  Green, `stack-l4-08-dev.log`: "Dev run 1" (that test and `enhancementGetsTheSubtypesOfItsTypesFromTheProcessorAtStartAndFrozen`),
+  "Dev run 2" (vauban-core, vauban-processor, vauban-maven-plugin).
 
 ## BUG-20261117-07 — An extension the processor runs misses an `@Enhancement` subtype whose type comes through a class or an interface above it
 
