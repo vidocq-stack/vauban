@@ -287,6 +287,26 @@ final class InterceptorBeanWrapper {
         }
     }
 
+    /**
+     * The client proxy of {@code bean}, looked up as {@code requested}: refused when that type is a class a proxy cannot
+     * stand for, one with a final method, neither private nor static, of its own or of a superclass (CDI 4.1 §3.10,
+     * BUG-20261118-19). The type decides, not the bean class: a bean whose class inherits a final method is looked up
+     * as an interface it implements.
+     */
+    <T> T getOrCreateProxy(ManagedBean<T> bean, java.lang.reflect.Type requested) {
+        var raw = requested instanceof java.lang.reflect.ParameterizedType parameterized
+                ? parameterized.getRawType() : requested;
+        if (raw instanceof Class<?> type && !type.isInterface()) {
+            var finalMethod = firstFinalMethod(type);
+            if (finalMethod != null) {
+                throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean "
+                        + bean.getBeanClass().getName() + " is looked up as " + type.getName()
+                        + ", which has final method " + finalMethod.getName());
+            }
+        }
+        return getOrCreateProxy(bean);
+    }
+
     @SuppressWarnings("unchecked")
     <T> T getOrCreateProxy(ManagedBean<T> bean) {
         return (T) proxyCache.computeIfAbsent(bean.descriptor().id(), id -> createProxy(bean));
@@ -411,15 +431,13 @@ final class InterceptorBeanWrapper {
         }
     }
 
-    /** A normal-scoped bean's class must be proxyable: not final, no final method, not only a private no-arg constructor. */
+    /** A normal-scoped bean's class must be proxyable: not final, not only a private no-arg constructor. */
     private static void checkNormalScopedProxyable(Class<?> beanClass) {
         if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
             throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " is final");
         }
-        var finalMethod = firstFinalMethod(beanClass);
-        if (finalMethod != null) {
-            throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " has final method " + finalMethod.getName());
-        }
+        // A final method is the requested type's to judge (getOrCreateProxy(bean, type), BUG-20261118-19): a bean
+        // whose class has one is still proxied when it is looked up or injected as an interface.
         // CDI 4.1: no-arg constructor is NOT required — proxy calls super with default values.
         // However, a bean with ONLY a private no-arg constructor is still unproxyable.
         boolean hasPrivateNoArgCtor = false;
@@ -438,16 +456,12 @@ final class InterceptorBeanWrapper {
         }
     }
 
-    /** The first method {@code beanClass} declares final, neither private nor static, or {@code null}. */
+    /**
+     * The first final method, neither private nor static, that {@code beanClass} declares or inherits, or
+     * {@code null}: the walk of every proxyability check (BUG-20261118-19).
+     */
     private static Method firstFinalMethod(Class<?> beanClass) {
-        for (var method : beanClass.getDeclaredMethods()) {
-            if (java.lang.reflect.Modifier.isFinal(method.getModifiers())
-                    && !java.lang.reflect.Modifier.isPrivate(method.getModifiers())
-                    && !java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
-                return method;
-            }
-        }
-        return null;
+        return io.vidocq.vauban.core.bean.validation.DeploymentValidator.firstOverridableFinalMethod(beanClass);
     }
 
     private <T> Object subclassProxy(ManagedBean<T> bean, Class<?> beanClass) throws ReflectiveOperationException {

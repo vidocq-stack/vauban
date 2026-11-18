@@ -842,8 +842,29 @@ public class VaubanProcessor extends AbstractProcessor {
         candidates.addAll(archiveBeans);
         var resolver = new BeanResolver(candidates, List.of(), assignability,
                 new io.vidocq.vauban.core.bean.resolution.QualifierMatcher(annotationTypes));
-        var validator = new DeploymentValidator(beans, resolver, index).otherObserverInjectionPoints(observerPoints);
+        var validator = new DeploymentValidator(beans, resolver, index).otherObserverInjectionPoints(observerPoints)
+                .finalMethodBeyondTheIndex(this::finalMethodOnElements);
         return validator.validate();
+    }
+
+    /**
+     * The first final method of the named class a subclass would have to override, read on the compiler's elements:
+     * where the index the validator walks stops at a superclass it does not hold, a class of a library or one that is
+     * no bean (BUG-20261118-19). Empty for a class the compiler does not see.
+     */
+    private java.util.Optional<String> finalMethodOnElements(String className) {
+        var elements = processingEnv.getElementUtils();
+        var type = elements.getTypeElement(className);
+        if (type == null) {
+            // A binary name: a nested class is named with '$', which the canonical name writes '.'
+            type = elements.getTypeElement(className.replace('$', '.'));
+        }
+        if (type == null) {
+            return java.util.Optional.empty();
+        }
+        return io.vidocq.vauban.core.proxy.ForwardedMethods.firstFinalMethod(
+                        io.vidocq.vauban.processor.codegen.ElementTypeView.of(type, processingEnv.getTypeUtils()))
+                .map(io.vidocq.vauban.core.codegen.TypeView.Member::name);
     }
 
     /**

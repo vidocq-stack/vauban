@@ -46,6 +46,8 @@ import java.util.stream.Collectors;
 
 final class DisposerInvoker {
 
+    private static final System.Logger LOG = System.getLogger(DisposerInvoker.class.getName());
+
     private static final String DISPOSER_METHOD = "Disposer method ";
 
     /** Parameter types a disposer receives from the container itself, so they are never resolved as beans. */
@@ -392,8 +394,10 @@ final class DisposerInvoker {
                     return;
                 }
             }
-        } catch (Exception _) {
-            // CDI spec: exceptions in disposer methods are suppressed
+        } catch (Exception e) {
+            // CDI 4.1 §6.1: Contextual.destroy() catches what the destruction throws; it is logged, not lost.
+            LOG.log(System.Logger.Level.WARNING, DISPOSER_METHOD + disposer.declaringClass().value() + "."
+                    + disposer.methodName() + " failed; the produced instance is destroyed all the same", e);
         }
     }
 
@@ -411,7 +415,10 @@ final class DisposerInvoker {
             var isStatic = java.lang.reflect.Modifier.isStatic(method.getModifiers());
             Object declaringInstance = null;
             if (!isStatic) {
-                declaringInstance = declBean != null
+                // The disposer is called on the contextual instance (CDI 4.1 §3.4.1), as a producer method is: a
+                // normal-scoped declaring bean is not reached through a client proxy typed by its class, which the
+                // class may not admit, a final method in it (BUG-20261118-19).
+                declaringInstance = declBean != null && !bm.isNormalScope(declBean.getScope())
                         ? bm.getReference(declBean, declaringClass, ctx)
                         : container.selectByBeanClass(declaringClass);
             }

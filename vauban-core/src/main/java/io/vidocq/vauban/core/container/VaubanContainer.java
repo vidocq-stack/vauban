@@ -418,7 +418,7 @@ public final class VaubanContainer implements AutoCloseable {
                     "No factory registered for bean: " + descriptor.id());
         }
 
-        return getContextualInstance(bean);
+        return getContextualInstance(bean, lookupType);
     }
 
     /**
@@ -435,7 +435,7 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     @SuppressWarnings("unchecked")
-    private <T> T getContextualInstance(ManagedBean<T> bean) {
+    private <T> T getContextualInstance(ManagedBean<T> bean, Class<?> lookupType) {
         var finalBean = (ManagedBean<T>) beans.get(bean.descriptor().id());
         if (finalBean == null) finalBean = bean;
 
@@ -445,7 +445,7 @@ public final class VaubanContainer implements AutoCloseable {
         // no-arg context.get() on such contexts throws ContextNotActiveException.
         // The proxy's delegate resolves the contextual instance lazily on first method call.
         if (finalBean.descriptor().scope().isNormal()) {
-            return interceptorWrapper.getOrCreateProxy(finalBean);
+            return interceptorWrapper.getOrCreateProxy(finalBean, lookupType);
         }
 
         var scopeClass = finalBean.getScope();
@@ -468,8 +468,9 @@ public final class VaubanContainer implements AutoCloseable {
         return interceptorWrapper.runtimeGeneration();
     }
 
-    <T> T getOrCreateProxyForBean(ManagedBean<T> bean) {
-        return interceptorWrapper.getOrCreateProxy(bean);
+    /** The client proxy of {@code bean}, looked up as {@code requested}, which must be proxyable. */
+    <T> T getOrCreateProxyForBean(ManagedBean<T> bean, java.lang.reflect.Type requested) {
+        return interceptorWrapper.getOrCreateProxy(bean, requested);
     }
 
     /**

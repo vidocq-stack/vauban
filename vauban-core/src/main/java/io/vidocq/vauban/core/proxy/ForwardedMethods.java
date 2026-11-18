@@ -105,6 +105,24 @@ public final class ForwardedMethods {
     }
 
     /**
+     * The first final method, neither static nor private, of {@code type} or of a superclass: what makes a class
+     * unproxyable (CDI 4.1 §3.10, "non-static, final methods with public, protected or default visibility"). The walk
+     * goes from the type up to {@code java.lang.Object}, excluded, and counts a package-private method of another
+     * package too: code of that package calls it on a proxy as on any instance (BUG-20261118-19). A bridge or a
+     * synthetic method is the compiler's, and never counts.
+     */
+    public static Optional<TypeView.Member> firstFinalMethod(TypeView type) {
+        for (TypeView c = type; c != null && !c.isObject(); c = c.superclass()) {
+            for (var m : c.methods()) {
+                if (m.is(Flag.FINAL) && !m.is(Flag.STATIC) && !m.is(Flag.PRIVATE) && !m.isBridge()) {
+                    return Optional.of(m);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Whether a proxy may override {@code m}: neither static, private nor final, neither a bridge nor generated
      * plumbing, nor a finalizer or {@code clone()}, nor a serialization hook ({@link #isSerialHook}), which no proxy
      * forwards. An abstract method is forwarded like any other: the proxy never calls {@code super}, and the

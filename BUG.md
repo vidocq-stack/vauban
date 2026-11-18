@@ -58,6 +58,76 @@ suspected cause, status. Updated on every investigation.
   `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
 - **Found by**: the review of BUG-20261118-04.
 
+## BUG-20261118-20 — A proxy looked up as an interface runs a final method that implements it on itself
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-core` (`container.InterceptorBeanWrapper`, `proxy.RuntimeClientProxyGenerator`),
+  `vauban-processor` (client proxies)
+- **Symptom**: `@ApplicationScoped class StatefulSvc extends StatefulFinalBase implements Stateful`, where
+  `StatefulFinalBase` declares `public final String state()`, which implements `Stateful.state()`. Looked up or
+  injected as `Stateful`, which CDI 4.1 §3.10 allows, the bean resolves, and `state()` runs on the client proxy, not
+  on the contextual instance: it returns the proxy's field, `null`.
+- **Repro**: `InheritedFinalMethodTest.anInterfaceMethodTheFinalMethodImplements`, `@Disabled` with this id.
+- **Cause** (hypothesis): the client proxy of a managed bean subclasses the bean class whatever type it is requested
+  as; it cannot override the final method, and the interface method resolves to it. Pre-existing: 81fab2cb proxies
+  the same way. Fix candidates: a proxy of the bean's interfaces only (a generated class, not
+  `java.lang.reflect.Proxy`) when the bean class has a final method, as such a bean is never looked up as its class.
+- **Found by**: the check that review round 3 of BUG-20261118-19 asked for first, `stack-bug19-dev.log`, "Dev run 3".
+
+## BUG-20261118-19 — A bean that inherits a final method passes the proxyability checks
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/client-proxy-bridge`
+- **Module**: `vauban-core` (`bean.validation.DeploymentValidator`, `container.InterceptorBeanWrapper`,
+  `container.DisposerInvoker`, `proxy.ForwardedMethods`), `vauban-processor` (`VaubanProcessor`)
+- **Symptom**: `@ApplicationScoped class InheritsFinal extends FinalBase {}`, where `FinalBase` is no bean and declares
+  `public final String tag()`. Injected, it started; looked up, it resolved; a call of `tag()` ran on the proxy
+  itself. The processor compiled it, whether `FinalBase` was in the compilation or in a library. CDI 4.1 §3.10 makes
+  such a class unproxyable: a deployment problem when injected, an `UnproxyableResolutionException` when looked up
+  (TCK `NonPrivateNonStaticSuperclassMethodTest`, assertion `bbb`, a superclass that is a bean).
+- **Repro**: `InheritedFinalMethodTest` in `vauban-core` (injected, looked up, intercepted, a package-private final
+  method of another package, and a private or static final method that leaves the bean proxyable; review round 3: a
+  bean `Svc extends FinalBase implements Api` injected and looked up as `Api`, as `Svc`, and a normal-scoped producer
+  of such a class); `UnproxyableBeanValidationTest.inheritedFinalMethodBeanIsRejected`,
+  `finalMethodOfACompiledSuperclassIsRejected` and `inheritedFinalMethodBeanInjectedAsAnInterfaceCompiles` in
+  `vauban-processor`.
+- **Cause** (proved by the red run): the validator walks the superclasses through the index and stopped at the first
+  one the index does not hold: a class that is no bean, or a library's. At first use, `firstFinalMethod`
+  (`InterceptorBeanWrapper`) read the bean class's own methods only. Red: `stack-bug19-red.log`, "Red run 2": the
+  injected and looked-up cases and both processor cases. The intercepted case was already rejected at start, by the
+  validator's reflective walk of intercepted beans; it is pinned.
+- **Fix**: one walk, `ForwardedMethods.firstFinalMethod(TypeView)`: from the class up to `Object`, excluded, a final
+  method neither static nor private, bridges and synthetic methods aside. A package-private one of another package
+  counts, as CDI 4.1 §3.10 ("public, protected or default visibility") and Weld count it, and as the validator's index
+  walk always did. The index walk hands over to it at a superclass the index does not hold: by reflection at start,
+  on the compiler's elements in the processor (`DeploymentValidator.finalMethodBeyondTheIndex`). The requested type
+  decides, not the bean class: the validator already judged the injection point's type, and a lookup
+  (`VaubanContainer.select`, `BeanManager.getReference`, `Instance`) now judges the looked-up type
+  (`InterceptorBeanWrapper.getOrCreateProxy(bean, type)`); an interface is always proxyable. Round 2 checked the bean
+  class when the proxy was created, which refused a bean looked up as an interface it implements, and a normal-scoped
+  producer of a library class: review round 3 moved the check. An intercepted bean is still judged on its class: its
+  subclass is the bean class's.
+- **Fix, review round 6**: a disposer of a normal-scoped bean whose class inherits a final method never ran.
+  `DisposerInvoker` asked `BeanManager.getReference(declaringBean, declaringClass)`, which this fix refuses for such a
+  class, and the `UnproxyableResolutionException` was swallowed with every other failure of the disposer. The
+  receiver of a disposer of a normal-scoped declaring bean is now its contextual instance
+  (`VaubanContainer.selectByBeanClass`), as a producer method's is. CDI 4.1 §6.1 (`Contextual.destroy()`, TCK audit
+  "contextual", assertion `ab`) wants what the destruction throws caught, so the catch stays: it now logs a WARNING,
+  `Disposer method <class>.<method> failed; the produced instance is destroyed all the same`, with the exception.
+  No TCK test throws from a disposer. Red, `stack-bug19-red.log`, "Red run 4" (on 6686465c:
+  `disposerOfABeanWithAFinalMethod`, nothing disposed, then in `InheritedFinalMethodTest`; "Red run 5", moved to
+  `DisposerOfAFinalMethodBeanTest`). Green, `stack-bug19-dev.log`, "Dev run 4", with `disposerThatThrows`.
+- **Verification, review round 3**: red, `stack-bug19-red.log`, "Red run 3" (on 4ac9fce6): the package-private
+  final method of another package started, and `Svc` looked up as `Api` and the producer looked up as `Api` threw
+  `UnproxyableResolutionException`. `Svc` injected or looked up as `Svc` was already refused, and the processor
+  already compiled the interface injection: both are pinned. Green, `stack-bug19-dev.log`, "Dev run 3". The check
+  asked first, a bean injected as an interface whose class inherits a final method, found BUG-20261118-20.
+- **Verification**: red, `stack-bug19-red.log`, "Red run 2" (on fd1f66c3; "Red run 1" asked a deployment error of a
+  bean nothing injects, which CDI does not). Green, `stack-bug19-dev.log`, "Dev run 2": `vauban-core` 1639 tests,
+  `vauban-processor` 391, no failure; the full build of the lane tip, `stack-bug49-build.log`.
+- **Found by**: the review of BUG-20261117-49, round 2.
+
 ## BUG-20261118-18 — The run-time intercepted subclass lets a bridge to a superclass method past its interceptors
 
 - **Date**: 2026-11-18

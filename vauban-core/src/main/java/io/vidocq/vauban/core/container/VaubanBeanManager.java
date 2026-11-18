@@ -219,7 +219,7 @@ public final class VaubanBeanManager implements BeanManager, Serializable {
         // For normal-scoped beans, return client proxy via container
         if (bean instanceof ManagedBean<?> mb
                 && mb.descriptor().scope().isNormal()) {
-            return container.getOrCreateProxyForBean(mb);
+            return container.getOrCreateProxyForBean(mb, beanType);
         }
 
         var scope = bean.getScope();

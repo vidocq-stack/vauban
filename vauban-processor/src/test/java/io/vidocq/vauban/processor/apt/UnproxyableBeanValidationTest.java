@@ -171,6 +171,86 @@ class UnproxyableBeanValidationTest {
     }
 
     @Test
+    @DisplayName("a final method inherited from a class outside the compilation fails the build")
+    void inheritedFinalMethodBeanIsRejected() throws IOException {
+        var result = compile(CONFIG, CONSUMER, """
+                package io.repro.app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class Oidc extends io.vidocq.vauban.processor.fixture.library.FinalLibraryBase {
+                }
+                """);
+
+        assertFalse(result.success(),
+                "an inherited final method makes a normal-scoped bean unproxyable: " + result.messages());
+        assertTrue(hasVaubanError(result, "final method issuer"),
+                "the error must name the final method: " + result.messages());
+    }
+
+    @Test
+    @DisplayName("a bean whose class inherits a final method compiles when it is injected as an interface")
+    void inheritedFinalMethodBeanInjectedAsAnInterfaceCompiles() throws IOException {
+        var result = compile(CONFIG, """
+                package io.repro.app;
+
+                public interface Issuer {
+                    String name();
+                }
+                """, """
+                package io.repro.app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Inject;
+
+                @ApplicationScoped
+                public class Consumer {
+                    @Inject
+                    Issuer issuer;
+
+                    public String hello() { return issuer.name(); }
+                }
+                """, """
+                package io.repro.app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class Oidc extends io.vidocq.vauban.processor.fixture.library.FinalLibraryBase
+                        implements Issuer {
+                    public String name() { return "oidc"; }
+                }
+                """);
+
+        assertTrue(result.success(), "the injection point's type decides, an interface is proxyable (CDI 4.1 §3.10): "
+                + result.messages());
+    }
+
+    @Test
+    @DisplayName("a final method inherited from a class of the compilation fails the build")
+    void finalMethodOfACompiledSuperclassIsRejected() throws IOException {
+        var result = compile(CONFIG, CONSUMER, """
+                package io.repro.app;
+
+                public class OidcBase {
+                    public final String issuer() { return "fixed"; }
+                }
+                """, """
+                package io.repro.app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public class Oidc extends OidcBase {
+                }
+                """);
+
+        assertFalse(result.success(), "regression guard: " + result.messages());
+        assertTrue(hasVaubanError(result, "final method issuer"), result.messages().toString());
+    }
+
+    @Test
     @DisplayName("a plain no-arg-constructor bean keeps compiling")
     void plainBeanStillCompiles() throws IOException {
         var result = compile(CONFIG, CONSUMER, """

@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.resolution.DependencyGraph;
+import io.vidocq.vauban.core.codegen.ClassTypeView;
 import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.core.proxy.ClientProxyShape;
 import io.vidocq.vauban.indexer.VaubanIndex;
@@ -78,6 +79,15 @@ public final class DeploymentValidator {
      */
     private Map<DotName, List<InjectionPointInfo>> otherObserverPoints = Map.of();
 
+    /**
+     * The name of the first final method a subclass of the named class would have to override
+     * ({@link io.vidocq.vauban.core.proxy.ForwardedMethods#firstFinalMethod}), read where the index walk of a
+     * proxyable class stops at a superclass the index does not hold: by reflection by default, on the compiler's
+     * elements in the processor (BUG-20261118-19).
+     */
+    private java.util.function.Function<String, java.util.Optional<String>> finalMethodBeyondTheIndex =
+            DeploymentValidator::finalMethodByReflection;
+
     /** Reflection-only fallback — proxyability checks are blind to unloadable classes. */
     public DeploymentValidator(List<BeanDescriptor> beans, BeanResolver resolver) {
         this(beans, resolver, null);
@@ -101,6 +111,26 @@ public final class DeploymentValidator {
     public DeploymentValidator otherObserverInjectionPoints(Map<DotName, List<InjectionPointInfo>> points) {
         this.otherObserverPoints = Map.copyOf(points);
         return this;
+    }
+
+    /**
+     * Declares how the name of the first final method of a class whose superclasses the index does not hold is read
+     * ({@link #finalMethodBeyondTheIndex}); returns {@code this}.
+     */
+    public DeploymentValidator finalMethodBeyondTheIndex(
+            java.util.function.Function<String, java.util.Optional<String>> lookup) {
+        this.finalMethodBeyondTheIndex = Objects.requireNonNull(lookup);
+        return this;
+    }
+
+    /** The first final method of the named class, read by reflection; empty for a class this loader cannot load. */
+    private static java.util.Optional<String> finalMethodByReflection(String className) {
+        try {
+            return java.util.Optional.ofNullable(firstOverridableFinalMethod(DeploymentClasses.load(className)))
+                    .map(java.lang.reflect.Method::getName);
+        } catch (ClassNotFoundException _) {
+            return java.util.Optional.empty();
+        }
     }
 
     /** Declares classes that will be woven at load time; returns {@code this}. */
@@ -297,21 +327,13 @@ public final class DeploymentValidator {
 
     /**
      * The first final method a subclass would have to override, walking up from {@code clazz}:
-     * neither private nor static. {@code null} when there is none.
+     * neither private nor static, a member of the class ({@link
+     * io.vidocq.vauban.core.proxy.ForwardedMethods#firstFinalMethod}). {@code null} when there is none.
      */
-    private static java.lang.reflect.Method firstOverridableFinalMethod(Class<?> clazz) {
-        for (Class<?> checkClass = clazz; checkClass != null && checkClass != Object.class;
-                checkClass = checkClass.getSuperclass()) {
-            for (var method : checkClass.getDeclaredMethods()) {
-                int modifiers = method.getModifiers();
-                if (java.lang.reflect.Modifier.isFinal(modifiers)
-                        && !java.lang.reflect.Modifier.isPrivate(modifiers)
-                        && !java.lang.reflect.Modifier.isStatic(modifiers)) {
-                    return method;
-                }
-            }
-        }
-        return null;
+    public static java.lang.reflect.Method firstOverridableFinalMethod(Class<?> clazz) {
+        return io.vidocq.vauban.core.proxy.ForwardedMethods.firstFinalMethod(ClassTypeView.of(clazz))
+                .map(ClassTypeView::method)
+                .orElse(null);
     }
 
     /** CDI spec: Duplicate bean names (two non-alternative beans with the same EL name). */
@@ -471,24 +493,32 @@ public final class DeploymentValidator {
                     contextBean));
         }
 
-        // Final methods, walking the hierarchy through the index; a superclass absent from
-        // the index ends the walk (its members are re-checked by the runtime container).
+        // Final methods, walking the hierarchy through the index; at a superclass the index does
+        // not hold, the whole class is read another way (BUG-20261118-19).
         var current = info;
         while (current != null && !JAVA_LANG_OBJECT.equals(current.name().value())) {
             for (var method : current.methods()) {
                 if (method.isConstructor() || method.isStaticInitializer()) continue;
                 if (method.isFinal() && !method.isPrivate() && !method.isStatic()) {
-                    errors.add(new ValidationError(
-                            ValidationError.Kind.DEPLOYMENT_ERROR,
-                            PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_HAS_FINAL_METHOD + method.name(),
-                            contextBean));
+                    errors.add(finalMethodError(bean, method.name(), contextBean));
                     return;
                 }
             }
             var superName = current.superName();
-            current = superName == null || index == null
+            var next = superName == null || index == null
                     ? null : index.getClassByName(superName).orElse(null);
+            if (next == null && superName != null && !JAVA_LANG_OBJECT.equals(superName.value())) {
+                finalMethodBeyondTheIndex.apply(info.name().value())
+                        .ifPresent(name -> errors.add(finalMethodError(bean, name, contextBean)));
+                return;
+            }
+            current = next;
         }
+    }
+
+    private static ValidationError finalMethodError(BeanDescriptor bean, String method, BeanDescriptor contextBean) {
+        return new ValidationError(ValidationError.Kind.DEPLOYMENT_ERROR,
+                PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_HAS_FINAL_METHOD + method, contextBean);
     }
 
     private void validateProxyableByReflection(TypeInfo.ClassType ct, BeanDescriptor bean,
