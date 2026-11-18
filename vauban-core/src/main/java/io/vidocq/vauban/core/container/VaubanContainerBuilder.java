@@ -42,6 +42,7 @@ import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -975,7 +976,7 @@ public final class VaubanContainerBuilder {
             var nonBceClasses = beanClasses.stream()
                     .filter(c -> !ReflectionValidator.isBuildCompatibleExtension(c))
                     .toList();
-            validateClassDefinitions(index, nonBceClasses);
+            validateClassDefinitions(index, nonBceClasses, extensionAddedClasses);
 
             // --- Collect Enhancement modifications: full BCE for unprocessed JARs +
             //     targeted replay for pre-processed JARs (vauban-bce-runtime.list) ---
@@ -1241,16 +1242,24 @@ public final class VaubanContainerBuilder {
         }
     }
 
-    /** Fails with a {@code DefinitionException} listing the class-level definition errors, if any. */
+    /**
+     * Fails with a {@code DefinitionException} listing the class-level definition errors, if any: of the bean
+     * classes, and of the classes an extension added through {@code ScannedClasses}, which the start read as beans
+     * without checking them (BUG-20261118-12).
+     */
     private static void validateClassDefinitions(VaubanIndex index,
-            List<Class<?>> nonBceClasses) {
+            List<Class<?>> nonBceClasses, List<Class<?>> extensionAddedClasses) {
         var classErrors = io.vidocq.vauban.core.bean.validation.ClassValidator.validate(index);
         if (!classErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(failureMessage(DEFINITION_FAILED, classErrors));
         }
         // The index plans the creation of these classes (VAU-PERF-003 step 2), keyed by the Class itself.
         nonBceClasses.forEach(beanClass -> IndexPlans.register(beanClass, index));
-        var reflectionErrors = definitionErrors(index, nonBceClasses);
+        var validated = new LinkedHashSet<Class<?>>(nonBceClasses);
+        extensionAddedClasses.stream()
+                .filter(added -> !ReflectionValidator.isBuildCompatibleExtension(added))
+                .forEach(validated::add);
+        var reflectionErrors = definitionErrors(index, List.copyOf(validated));
         if (!reflectionErrors.isEmpty()) {
             throw new jakarta.enterprise.inject.spi.DefinitionException(
                     failureMessage(DEFINITION_FAILED, reflectionErrors));

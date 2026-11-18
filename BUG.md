@@ -58,6 +58,30 @@ suspected cause, status. Updated on every investigation.
   `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
 - **Found by**: the review of BUG-20261118-04.
 
+## BUG-20261118-12 — The start skips the class-level rules of a class an extension adds through `ScannedClasses`
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-container`)
+- **Module**: `vauban-core` (`VaubanContainerBuilder.validateClassDefinitions`)
+- **Symptom**: `@Dependent ScannedSetter<T> { @Inject void set(T value) }`, which only an extension's
+  `@Discovery` adds (`ScannedClasses.add`), starts, though an initializer's parameter of a type variable is a
+  definition error (CDI 4.1, 5.2.3); the same class given to `addBeanClass` fails the start.
+- **Repro**: `TypeVariableInjectionPointTest#aClassAnExtensionAddsThroughScannedClassesHasItsDefinitionRulesChecked`
+  in `vauban-core`.
+- **Cause** (proved): `build` validates the class-level rules of `nonBceClasses`, the bean classes it was given,
+  before discovery; the classes `addExtensionScannedClasses` loads are indexed and discovered as beans, never in
+  that list.
+- **Fix**: `validateClassDefinitions` validates the classes an extension added too, the build compatible
+  extensions left out as for the bean classes. A class without a bean-defining annotation, which discovery makes a
+  bean, is validated as one after the enhancements (BUG-20261117-30's check of the descriptor beans). The frozen
+  path reads the classes the record lists through the same method.
+- **Who sees the change**: an application whose extension adds a class that breaks a class-level rule now fails the
+  start with a `DefinitionException`.
+- **Verification**: red on the main code of "build resolves inherited observer params" (`stack-l3-red.log`,
+  "BUG-20261118-12 red": the container started). Green: `stack-l3-green.log`, "BUG-20261118-12 fix" (vauban-core
+  1655 tests, 13 skipped; vauban-processor 390, 16 skipped), then the whole reactor, `stack-l3-b12-full.log`.
+- **Found by**: the review round 1 of the `stack/l3-container` lane.
+
 ## BUG-20261118-11 — The build resolves no parameter of an inherited or a static observer
 
 - **Date**: 2026-11-18

@@ -23,7 +23,9 @@ import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.Vetoed;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
+import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
 import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.DisplayName;
@@ -103,6 +105,22 @@ class TypeVariableInjectionPointTest {
         }
     }
 
+    /** A bean only an extension adds to the deployment, through {@code ScannedClasses} (BUG-20261118-12). */
+    @Dependent
+    public static class ScannedSetter<T> {
+        @Inject
+        void set(T value) {
+            // no behaviour needed
+        }
+    }
+
+    public static class ScanningExtension implements BuildCompatibleExtension {
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(ScannedSetter.class.getName());
+        }
+    }
+
     /** Makes a {@code @Resource} class a bean, as Cassini's {@code CassiniScopeExtension} does a {@code @Path} one. */
     public static class DependentScopeExtension implements BuildCompatibleExtension {
         @Enhancement(types = Object.class, withAnnotations = Resource.class)
@@ -151,6 +169,16 @@ class TypeVariableInjectionPointTest {
 
         var refused = assertThrows(DefinitionException.class, builder::build, "the container started");
         assertTrue(refused.getMessage().contains(TYPE_VARIABLE + ResourceSetter.class.getName()
+                + ".set initializer param 0"), refused::getMessage);
+    }
+
+    @Test
+    @DisplayName("a class an extension adds through ScannedClasses has its class-level definition rules checked")
+    void aClassAnExtensionAddsThroughScannedClassesHasItsDefinitionRulesChecked() {
+        var builder = VaubanContainer.builder().addBeanClass(Gadget.class).addBeanClass(ScanningExtension.class);
+
+        var refused = assertThrows(DefinitionException.class, builder::build, "the container started");
+        assertTrue(refused.getMessage().contains(TYPE_VARIABLE + ScannedSetter.class.getName()
                 + ".set initializer param 0"), refused::getMessage);
     }
 }
