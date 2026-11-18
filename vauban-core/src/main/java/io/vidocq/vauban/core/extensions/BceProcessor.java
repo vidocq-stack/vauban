@@ -638,41 +638,51 @@ public final class BceProcessor {
         var indexClass = lookup.getClass(className).orElse(null);
         if (indexClass == null) return;
         var vaubanClassInfo = new VaubanClassInfo(indexClass, lookup);
+        // The Messages and Types the Javadoc of @Enhancement lists: they were null (BUG-20261118-23).
+        var services = new PhaseServices(new VaubanMessages(), new VaubanTypes(lookup));
         try {
             switch (paramKind) {
                 case CLASS_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
                     classConfig.setSourceBce(bce.getClass());
-                    invokeWithArg(method, bce, ClassConfig.class, classConfig);
+                    invokeWithArg(method, bce, services, ClassConfig.class, classConfig);
                     if (classConfig.isModified()) {
                         modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
                     }
                 }
-                case CLASS_INFO -> invokeWithArg(method, bce,
+                case CLASS_INFO -> invokeWithArg(method, bce, services,
                         jakarta.enterprise.lang.model.declarations.ClassInfo.class, vaubanClassInfo);
                 case METHOD_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
                     classConfig.setSourceBce(bce.getClass());
-                    for (var mc : classConfig.methods()) invokeWithArg(method, bce, MethodConfig.class, mc);
+                    for (var mc : classConfig.methods()) {
+                        invokeWithArg(method, bce, services, MethodConfig.class, mc);
+                    }
                     if (classConfig.isModified()) {
                         modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
                     }
                 }
                 case METHOD_INFO -> {
-                    for (var mi : vaubanClassInfo.methods())
-                        invokeWithArg(method, bce, jakarta.enterprise.lang.model.declarations.MethodInfo.class, mi);
+                    for (var mi : vaubanClassInfo.methods()) {
+                        invokeWithArg(method, bce, services,
+                                jakarta.enterprise.lang.model.declarations.MethodInfo.class, mi);
+                    }
                 }
                 case FIELD_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
                     classConfig.setSourceBce(bce.getClass());
-                    for (var fc : classConfig.fields()) invokeWithArg(method, bce, FieldConfig.class, fc);
+                    for (var fc : classConfig.fields()) {
+                        invokeWithArg(method, bce, services, FieldConfig.class, fc);
+                    }
                     if (classConfig.isModified()) {
                         modifications.computeIfAbsent(className, k -> new ArrayList<>()).add(classConfig);
                     }
                 }
                 case FIELD_INFO -> {
-                    for (var fi : vaubanClassInfo.fields())
-                        invokeWithArg(method, bce, jakarta.enterprise.lang.model.declarations.FieldInfo.class, fi);
+                    for (var fi : vaubanClassInfo.fields()) {
+                        invokeWithArg(method, bce, services,
+                                jakarta.enterprise.lang.model.declarations.FieldInfo.class, fi);
+                    }
                 }
             }
         } catch (Exception e) {
@@ -680,6 +690,11 @@ public final class BceProcessor {
             sink.errors().add("@Enhancement error: " + unwrapped.getMessage());
             sink.errorCauses().add(unwrapped);
         }
+        sink.errors().addAll(services.messages().getErrors());
+    }
+
+    /** The {@code Messages} and {@code Types} an {@code @Enhancement} method may declare besides its target. */
+    private record PhaseServices(VaubanMessages messages, VaubanTypes types) {
     }
 
     /** What an extension method threw: the cause of the {@code InvocationTargetException} of a reflective call. */
@@ -697,15 +712,19 @@ public final class BceProcessor {
     }
 
     @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
-    private static void invokeWithArg(Method method, Object bce, Class<?> targetType, Object arg) throws Exception {
+    private static void invokeWithArg(Method method, Object bce, PhaseServices services, Class<?> targetType,
+                                      Object arg) throws Exception {
         var params = method.getParameters();
         var args = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
             var paramType = params[i].getType();
-            if (targetType.isAssignableFrom(paramType) || paramType.isAssignableFrom(targetType)) {
+            if (Messages.class.isAssignableFrom(paramType)) {
+                args[i] = services.messages();
+            } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(paramType)) {
+                args[i] = services.types();
+            } else if (targetType.isAssignableFrom(paramType) || paramType.isAssignableFrom(targetType)) {
                 args[i] = arg;
             }
-            // Messages and Types can be added here if needed
         }
         method.invoke(bce, args);
     }
@@ -926,7 +945,9 @@ public final class BceProcessor {
 
             makeAccessibleSafe(method);
 
-            var args = resolveSynthesisArgs(method, components, types);
+            // The Messages the Javadoc of @Synthesis lists: it was null (BUG-20261118-23).
+            var messages = new VaubanMessages();
+            var args = resolveSynthesisArgs(method, components, messages, types);
 
             try {
                 method.invoke(bce, args);
@@ -936,6 +957,7 @@ public final class BceProcessor {
             } catch (Exception e) {
                 errors.add("@Synthesis error: " + e.getMessage());
             }
+            errors.addAll(messages.getErrors());
         }
 
         return new SynthesisResult(components.getBeanDefinitions(), components.getObserverDefinitions());
@@ -979,13 +1001,15 @@ public final class BceProcessor {
     }
 
     private static Object[] resolveSynthesisArgs(Method method, VaubanSyntheticComponents components,
-                                                  VaubanTypes types) {
+                                                  VaubanMessages messages, VaubanTypes types) {
         var params = method.getParameters();
         var args = new Object[params.length];
         for (int i = 0; i < params.length; i++) {
             var paramType = params[i].getType();
             if (SyntheticComponents.class.isAssignableFrom(paramType)) {
                 args[i] = components;
+            } else if (Messages.class.isAssignableFrom(paramType)) {
+                args[i] = messages;
             } else if (jakarta.enterprise.inject.build.compatible.spi.Types.class.isAssignableFrom(paramType)) {
                 args[i] = types;
             }

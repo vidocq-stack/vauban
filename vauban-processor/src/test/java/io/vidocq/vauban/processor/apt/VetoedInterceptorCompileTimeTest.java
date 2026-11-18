@@ -2814,6 +2814,49 @@ class VetoedInterceptorCompileTimeTest {
                 DeploymentException.class);
     }
 
+    /** Records the class {@code Types} gives for each {@code @Dependent} listener {@code @Enhancement} sees. */
+    public static class TypesEnhancer implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = java.util.EventListener.class, withSubtypes = true, withAnnotations = Dependent.class)
+        public void listeners(ClassInfo type, Types types) {
+            SEEN.add(types.ofClass(type).declaration().name());
+        }
+    }
+
+    /** Reports through {@code Messages} each {@code @Dependent} listener {@code @Enhancement} sees. */
+    public static class MessagesEnhancer implements BuildCompatibleExtension {
+
+        @Enhancement(types = java.util.EventListener.class, withSubtypes = true, withAnnotations = Dependent.class)
+        public void listeners(ClassInfo type, Messages messages) {
+            messages.error("no listener allowed: " + type.name());
+        }
+    }
+
+    /**
+     * {@code @Enhancement} gets the {@code Types} its Javadoc lists, from the processor, at start and frozen; it got
+     * {@code null} (BUG-20261118-23).
+     */
+    @Test
+    @DisplayName("@Enhancement gets Types, from the processor, at start and frozen")
+    void enhancementGetsTypesFromTheProcessorAtStartAndFrozen() throws Exception {
+        var seen = seenThreeWays(withListenerSubtypes(), TypesEnhancer.class, TypesEnhancer.SEEN);
+
+        seen.distinct().assertEachIs(List.of("vi.Impl", "vi.Other"));
+    }
+
+    /**
+     * {@code @Enhancement} gets the {@code Messages} its Javadoc lists, and an error it reports fails the build, the
+     * start and the freeze, as the deployment problem the phase reports today (BUG-20261118-23).
+     */
+    @Test
+    @DisplayName("an error @Enhancement reports through Messages fails the build, the start and the freeze")
+    void anErrorEnhancementReportsThroughMessagesFailsTheBuildTheStartAndTheFreeze() throws Exception {
+        failsThreeWays(withListenerSubtypes(), MessagesEnhancer.class, "no listener allowed: vi.Impl",
+                DeploymentException.class);
+    }
+
     /** {@link #failsThreeWays} for an extension that fails in {@code @Discovery}, with a definition error. */
     private RuntimeException discoveryFailsThreeWays(Class<? extends BuildCompatibleExtension> extension,
                                                      String failure) throws Exception {

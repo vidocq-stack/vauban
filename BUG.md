@@ -5,6 +5,26 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-23 — `@Enhancement` gets `null` for `Messages` and `Types`, `@Synthesis` for `Messages`
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`extensions.BceProcessor`: `invokeEnhancement`, `invokeWithArg`, `processSynthesis`)
+- **Symptom**: an `@Enhancement` method that declares `Messages` or `Types`, both listed by the Javadoc of
+  `@Enhancement`, gets `null` for them, on every path: the full cycle, the enhancement of an unprocessed archive
+  and the replay for a pre-processed jar. A `@Synthesis` method gets `null` for `Messages`. The extension fails with a
+  `NullPointerException`. `@Registration` and `@Validation` give every type their Javadoc lists.
+- **Repro**: `ExtensionPhaseArgumentsTest` in `vauban-core` (unprocessed archive, replay, `@Synthesis` at start);
+  `VetoedInterceptorCompileTimeTest#enhancementGetsTypesFromTheProcessorAtStartAndFrozen` and
+  `#anErrorEnhancementReportsThroughMessagesFailsTheBuildTheStartAndTheFreeze` in `vauban-processor`. Red without
+  the fix (`stack-l1-r5-1823.log`, "BUG-18-23 red": `because "types" is null`, `because "messages" is null`).
+- **Cause**: `invokeWithArg` filled the target parameter alone ("Messages and Types can be added here if needed");
+  `resolveSynthesisArgs` had no `Messages` branch.
+- **Fix**: each `@Enhancement` call gets a `VaubanMessages` and a `VaubanTypes`, the implementation `@Registration`,
+  `@Synthesis` and `@Validation` use; `@Synthesis` gets a `VaubanMessages`. The errors reported through them join
+  the errors of the phase, of the kind it reports today: deployment problems.
+- **Found by**: the review of BUG-20261118-22.
+
 ## BUG-20261118-22 — An extension parameter of an unsupported type is `null`
 
 - **Date**: 2026-11-18
