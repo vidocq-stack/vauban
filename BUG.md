@@ -20,6 +20,47 @@ suspected cause, status. Updated on every investigation.
   and now asserts `@Default`.
 - **Found by**: the tests of BUG-20261118-62.
 
+## BUG-20261118-95 — Weaving the `(ProxyLink)` marker changes the computed `serialVersionUID` of a `Serializable` class that declares none
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-weaver` (`ProxyLinkWeaver.addMarkerConstructor`), `vauban-classloader`
+  (`CdiProxifierTransformer`)
+- **Symptom**: a `Serializable` class without a declared `serialVersionUID`, once woven, has another default
+  `serialVersionUID`. Measured by the Vidocq session on a woven library class: -2925986439075262325 before,
+  1994005130319834383 woven. An object serialized by the same library outside Vauban, or by another form of the
+  application, fails to deserialize with `InvalidClassException`, and the reverse fails too.
+- **Minimal repro**: weave a `Serializable` class that has no no-arg constructor and declares no
+  `serialVersionUID` with `ProxyLinkWeaver.addMarkerConstructor`, then compare
+  `ObjectStreamClass.lookup(...).getSerialVersionUID()` of the original and the woven class.
+- **Cause**: the marker is a `protected` synthetic constructor (`ACC_PROTECTED | ACC_SYNTHETIC`). The default
+  `serialVersionUID` hashes every non-private constructor (Java Object Serialization Specification §4.6), so the
+  marker changes it. Under the application layer, `CdiProxifierTransformer` weaves third-party classes when they are
+  defined, both the placed types and the superclasses they need woven: that is where it surprises. The build-tier
+  weaving (javac plugin, `vauban:generate`) changes it as well, but always the same way for the application's own
+  classes.
+- **Lead**: when the class is `Serializable` and declares no `serialVersionUID`, the weaver adds a
+  `private static final long serialVersionUID` that holds the value of the class as it was, computed from the class
+  file. Vidocq's `vidocq:jlink` does this already for the copy it stages (`StagedProxyLinks`, Vidocq
+  BUG-20261118-91, branch `fix/image-proxy-link`), checked against `ObjectStreamClass` in `StagedProxiesTest`: that
+  computation can move to the weaver.
+- **Reported by**: the Vidocq batch (FOY session), with this id from its range.
+
+## BUG-20261118-70 — The unproxyable-type error of a produced type names the producer class
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-core` (`DeploymentValidator`)
+- **Symptom**: a normal-scoped producer whose produced class has no non-private no-arg constructor and no marker
+  fails with `Normal-scoped bean acme.placed.GadgetProducer must have a non-private no-arg constructor…`: the class
+  named is the producer, where the unproxyable class was `Strict`, the produced type.
+- **Minimal repro**: an `@ApplicationScoped` producer method in `GadgetProducer` that returns `Strict`, a class whose
+  only constructor takes a parameter, deployed without the marker: read the message of the deployment error.
+- **Cause**: both checks (the index one, and `validateProxyableClass` on a loaded class) build the message from
+  `bean.beanClass()`, which is the declaring class for a producer, while they check another class (`info`,
+  `clazz`). The "cannot be a final class" message next to them has the same shape.
+- **Reported by**: the Vidocq batch (FOY session).
+
 ## BUG-20261118-62 — At start, an `@Enhancement` that replaces `@Dependent` by `@ApplicationScoped` leaves the bean `@Dependent`
 
 - **Date**: 2026-11-18
