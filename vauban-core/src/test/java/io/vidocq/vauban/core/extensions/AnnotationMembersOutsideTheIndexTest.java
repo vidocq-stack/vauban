@@ -62,7 +62,11 @@ class AnnotationMembersOutsideTheIndexTest {
         Level[] levels() default {};
     }
 
-    /** Records, in {@code @Discovery}, each member of {@link Graded} as the qualifier's {@code ClassInfo} gives it. */
+    /**
+     * Records, in {@code @Discovery}, each member of {@link Graded} as the qualifier's {@code ClassInfo} gives it: the
+     * methods {@code Graded} declares, its {@code methods()} having those of {@code java.lang.annotation.Annotation}
+     * too (BUG-20261117-42).
+     */
     public static class QualifierExtension implements BuildCompatibleExtension {
 
         static final List<String> SEEN = new CopyOnWriteArrayList<>();
@@ -70,7 +74,9 @@ class AnnotationMembersOutsideTheIndexTest {
         @Discovery
         public void qualifiers(MetaAnnotations meta) {
             for (var member : meta.addQualifier(Graded.class).info().methods()) {
-                SEEN.add(described(member));
+                if (member.declaringClass().name().equals(Graded.class.getName())) {
+                    SEEN.add(described(member));
+                }
             }
         }
     }

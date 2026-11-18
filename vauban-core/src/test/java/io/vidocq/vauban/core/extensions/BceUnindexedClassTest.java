@@ -252,7 +252,7 @@ class BceUnindexedClassTest {
     @DisplayName("an annotation and an enum class outside the index are described")
     void anAnnotationAndAnEnumOutsideTheIndexAreDescribed() {
         var graded = "Graded: superClass=null; superInterfaces=[CLASS java.lang.annotation.Annotation];"
-                + " typeParameters=[]; annotation, methods [value]";
+                + " typeParameters=[]; annotation, methods [value, equals, hashCode, toString, annotationType]";
         var grade = "Grade: superClass=PARAMETERIZED_TYPE java.lang.Enum<Grade> of CLASS; superInterfaces=[];"
                 + " typeParameters=[]; enum";
 

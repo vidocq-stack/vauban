@@ -32,7 +32,10 @@ import jakarta.enterprise.lang.model.types.TypeVariable;
 
 import java.lang.annotation.Annotation;
 import java.lang.classfile.ClassFile;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -41,6 +44,7 @@ import java.util.stream.IntStream;
 public final class VaubanClassInfo implements jakarta.enterprise.lang.model.declarations.ClassInfo {
 
     private static final DotName OBJECT = DotName.of("java.lang.Object");
+    private static final DotName INHERITED = DotName.of("java.lang.annotation.Inherited");
 
     private final DotName name;
     private final IndexLookup lookup;
@@ -255,38 +259,88 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
                 .toList();
     }
 
+    /**
+     * The methods of this class and of all its supertypes, as the language model defines them: those it declares, those
+     * of its superclasses up to and excluding {@code java.lang.Object}, and those of every superinterface, direct or
+     * not, each interface once; an interface has no superclass. Methods of the same signature all show, each with the
+     * class that declares it. A supertype nothing describes is left out, with what is above it (BUG-20261117-42).
+     */
     @Override
     public Collection<jakarta.enterprise.lang.model.declarations.MethodInfo> methods() {
-        var result = new java.util.ArrayList<jakarta.enterprise.lang.model.declarations.MethodInfo>();
-        // Methods declared directly on this class
-        for (var m : indexClass().methods()) {
-            if (isShownMethod(m)) {
-                result.add(new VaubanMethodInfo(m, this, lookup));
-            }
-        }
-        // Methods from superinterfaces (always included, even if overridden,
-        // because BCE extensions may filter on declaringClass().isInterface())
-        for (var ifaceName : indexClass().interfaces()) {
-            var ifaceClassOpt = lookup.getClass(ifaceName);
-            if (ifaceClassOpt.isPresent()) {
-                var ifaceClass = ifaceClassOpt.get();
-                var ifaceInfo = new VaubanClassInfo(ifaceClass, lookup);
-                for (var m : ifaceClass.methods()) {
-                    if (isShownMethod(m)) {
-                        result.add(new VaubanMethodInfo(m, ifaceInfo, lookup));
-                    }
-                }
-            }
+        var result = new ArrayList<jakarta.enterprise.lang.model.declarations.MethodInfo>(declaredMethods());
+        supertypes().forEach(type -> result.addAll(type.declaredMethods()));
+        return result;
+    }
+
+    /** The fields of this class and of all its supertypes, as {@link #methods()} reads them (BUG-20261117-42). */
+    @Override
+    public Collection<jakarta.enterprise.lang.model.declarations.FieldInfo> fields() {
+        var result = new ArrayList<jakarta.enterprise.lang.model.declarations.FieldInfo>(declaredFields());
+        supertypes().forEach(type -> result.addAll(type.declaredFields()));
+        return result;
+    }
+
+    /** The methods this class declares, its constructors and its static initializer aside. */
+    private List<jakarta.enterprise.lang.model.declarations.MethodInfo> declaredMethods() {
+        return indexClass().methods().stream().filter(VaubanClassInfo::isShownMethod)
+                .map(m -> (jakarta.enterprise.lang.model.declarations.MethodInfo) new VaubanMethodInfo(m, this, lookup))
+                .toList();
+    }
+
+    /** The fields this class declares. */
+    private List<jakarta.enterprise.lang.model.declarations.FieldInfo> declaredFields() {
+        return indexClass().fields().stream().filter(f -> shown(f.accessFlags()))
+                .map(f -> (jakarta.enterprise.lang.model.declarations.FieldInfo) new VaubanFieldInfo(f, this, lookup))
+                .toList();
+    }
+
+    /**
+     * The methods an {@code @Enhancement} extension configures or visits for this class: those it declares, and those
+     * of its direct superinterfaces the index holds, as before the language model showed the inherited methods. A
+     * {@code MethodConfig} changes the class it configures; a method a superclass declares belongs to that class.
+     */
+    public List<jakarta.enterprise.lang.model.declarations.MethodInfo> configurableMethods() {
+        var result = new ArrayList<>(declaredMethods());
+        for (var interfaceName : indexClass().interfaces()) {
+            lookup.getClass(interfaceName).ifPresent(indexed -> result.addAll(new VaubanClassInfo(indexed, lookup)
+                    .declaredMethods()));
         }
         return result;
     }
 
-    @Override
-    public Collection<jakarta.enterprise.lang.model.declarations.FieldInfo> fields() {
-        return indexClass().fields().stream()
-                .filter(f -> shown(f.accessFlags()))
-                .map(f -> (jakarta.enterprise.lang.model.declarations.FieldInfo) new VaubanFieldInfo(f, this, lookup))
-                .toList();
+    /** The fields an {@code @Enhancement} extension configures or visits for this class: those it declares. */
+    public List<jakarta.enterprise.lang.model.declarations.FieldInfo> configurableFields() {
+        return declaredFields();
+    }
+
+    /**
+     * The supertypes whose members this class has: its superclasses up to and excluding {@code java.lang.Object}, then
+     * every interface above it or them, in the order met, each once.
+     */
+    private List<VaubanClassInfo> supertypes() {
+        var classes = new ArrayList<VaubanClassInfo>();
+        var seen = new HashSet<DotName>();
+        seen.add(name);
+        var superclass = (VaubanClassInfo) superClassDeclaration();
+        while (superclass != null && !OBJECT.equals(superclass.name) && seen.add(superclass.name)) {
+            classes.add(superclass);
+            superclass = (VaubanClassInfo) superclass.superClassDeclaration();
+        }
+        var interfaces = new ArrayList<VaubanClassInfo>();
+        var pending = new ArrayDeque<VaubanClassInfo>();
+        pending.add(this);
+        pending.addAll(classes);
+        while (!pending.isEmpty()) {
+            for (var found : pending.poll().superInterfacesDeclarations()) {
+                var type = (VaubanClassInfo) found;
+                if (seen.add(type.name)) {
+                    interfaces.add(type);
+                    pending.add(type);
+                }
+            }
+        }
+        classes.addAll(interfaces);
+        return classes;
     }
 
     @Override
@@ -298,7 +352,7 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public boolean hasAnnotation(Class<? extends Annotation> annotationType) {
-        return indexClass().hasAnnotation(DotName.of(annotationType.getName()));
+        return present(DotName.of(annotationType.getName())).isPresent();
     }
 
     @Override
@@ -308,14 +362,20 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     @Override
     public <T extends Annotation> AnnotationInfo annotation(Class<T> annotationType) {
-        return indexClass().annotation(DotName.of(annotationType.getName()))
-                .map(a -> (AnnotationInfo) new VaubanAnnotationInfo(a, lookup))
-                .orElse(null);
+        return present(DotName.of(annotationType.getName())).orElse(null);
     }
 
+    /**
+     * The annotations of {@code annotationType} this class declares, directly or in their container; when it declares
+     * none, those its superclass has, the type being {@code @Inherited}, as
+     * {@code Class.getAnnotationsByType} reads them (BUG-20261117-42).
+     */
     @Override
     public <T extends Annotation> Collection<AnnotationInfo> repeatableAnnotation(Class<T> annotationType) {
-        return RepeatableAnnotations.of(annotations(), annotationType);
+        var declared = RepeatableAnnotations.of(declaredAnnotations(), annotationType);
+        var superclass = annotatedSuperclass();
+        return declared.isEmpty() && superclass != null && isInherited(DotName.of(annotationType.getName()))
+                ? superclass.repeatableAnnotation(annotationType) : declared;
     }
 
     @Override
@@ -323,11 +383,54 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
         return annotations().stream().filter(predicate).toList();
     }
 
+    /**
+     * The annotations present on this class: those it declares, and the {@code @Inherited} ones its superclass has
+     * whose type it does not declare, as {@code Class.getAnnotations} reads them; an interface inherits none
+     * (BUG-20261117-42).
+     */
     @Override
     public Collection<AnnotationInfo> annotations() {
+        var result = new ArrayList<>(declaredAnnotations());
+        var superclass = annotatedSuperclass();
+        if (superclass != null) {
+            var declared = new HashSet<DotName>();
+            result.forEach(annotation -> declared.add(typeOf(annotation)));
+            superclass.annotations().stream()
+                    .filter(annotation -> !declared.contains(typeOf(annotation)) && isInherited(typeOf(annotation)))
+                    .forEach(result::add);
+        }
+        return result;
+    }
+
+    private List<AnnotationInfo> declaredAnnotations() {
         return indexClass().annotations().stream()
                 .map(a -> (AnnotationInfo) new VaubanAnnotationInfo(a, lookup))
                 .toList();
+    }
+
+    /** The binary name of the type of {@code annotation}, one this class built. */
+    private static DotName typeOf(AnnotationInfo annotation) {
+        return ((VaubanAnnotationInfo) annotation).indexAnnotation().name();
+    }
+
+    /** The annotation of {@code type} present on this class, declared or inherited. */
+    private Optional<AnnotationInfo> present(DotName type) {
+        var declared = indexClass().annotation(type).map(a -> (AnnotationInfo) new VaubanAnnotationInfo(a, lookup));
+        if (declared.isPresent() || !isInherited(type)) {
+            return declared;
+        }
+        var superclass = annotatedSuperclass();
+        return superclass == null ? Optional.empty() : superclass.present(type);
+    }
+
+    /** The superclass whose {@code @Inherited} annotations this class has: none for an interface. */
+    private VaubanClassInfo annotatedSuperclass() {
+        return isInterface() ? null : (VaubanClassInfo) superClassDeclaration();
+    }
+
+    /** Whether the annotation type {@code type} is {@code @Inherited}; {@code false} when nothing describes it. */
+    private boolean isInherited(DotName type) {
+        return lookup != null && lookup.find(type).map(described -> described.hasAnnotation(INHERITED)).orElse(false);
     }
 
     @Override

@@ -782,7 +782,7 @@ public final class BceProcessor {
                     }
                 }
                 case METHOD_INFO -> {
-                    for (var mi : vaubanClassInfo.methods()) {
+                    for (var mi : vaubanClassInfo.configurableMethods()) {
                         invokeWithArg(method, bce, services,
                                 jakarta.enterprise.lang.model.declarations.MethodInfo.class, mi);
                     }
@@ -798,7 +798,7 @@ public final class BceProcessor {
                     }
                 }
                 case FIELD_INFO -> {
-                    for (var fi : vaubanClassInfo.fields()) {
+                    for (var fi : vaubanClassInfo.configurableFields()) {
                         invokeWithArg(method, bce, services,
                                 jakarta.enterprise.lang.model.declarations.FieldInfo.class, fi);
                     }

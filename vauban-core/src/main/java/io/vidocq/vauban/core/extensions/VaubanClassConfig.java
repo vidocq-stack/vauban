@@ -63,7 +63,7 @@ public final class VaubanClassConfig implements ClassConfig {
         this.methodConfigs = new ArrayList<>();
         this.fieldConfigs = new ArrayList<>();
         if (described.isPresent()) {
-            for (var m : classInfo.methods()) {
+            for (var m : ((VaubanClassInfo) classInfo).configurableMethods()) {
                 methodConfigs.add(new VaubanMethodConfig(m));
             }
         } else {
@@ -73,13 +73,17 @@ public final class VaubanClassConfig implements ClassConfig {
         }
     }
 
-    // For bean enhancement (Enhancement phase)
-    public VaubanClassConfig(ClassInfo classInfo) {
+    /**
+     * The configuration of a class in {@code @Enhancement}: its methods, constructors and fields are those it declares,
+     * and its direct superinterfaces' methods the index holds, the members a {@link VaubanClassInfo} configures; an
+     * inherited member belongs to the class that declares it (BUG-20261117-42).
+     */
+    public VaubanClassConfig(VaubanClassInfo classInfo) {
         this.annotationType = null;
         this.classInfo = classInfo;
 
         this.methodConfigs = new ArrayList<>();
-        for (var m : classInfo.methods()) {
+        for (var m : classInfo.configurableMethods()) {
             methodConfigs.add(new VaubanMethodConfig(m));
         }
         for (var m : classInfo.constructors()) {
@@ -87,7 +91,7 @@ public final class VaubanClassConfig implements ClassConfig {
         }
 
         this.fieldConfigs = new ArrayList<>();
-        for (var f : classInfo.fields()) {
+        for (var f : classInfo.configurableFields()) {
             fieldConfigs.add(new VaubanFieldConfig(f));
         }
     }

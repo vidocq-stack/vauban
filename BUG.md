@@ -1738,7 +1738,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-42 — The language model shows no inherited members and no `@Inherited` annotations
 
 - **Date**: 2026-11-17
-- **Status**: OPEN (vauban#336)
+- **Status**: FIXED (vauban#336)
 - **Module**: `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
 - **Symptom**: `ClassInfo.methods()` lists the class's own methods, plus those of its direct superinterfaces the index
   holds; the methods of its superclasses, of its indirect superinterfaces and of an interface outside the index are
@@ -1769,6 +1769,28 @@ suspected cause, status. Updated on every investigation.
   Dirac's `fix/langmodel-unindexed-classes`, works around it. Any extension that iterates `methods()`, `fields()` or
   the annotations sees fewer than the spec says. A fix changes that for every consumer at once, so it needs an audit
   of the consumers first.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesInheritedMembersAndAnnotations` in
+  `vauban-processor`: `Child extends Parent extends Grand`, with `Middle extends Top` and `Grand implements Top`, an
+  `@Inherited` `@Kept` on `Grand` and `Parent`, a plain `@Own` on `Grand`. Red on eec568d9 (`stack-l2d-red.log`, "RED
+  BUG-20261117-42 on eec568d9 (null-safe recorder)"): the processor, the start and frozen all gave `methods
+  [Child.middle]`, `fields [Child.child]`, `annotations [jakarta.enterprise.context.Dependent]` and `Kept none`.
+- **Fix**: `VaubanClassInfo.methods()` and `fields()` give the class's own members, those of its superclasses up to and
+  excluding `java.lang.Object`, and those of every superinterface, direct or not, each interface once, each member
+  with the class that declares it; a supertype nothing describes is left out with what is above it. `annotations()`,
+  `annotation()` and `hasAnnotation()` add the `@Inherited` annotations its superclass has, whose type the class does
+  not declare, and `repeatableAnnotation()` reads the superclass's when the class declares none, as
+  `Class.getAnnotations` and `getAnnotationsByType` do; an interface inherits none. Whether a type is `@Inherited` is
+  read from its declaration (`IndexLookup.find`). The three ways share the code. An annotation type's `methods()` now
+  has `java.lang.annotation.Annotation`'s four, as the TCK's `AnnotationMembers` says.
+- **What stays**: `@Enhancement` configures and visits the members a class declares, and its direct superinterfaces'
+  methods the index holds, as before (`VaubanClassInfo.configurableMethods()`, `configurableFields()`): a
+  `MethodConfig` changes the class it configures, and an inherited method belongs to its own class. `ClassConfig
+  .methods()` of a `MetaAnnotations` annotation type is its members, not `Annotation`'s.
+- **Verification**: the repro, green, with BUG-20261117-43's test now `[get, get]` (`Supplier.get`), three ways
+  (`stack-l2d-dev42.log`, "BUG-42 fix (1)" and "BUG-42 fix (4)"); core 1752 (11 skipped), processor 440 (16
+  skipped), maven-plugin 172 (`stack-l2d-dev42.log`, "BUG-42 fix (3)"), after `AnnotationMembersOutsideTheIndexTest`
+  kept the members `Graded` declares and `BceUnindexedClassTest` expected `Annotation`'s methods. The probe and the
+  brick audit are in the batch D report.
 - **Found by**: the BUG-20261117-40 probe of the CDI language model TCK.
 
 ## BUG-20261117-41 — An interceptor that injects `@Intercepted Bean<?>` is refused

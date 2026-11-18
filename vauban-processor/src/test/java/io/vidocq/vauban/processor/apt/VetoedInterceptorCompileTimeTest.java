@@ -22,6 +22,8 @@ package io.vidocq.vauban.processor.apt;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import io.vidocq.vauban.processor.VaubanProcessor;
 import io.vidocq.vauban.processor.apt.binding.Traced;
+import io.vidocq.vauban.processor.apt.inherited.Kept;
+import io.vidocq.vauban.processor.apt.inherited.Own;
 import io.vidocq.vauban.processor.apt.repeatable.Mark;
 import io.vidocq.vauban.processor.apt.repeatable.Tag;
 import io.vidocq.vauban.processor.apt.retention.ClassRetained;
@@ -3831,7 +3833,8 @@ class VetoedInterceptorCompileTimeTest {
      * The methods an extension sees of a class with a lambda and a bridge method, the same in the processor, at start
      * and frozen: a class outside the index, and a bean. The compiler shows the methods the source declares; at start
      * and frozen, the class file adds the bridge {@code get()} returning {@code Object} and the lambda's
-     * {@code lambda$get$0} (BUG-20261117-43).
+     * {@code lambda$get$0} (BUG-20261117-43). The second {@code get} is {@code Supplier}'s, which the class has
+     * (BUG-20261117-42).
      */
     @Test
     @DisplayName("an extension sees the same methods of a class with a lambda and a bridge, in the processor, at"
@@ -3852,7 +3855,8 @@ class VetoedInterceptorCompileTimeTest {
 
         var seen = seenThreeWays(sources, MethodRecorder.class, MethodRecorder.SEEN);
 
-        seen.assertEachIs(sorted(List.of(TYPES + COUNTER + " methods [get]", TYPES + TELLER + " methods [get]")));
+        seen.assertEachIs(sorted(List.of(TYPES + COUNTER + " methods [get, get]",
+                TYPES + TELLER + " methods [get, get]")));
     }
 
     /** Records, in {@code @Synthesis}, the names of the methods of {@code Teller} and of the bean {@code Counter}. */
@@ -3866,6 +3870,97 @@ class VetoedInterceptorCompileTimeTest {
                 SEEN.add(name + " methods " + types.ofClass(name).declaration().methods().stream()
                         .map(jakarta.enterprise.lang.model.declarations.MethodInfo::name).sorted().toList());
             }
+        }
+    }
+
+    /**
+     * The members and annotations of a class with superclasses and superinterfaces, the same in the processor, at
+     * start and frozen: its methods and fields, those of its superclasses up to {@code java.lang.Object} and of every
+     * superinterface, direct or not, each once; its annotations and the {@code @Inherited} ones of its superclasses
+     * it does not declare (BUG-20261117-42).
+     */
+    @Test
+    @DisplayName("an extension sees the inherited members and annotations of a class, three ways")
+    void anExtensionSeesInheritedMembersAndAnnotations() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Top", """
+                public interface Top {
+                    int TOP = 1;
+
+                    default void top() {
+                    }
+                }""");
+        putType(sources, "Middle", """
+                public interface Middle extends Top {
+                    void middle();
+                }""");
+        putType(sources, "Grand", """
+                @io.vidocq.vauban.processor.apt.inherited.Kept("grand")
+                @io.vidocq.vauban.processor.apt.inherited.Own
+                public abstract class Grand implements Top {
+                    protected int grand;
+
+                    void grand() {
+                    }
+                }""");
+        putType(sources, "Parent", """
+                @io.vidocq.vauban.processor.apt.inherited.Kept("parent")
+                public abstract class Parent extends Grand implements Middle {
+                    int parent;
+
+                    void parent() {
+                    }
+                }""");
+        putType(sources, "Child", DEPENDENT + """
+                public class Child extends Parent {
+                    int child;
+
+                    @Override
+                    public void middle() {
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, InheritedRecorder.class, InheritedRecorder.SEEN);
+
+        seen.assertEachIs(sorted(List.of(
+                "methods [Child.middle, Grand.grand, Middle.middle, Parent.parent, Top.top]",
+                "fields [Child.child, Grand.grand, Parent.parent, Top.TOP]",
+                "annotations [io.vidocq.vauban.processor.apt.inherited.Kept, jakarta.enterprise.context.Dependent]",
+                "Kept parent, Own false, Kept of Grand grand, Own of Grand true",
+                "repeatable Kept [parent], of Grand [grand]",
+                "Middle methods [Middle.middle, Top.top], annotations []")));
+    }
+
+    /** Records what {@link #anExtensionSeesInheritedMembersAndAnnotations()} reads of {@code vi.types.Child}. */
+    public static class InheritedRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void members(Types types) {
+            var child = types.ofClass(TYPES + "Child").declaration();
+            var grand = types.ofClass(TYPES + "Grand").declaration();
+            SEEN.add("methods " + child.methods().stream().map(method -> method.declaringClass().simpleName() + "."
+                    + method.name()).sorted().toList());
+            SEEN.add("fields " + child.fields().stream().map(field -> field.declaringClass().simpleName() + "."
+                    + field.name()).sorted().toList());
+            SEEN.add("annotations " + child.annotations().stream().map(annotation -> annotation.name()).sorted()
+                    .toList());
+            SEEN.add("Kept " + kept(child) + ", Own " + child.hasAnnotation(Own.class) + ", Kept of Grand "
+                    + kept(grand) + ", Own of Grand " + grand.hasAnnotation(Own.class));
+            SEEN.add("repeatable Kept " + repeated(child) + ", of Grand " + repeated(grand));
+            var middle = types.ofClass(TYPES + "Middle").declaration();
+            SEEN.add("Middle methods " + middle.methods().stream().map(method -> method.declaringClass().simpleName()
+                    + "." + method.name()).sorted().toList() + ", annotations " + middle.annotations());
+        }
+
+        private static List<String> repeated(jakarta.enterprise.lang.model.declarations.ClassInfo type) {
+            return type.repeatableAnnotation(Kept.class).stream().map(kept -> kept.value().asString()).toList();
+        }
+
+        private static String kept(jakarta.enterprise.lang.model.declarations.ClassInfo type) {
+            var kept = type.annotation(Kept.class);
+            return kept == null ? "none" : kept.value().asString();
         }
     }
 
