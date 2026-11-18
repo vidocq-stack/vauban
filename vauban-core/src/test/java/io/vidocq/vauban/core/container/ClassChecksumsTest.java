@@ -272,6 +272,41 @@ class ClassChecksumsTest {
     }
 
     @Test
+    @DisplayName("a class whose parameters javac marks itself keeps its checksum once stripped (BUG-20261118-60)")
+    void classesWithMarkedParametersKeepTheirChecksumsOnceStripped() throws IOException {
+        int marked = 0;
+        for (Class<?> type : StrippedShapes.all()) {
+            byte[] built = binaryClass(type);
+            byte[] linked = JlinkStripping.strip(built);
+            marked += markedMethods(built);
+            assertEquals(0, markedMethods(linked), () -> type + " keeps no MethodParameters once stripped");
+
+            assertEquals(ClassFileScanner.scan(built).methods().stream().map(ClassChecksumsTest::shape).toList(),
+                    ClassFileScanner.scan(linked).methods().stream().map(ClassChecksumsTest::shape).toList(),
+                    type::toString);
+            assertEquals(ClassChecksums.ofModel(ClassFileScanner.scan(built)),
+                    ClassChecksums.ofModel(ClassFileScanner.scan(linked)), type::toString);
+        }
+        assertTrue(marked >= 8, "javac marks the parameters it adds: " + marked + " methods");
+    }
+
+    /** A method by what its checksum counts of its parameters: their types, not their names. */
+    private static String shape(MethodInfo method) {
+        return method.name() + method.parameters().stream().map(ParameterInfo::type).toList();
+    }
+
+    private static long markedMethods(byte[] classFile) {
+        return ClassFile.of().parse(classFile).methods().stream()
+                .filter(method -> method.findAttribute(Attributes.methodParameters()).isPresent()).count();
+    }
+
+    private static byte[] binaryClass(Class<?> type) throws IOException {
+        try (var in = type.getResourceAsStream("/" + type.getName().replace('.', '/') + ".class")) {
+            return in.readAllBytes();
+        }
+    }
+
+    @Test
     @DisplayName("Vauban's own classes, compiled with their parameter names, keep their checksums once stripped")
     void realClassesKeepTheirChecksumsOnceStripped() throws IOException {
         for (Class<?> type : List.of(VaubanContainerBuilder.class, ClassChecksums.class, DeploymentFingerprint.class)) {

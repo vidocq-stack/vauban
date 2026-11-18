@@ -127,6 +127,9 @@ public final class ClassFileScanner {
     /** The parameters an enum's constructor takes before those its source declares: the name and the ordinal. */
     private static final int ENUM_CONSTRUCTOR_PREFIX = 2;
 
+    /** How javac names the synthetic field of a local or anonymous class that keeps a value it captures. */
+    private static final String CAPTURED_FIELD_PREFIX = "val$";
+
     /** The annotations on the supertypes of a class, its type parameters and their bounds (BUG-20261117-60). */
     private static List<TypeAnnotationInfo> classTypeAnnotations(ClassModel cm, Members members,
             List<TypeVariable> typeParameters, TypeInfo superclass, List<TypeInfo> interfaces) {
@@ -399,23 +402,29 @@ public final class ClassFileScanner {
         /**
          * The layout of {@code mm}'s parameters, whose {@code Signature} names {@code declared} of them, or {@code -1}
          * without one. The {@code MethodParameters} attribute marks the parameters javac adds, where javac writes it:
-         * for the constructors of enums, inner and local classes since Java 21. Without it, an enum's constructor
-         * takes the name and the ordinal first, an inner member class's the outer instance, as javac has always
-         * compiled them; a local class's takes the outer instance when its first parameter is of the class that
-         * declares it, and the captured values last, those its {@code Signature} does not name. Without a
-         * {@code Signature} either, its captured values cannot be told from its parameters, as reflection cannot:
-         * they are read as declared.
+         * for the constructors of enums, inner and local classes since Java 21. {@code jlink --strip-debug} removes
+         * it from every class of an image, and the layout without it must be the same, or the model of a class
+         * changes between its build and its image (BUG-20261118-60). Without it, an enum's constructor takes the
+         * name and the ordinal first, an inner member class's the outer instance, as javac has always compiled them;
+         * a local or anonymous class's takes the outer instance when its first parameter is of the class that
+         * declares it, and the captured values last: as many as the class has fields for them.
          */
         static ParameterLayout of(MethodModel mm, Members members, int declared) {
             int count = mm.methodTypeSymbol().parameterCount();
+            // A method that is no constructor says by its flags, not by the attribute, which parameters the index
+            // leaves out: {@code jlink --strip-debug} removes the attribute, and a class must have one model at its
+            // build and in its image (BUG-20261118-60). A bridge method has none of its own: javac marks them all
+            // synthetic, and copies onto them the annotations of the method it calls, which must not make a second
+            // observer or injection point of it. Any other method keeps the parameters of its descriptor.
+            if (!ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue())) {
+                boolean bridge = (mm.flags().flagsMask() & ClassFile.ACC_BRIDGE) != 0;
+                return bridge ? new ParameterLayout(count, 0, 0) : DECLARED;
+            }
             var attribute = mm.findAttribute(Attributes.methodParameters())
                     .filter(parameters -> parameters.parameters().size() == count);
             if (attribute.isPresent()) {
                 return marked(attribute.get().parameters().stream().mapToInt(MethodParameterInfo::flagsMask)
                         .toArray(), position -> isOuterInstance(mm, members, position));
-            }
-            if (!ConstantDescs.INIT_NAME.equals(mm.methodName().stringValue())) {
-                return DECLARED;
             }
             if (members.enumClass()) {
                 return new ParameterLayout(Math.min(ENUM_CONSTRUCTOR_PREFIX, count), 0, 0);
@@ -425,10 +434,26 @@ public final class ClassFileScanner {
                 return new ParameterLayout(0, Math.min(1, count), Math.max(0, added - 1));
             }
             if (members.enclosingClass() != null) {
-                int outer = isOuterInstance(mm, members, 0) && (declared < 0 || added > 0) ? 1 : 0;
-                return new ParameterLayout(0, outer, Math.max(0, added - outer));
+                // The values captured are the last parameters, one for each field javac keeps them in: that count
+                // tells them from the outer instance, and from the declared parameters of a constructor without a
+                // Signature, an anonymous class's.
+                int captured = Math.min(capturedValues(mm), count);
+                int notDeclared = declared < 0 ? count : added;
+                int outer = isOuterInstance(mm, members, 0) && notDeclared > captured ? 1 : 0;
+                return new ParameterLayout(0, outer, declared < 0 ? captured : Math.max(0, added - outer));
             }
             return new ParameterLayout(0, Math.max(0, added), 0);
+        }
+
+        /**
+         * How many values the class of the constructor {@code mm} captures: javac keeps each in a synthetic field
+         * {@code val$name}, and passes them last to the constructor.
+         */
+        private static int capturedValues(MethodModel mm) {
+            return (int) mm.parent().stream().flatMap(owner -> owner.fields().stream())
+                    .filter(field -> (field.flags().flagsMask() & ClassFile.ACC_SYNTHETIC) != 0
+                            && field.fieldName().stringValue().startsWith(CAPTURED_FIELD_PREFIX))
+                    .count();
         }
 
         /**
@@ -462,8 +487,9 @@ public final class ClassFileScanner {
          *
          * <p>Without {@code MethodParameters}, the check on the descriptor is a guess: a local class declared in a
          * static method has no outer instance, yet a first parameter of the class that declares it reads as one.
-         * Javac has written {@code MethodParameters} for those constructors since Java 21, so only older class files
-         * meet it.
+         * Javac has written {@code MethodParameters} for those constructors since Java 21, so older class files meet
+         * it, and those of a {@code jlink --strip-debug} image, where the count of the captured values decides
+         * first.
          */
         private static boolean isOuterInstance(MethodModel mm, Members members, int position) {
             var type = mm.methodTypeSymbol();

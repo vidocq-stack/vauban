@@ -5,6 +5,54 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-60 — A `jlink` image runs its extensions at each start: the index reads parameters from an attribute `--strip-debug` removes
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/jlink-bridge-parameters`
+- **Module**: `vauban-indexer` (`ClassFileScanner.ParameterLayout`); seen through `vauban-core` (`ClassChecksums`,
+  `FrozenExtensions`)
+- **Symptom**: an image built by `vidocq:jlink` starts with `[VIDOCQ-GEN-003] 12 build compatible extensions ran at
+  start: the record of the frozen extensions … was written for another deployment: 6 bean classes differ from the
+  build's: …BookRepositoryImpl (changed), DuplicateIsbnMapper (changed), LoanRefusedMapper (changed),
+  LoanRepositoryImpl (changed), …DiracFtMetricsRecorder (changed), OtelFtMetricsRecorder (changed)`. The plain
+  distribution of the same build reuses the record. The application behaves the same; its start runs the extensions
+  the build had frozen. A regression of the bug stack merged on 2026-11-18 (Vidocq/vauban#337): the image of the
+  day before reused its record.
+- **Minimal repro**: `ClassChecksumsTest#classesWithMarkedParametersKeepTheirChecksumsOnceStripped`: a class
+  implementing `Function<String, Integer>`, scanned as compiled and as `jlink --strip-debug` writes it
+  (`JlinkStripping`). Red before the fix: `apply[]` at build, `apply[ClassType[name=java.lang.Object]]` once
+  stripped. Found by the TUTO session on a tutorial application: `./mvnw clean package vidocq:jlink`, then start
+  `target/dist/bin/library`.
+- **Cause**: `jlink --strip-debug` removes the `MethodParameters` attribute of every method. Since 5816886f
+  (BUG-20261118-32), `ParameterLayout.of` read that attribute for every method and left out the parameters it marks
+  synthetic. Javac, since Java 21, writes the attribute for the parameters it adds itself, without `-parameters`:
+  those of a bridge method among them. So the bridge `toResponse(Throwable)` of an `ExceptionMapper<DuplicateIsbn>`
+  had no parameter in the index at build, and one in the image. `ClassChecksums.ofModel` counts the types of the
+  parameters: the checksum of the class changed, and the record was refused. The six classes each have a bridge
+  method (Mansart repositories, exception mappers, Heisenberg recorders).
+  - A second case of the same defect, found by the test: the constructor of an anonymous class that captures values
+    has no `Signature`, so without the attribute its captured values were read as declared parameters.
+- **Fix**:
+  - A method that is no constructor says by its access flags which parameters the index leaves out, never by the
+    attribute: all of them for a bridge method (`ACC_BRIDGE`), as the build already read it, and none for any other
+    method. The model of a bridge is then the same at build and in an image, and the record of a build made before
+    the fix stays valid.
+  - Why a bridge keeps no parameter: javac copies onto it the parameter annotations of the method it calls. With
+    its parameters, the bridge `on(Object)` of an overriding observer `on(@Observes Pong)` became a second observer,
+    of `Object` (`VetoedInterceptorCompileTimeTest#anInheritedObserverOfATypeVariable…`, red on a first fix that
+    kept them). On `main`, a scan of the stripped class reads those parameters; whether an image then starts with
+    that second observer was not checked.
+  - Without the attribute, a local or anonymous class's constructor takes as many captured values, last, as the
+    class has synthetic `val$` fields. That count also tells a first parameter of the declaring class from an outer
+    instance: the local class of a static method no longer reads one as the other.
+  - Still a guess without the attribute: an anonymous class of a static method whose superclass constructor takes
+    the declaring class first.
+- **Investigations**:
+  - 2026-11-18: `javap -v` of `DuplicateIsbnMapper` in `target/classes` and in the image's `lib/modules` differ,
+    debug tables aside, by the `MethodParameters` of the bridge alone (`<no name> synthetic`).
+  - 2026-11-18: the comment of `isOuterInstance` said only class files older than Java 21 lack the attribute. Every
+    class of a `--strip-debug` image lacks it.
+
 ## BUG-20261118-56 — `Outer<String>.Plain` loses its owner in the language model
 
 - **Date**: 2026-11-18
