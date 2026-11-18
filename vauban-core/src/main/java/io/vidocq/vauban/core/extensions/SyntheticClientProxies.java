@@ -31,6 +31,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.TreeMap;
@@ -105,26 +106,32 @@ public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String
             if (beanClass.isInterface()) {
                 host = host != null ? host : providerPackage(output);
                 interfaceProxy(bean, beanClass, host, files, interfaces);
-                continue;
-            }
-            if (hasProxy(beanClass)) {
-                continue;
-            }
-            RuntimeClientProxyGenerator.GeneratedProxy generated;
-            try {
-                generated = RuntimeClientProxyGenerator.generate(beanClass);
-            } catch (RuntimeException | LinkageError _) {
-                continue;
-            }
-            String path = generated.className().replace('.', '/') + CLASS_FILE;
-            if (compiled.test(beanClass.getName())) {
-                files.put(path, generated.bytecode());
-            } else {
-                files.put(PLACED_PREFIX + path, generated.bytecode());
-                placed.add(beanClass.getName());
+            } else if (!hasProxy(beanClass)) {
+                classProxy(beanClass, compiled.test(beanClass.getName()), files, placed);
             }
         }
         return new SyntheticClientProxies(files, placed, interfaces);
+    }
+
+    /**
+     * The client proxy of {@code beanClass}, which has none yet, in {@code files}: next to the class when the
+     * application compiled it, placed otherwise. A class no proxy can be generated for gets none.
+     */
+    private static void classProxy(Class<?> beanClass, boolean compiled, Map<String, byte[]> files,
+                                   Set<String> placed) {
+        RuntimeClientProxyGenerator.GeneratedProxy generated;
+        try {
+            generated = RuntimeClientProxyGenerator.generate(beanClass);
+        } catch (RuntimeException | LinkageError _) {
+            return;
+        }
+        String path = generated.className().replace('.', '/') + CLASS_FILE;
+        if (compiled) {
+            files.put(path, generated.bytecode());
+        } else {
+            files.put(PLACED_PREFIX + path, generated.bytecode());
+            placed.add(beanClass.getName());
+        }
     }
 
     /** Marks an output without a package to host the proxy of an interface. */

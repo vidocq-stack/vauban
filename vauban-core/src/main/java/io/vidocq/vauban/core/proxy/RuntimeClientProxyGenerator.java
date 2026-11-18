@@ -100,9 +100,7 @@ public final class RuntimeClientProxyGenerator {
         }
         var others = new java.util.TreeMap<String, Class<?>>();
         for (var type : beanTypes) {
-            Class<?> raw = type instanceof Class<?> plain ? plain
-                    : type instanceof java.lang.reflect.ParameterizedType parameterized
-                            && parameterized.getRawType() instanceof Class<?> rawType ? rawType : null;
+            Class<?> raw = rawClass(type);
             if (raw != null && raw.isInterface() && raw != beanClass && Modifier.isPublic(raw.getModifiers())) {
                 others.put(raw.getName(), raw);
             }
@@ -119,6 +117,15 @@ public final class RuntimeClientProxyGenerator {
         }
         var shape = new ClientProxyShape(Object.class.getName(), List.of(), methods, List.of(), false, implemented);
         return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
+    }
+
+    /** The class of {@code type}, a class or a parameterized type; {@code null} for any other type. */
+    private static Class<?> rawClass(java.lang.reflect.Type type) {
+        if (type instanceof Class<?> plain) {
+            return plain;
+        }
+        return type instanceof java.lang.reflect.ParameterizedType parameterized
+                && parameterized.getRawType() instanceof Class<?> rawType ? rawType : null;
     }
 
     /** The shape {@link #generateProducerProxyAt} emits: the walk placed where {@code proxyBinaryName} lives. */
