@@ -30,6 +30,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Enumeration;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -78,11 +79,17 @@ public final class ExtensionFreezer {
         int frozen = outcome.extensions().size() - outcome.startExtensions().size();
         String line = "Vauban: froze " + frozen + " build compatible extension(s); the container start loads what"
                 + " they did.";
-        if (outcome.startExtensions().isEmpty()) {
-            return List.of(line);
+        var lines = new ArrayList<String>();
+        lines.add(line);
+        var asked = outcome.startExtensions().stream()
+                .filter(extension -> !outcome.startReasons().containsKey(extension)).toList();
+        if (!asked.isEmpty()) {
+            lines.add("Vauban: " + asked.size() + " extension(s) run again at each start, having left work for it: "
+                    + String.join(", ", asked) + ".");
         }
-        return List.of(line, "Vauban: " + outcome.startExtensions().size() + " extension(s) run again at each start,"
-                + " having left work for it: " + String.join(", ", outcome.startExtensions()) + ".");
+        outcome.startReasons().forEach((extension, reason) ->
+                lines.add("Vauban: " + extension + " runs again at each start: " + reason + "."));
+        return List.copyOf(lines);
     }
 
     private static URL[] urls(List<Path> paths) {

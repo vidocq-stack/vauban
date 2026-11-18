@@ -5,6 +5,24 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-62 — At start, an `@Enhancement` that replaces `@Dependent` by `@ApplicationScoped` leaves the bean `@Dependent`
+
+- **Date**: 2026-11-18
+- **Status**: OPEN, not investigated
+- **Module**: `vauban-core` (start path, without the annotation processor)
+- **Symptom**: an extension runs `plain.removeAnnotation(a -> a.name().equals(Dependent.class.getName()))` then
+  `plain.addAnnotation(ApplicationScoped.class)` on a `@Dependent` class. At start, two lookups of the bean give two
+  instances: the bean is still `@Dependent`. No error is reported either. The same extension that only adds
+  `@ApplicationScoped` to a class without a scope gets one instance (`FrozenExtensionsTest`, `Promoted`).
+- **Minimal repro**: in `FrozenExtensionsTest`, with no record,
+  `deployment(List.of(Plain.class, RemovingExtension.class)).build()` then
+  `assertSame(container.select(Plain.class), container.select(Plain.class))`: red on `main` bd38e952.
+- **Hypothesised cause**: not proved. The scope of a bean class the start reads may come from the class itself,
+  where `@Dependent` still is, and not from the class as `@Enhancement` left it. A removed `@Priority` is applied
+  (`DeclaredPriorityTest`), so the removal itself reaches the descriptors.
+- **Found by**: the work on vauban#343. It does not depend on the freeze: the start gives the same bean with a
+  record, where the extension runs again at start, and without one. Not checked in the processor.
+
 ## BUG-20261118-61 — A second record of frozen extensions on the path turns the freeze off for the whole deployment
 
 - **Date**: 2026-11-18

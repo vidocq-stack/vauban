@@ -631,13 +631,15 @@ public final class VaubanContainerBuilder {
      * created.
      *
      * <p>An extension that asked whether it runs at build time left work for the start: it is recorded as running
-     * again at each start, and what it did is not frozen. So are the extensions {@code startExtensions} names.
+     * again at each start, and what it did is not frozen. So are the extensions {@code startExtensions} names, and
+     * an extension whose work the record cannot say: one whose {@code @Enhancement} removes annotations, one that
+     * gives a synthetic component a parameter the metadata cannot express. The others stay frozen, and the outcome
+     * names each such extension with the reason (vauban#343).
      *
      * <p>No record is written, a stale one is removed and the outcome says why, when the deployment has no
      * extension or the annotation processor ran them all at compile (nothing to freeze either way), when an extension
      * fails or reports an error (the start will report it, in the environment it
-     * belongs to), when an {@code @Enhancement} removes annotations or when a synthetic component holds a parameter
-     * the metadata cannot express. The start then runs the extensions, as it does without this step.
+     * belongs to). The start then runs the extensions, as it does without this step.
      *
      * @param output          where the application's classes are compiled
      * @param startExtensions class names of extensions to run at each start whatever they asked
@@ -654,7 +656,8 @@ public final class VaubanContainerBuilder {
             capture.writeInvokerClasses(output);
             frozen.write(output);
             return new FrozenExtensions.Outcome(true, null, frozen.extensions(),
-                    frozen.extensions().stream().filter(frozen.startExtensions()::contains).toList());
+                    frozen.extensions().stream().filter(frozen.startExtensions()::contains).toList(),
+                    capture.startReasons);
         } catch (ExtensionCapture.NotFrozen e) {
             FrozenExtensions.delete(output);
             return FrozenExtensions.Outcome.notFrozen(e.getMessage());
@@ -692,6 +695,8 @@ public final class VaubanContainerBuilder {
         private BceProcessor.Result result;
         /** Whether the deployment's extensions all ran at compile, so that none ran here. */
         private boolean ranAtCompile;
+        /** Why each extension whose work the record cannot say runs again at each start, by its name. */
+        private final java.util.SortedMap<String, String> startReasons = new java.util.TreeMap<>();
 
         void captured(DeploymentFingerprint fingerprint, List<Class<?>> extensions, BceProcessor.DiscoveryResult discovery,
                 Map<DotName, List<VaubanClassConfig>> enhancements, BceProcessor.Result result, boolean ranAtCompile,
@@ -736,45 +741,32 @@ public final class VaubanContainerBuilder {
             asked.forEach(extension -> atStart.add(extension.getName()));
             extensions.stream().map(Class::getName).filter(namedForStart::contains).forEach(atStart::add);
 
+            // An extension that removes annotations runs again at each start: a record of additions cannot say
+            // what it did (vauban#343).
+            enhancements.forEach((target, configs) -> {
+                for (var config : configs) {
+                    var source = config.getSourceBce();
+                    if (source != null && !atStart.contains(source.getName()) && config.removesAnnotations()) {
+                        startReasons.putIfAbsent(source.getName(), "it removes annotations from " + target
+                                + " in @Enhancement, which a record of additions cannot say");
+                    }
+                }
+            });
+            atStart.addAll(startReasons.keySet());
+
+            var synthetic = syntheticOf(atStart, output);
+
             // What @Enhancement did, of the extensions that stay frozen. A configuration the frozen files of an
             // archive gave has no extension: the start reads those files itself.
             var frozenModifications = new LinkedHashMap<DotName, List<VaubanClassConfig>>();
             enhancements.forEach((target, configs) -> {
                 for (var config : configs) {
                     var source = config.getSourceBce();
-                    if (source == null || atStart.contains(source.getName())) {
-                        continue;
+                    if (source != null && !atStart.contains(source.getName())) {
+                        frozenModifications.computeIfAbsent(target, _ -> new ArrayList<>()).add(config);
                     }
-                    if (config.removesAnnotations()) {
-                        throw new NotFrozen(source.getName() + " removes annotations from " + target
-                                + " in @Enhancement, which a record of additions cannot say");
-                    }
-                    frozenModifications.computeIfAbsent(target, _ -> new ArrayList<>()).add(config);
                 }
             });
-
-            var synthetic = new java.util.Properties();
-            var beans = result.syntheticBeans().stream()
-                    .filter(bean -> !runsAtStart(bean.getSourceExtension(), atStart)).toList();
-            var observers = result.syntheticObservers().stream()
-                    .filter(observer -> !runsAtStart(observer.getSourceExtension(), atStart)).toList();
-            try {
-                var written = new java.io.ByteArrayOutputStream();
-                var invokers = io.vidocq.vauban.core.extensions.InvokerClasses.of(beans, observers,
-                        className -> java.nio.file.Files.isRegularFile(classFile(output, className)));
-                invokers.<Void, IOException>writing(() -> {
-                    io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.write(beans, observers, written);
-                    return null;
-                });
-                invokerClasses = invokers.classes();
-                synthetic.load(new java.io.InputStreamReader(
-                        new java.io.ByteArrayInputStream(written.toByteArray()),
-                        java.nio.charset.StandardCharsets.UTF_8));
-            } catch (IllegalArgumentException e) {
-                throw new NotFrozen("a synthetic component cannot be written (" + e.getMessage() + ")");
-            } catch (IOException e) {
-                throw new java.io.UncheckedIOException(e);
-            }
 
             var contexts = io.vidocq.vauban.core.extensions.FrozenContexts.of(
                     discovery.metaAnnotations().getCustomContexts());
@@ -783,6 +775,77 @@ public final class VaubanContainerBuilder {
                     ExtensionDiscovery.of(discovery).named(contexts),
                     io.vidocq.vauban.core.extensions.EnhancementPatchSerializer.additions(frozenModifications),
                     synthetic, readChecksums());
+        }
+
+        /**
+         * The metadata of the synthetic components of the extensions that stay frozen. An extension one of whose
+         * components holds a parameter the metadata cannot express joins {@code atStart}, and the metadata is
+         * written again without what it registered.
+         */
+        private java.util.Properties syntheticOf(Set<String> atStart, java.nio.file.Path output) {
+            while (true) {
+                var beans = result.syntheticBeans().stream()
+                        .filter(bean -> !runsAtStart(bean.getSourceExtension(), atStart)).toList();
+                var observers = result.syntheticObservers().stream()
+                        .filter(observer -> !runsAtStart(observer.getSourceExtension(), atStart)).toList();
+                try {
+                    var written = new java.io.ByteArrayOutputStream();
+                    var invokers = io.vidocq.vauban.core.extensions.InvokerClasses.of(beans, observers,
+                            className -> java.nio.file.Files.isRegularFile(classFile(output, className)));
+                    invokers.<Void, IOException>writing(() -> {
+                        io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.write(beans, observers, written);
+                        return null;
+                    });
+                    invokerClasses = invokers.classes();
+                    var synthetic = new java.util.Properties();
+                    synthetic.load(new java.io.InputStreamReader(
+                            new java.io.ByteArrayInputStream(written.toByteArray()),
+                            java.nio.charset.StandardCharsets.UTF_8));
+                    return synthetic;
+                } catch (IllegalArgumentException e) {
+                    String reason = "a synthetic component cannot be written (" + e.getMessage() + ")";
+                    Class<?> source = unwritable(beans, observers);
+                    if (source == null) {
+                        throw new NotFrozen(reason);
+                    }
+                    startReasons.put(source.getName(), reason);
+                    atStart.add(source.getName());
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            }
+        }
+
+        /**
+         * The extension that registered the first of these components the metadata cannot express, {@code null}
+         * when each can be written alone or when that component names no extension.
+         */
+        private static Class<?> unwritable(List<io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?>> beans,
+                List<io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?>> observers) {
+            for (var bean : beans) {
+                if (!writable(List.of(bean), List.of())) {
+                    return bean.getSourceExtension();
+                }
+            }
+            for (var observer : observers) {
+                if (!writable(List.of(), List.of(observer))) {
+                    return observer.getSourceExtension();
+                }
+            }
+            return null;
+        }
+
+        private static boolean writable(List<io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?>> beans,
+                List<io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?>> observers) {
+            try {
+                io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.write(beans, observers,
+                        java.io.OutputStream.nullOutputStream());
+                return true;
+            } catch (IllegalArgumentException _) {
+                return false;
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
         }
 
         /**

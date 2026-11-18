@@ -30,6 +30,7 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
@@ -93,6 +94,7 @@ class FrozenExtensionsTest {
     @BeforeEach
     @AfterEach
     void reset() {
+        RemovingExtension.ENHANCED.set(0);
         StaticExtension.RUNS.set(0);
         StartCheckExtension.RUNS.set(0);
         DiscoveringExtension.RUNS.set(0);
@@ -196,10 +198,35 @@ class FrozenExtensionsTest {
 
     /** Takes an annotation away, which no record can say. */
     public static class RemovingExtension implements BuildCompatibleExtension {
+        static final AtomicInteger ENHANCED = new AtomicInteger();
+
         @Enhancement(types = Plain.class)
         public void rescope(ClassConfig plain) {
+            ENHANCED.incrementAndGet();
             plain.removeAnnotation(annotation -> annotation.name().equals(Dependent.class.getName()));
             plain.addAnnotation(ApplicationScoped.class);
+        }
+    }
+
+    public static class Opaque {
+        public String id() {
+            return "opaque";
+        }
+    }
+
+    public static class OpaqueCreator implements SyntheticBeanCreator<Opaque> {
+        @Override
+        public Opaque create(Instance<Object> lookup, Parameters params) {
+            return new Opaque();
+        }
+    }
+
+    /** Gives a synthetic bean an invoker of its own making, which the metadata cannot express. */
+    public static class OpaqueExtension implements BuildCompatibleExtension {
+        @Synthesis
+        public void opaque(SyntheticComponents components) {
+            components.addBean(Opaque.class).type(Opaque.class).scope(Dependent.class)
+                    .withParam("invoker", new InvokerInfo() { }).createWith(OpaqueCreator.class);
         }
     }
 
@@ -575,22 +602,66 @@ class FrozenExtensionsTest {
     }
 
     @Test
-    @DisplayName("an extension that removes annotations leaves no record, and a stale one goes")
-    void anExtensionThatRemovesAnnotationsIsNotFrozen() throws Exception {
-        assertTrue(deployment(STATIC_DEPLOYMENT).freezeExtensions(output).frozen());
+    @DisplayName("an extension that removes annotations runs again at each start, alone: the others stay frozen")
+    void anExtensionThatRemovesAnnotationsRunsAgainAtStartAlone() {
+        // vauban#343: a removal is legal CDI Lite, and the author of an extension need not know the record.
+        List<Class<?>> classes = List.of(Promoted.class, Plain.class, StaticExtension.class, RemovingExtension.class);
+        FrozenExtensions.Outcome outcome = deployment(classes).freezeExtensions(output);
 
-        FrozenExtensions.Outcome outcome = deployment(List.of(Plain.class, RemovingExtension.class))
-                .freezeExtensions(output);
+        assertTrue(outcome.frozen(), outcome.reason());
+        assertEquals(List.of(StaticExtension.class.getName(), RemovingExtension.class.getName()),
+                outcome.extensions());
+        assertEquals(List.of(RemovingExtension.class.getName()), outcome.startExtensions());
+        String reason = outcome.startReasons().get(RemovingExtension.class.getName());
+        assertEquals(Set.of(RemovingExtension.class.getName()), outcome.startReasons().keySet());
+        assertTrue(reason.contains("removes annotations from " + Plain.class.getName()), reason);
 
-        assertFalse(outcome.frozen());
-        assertTrue(outcome.reason().contains(RemovingExtension.class.getName()), outcome.reason());
-        assertTrue(outcome.reason().contains("removes"), outcome.reason());
-        try (var files = Files.walk(output)) {
-            assertEquals(List.of(), files.filter(Files::isRegularFile).toList(), "no record, stale or new");
-        }
-        try (VaubanContainer container = deployment(List.of(Plain.class, RemovingExtension.class)).build()) {
-            assertFalse(container.extensionsAtStart().frozen());
+        StaticExtension.RUNS.set(0);
+        RemovingExtension.ENHANCED.set(0);
+        try (VaubanContainer container = deployment(classes).build()) {
+            assertEquals(0, StaticExtension.RUNS.get(), "the start must not run a frozen extension");
+            assertTrue(container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
+            assertEquals(List.of(StaticExtension.class.getName()), container.extensionsAtStart().frozenAtBuild());
             assertEquals(List.of(RemovingExtension.class.getName()), container.extensionsAtStart().ranAtStart());
+            assertSame(container.select(Promoted.class), container.select(Promoted.class), "the frozen scope");
+            assertEquals("hello", container.select(Greeting.class).text());
+            assertEquals(1, RemovingExtension.ENHANCED.get(), "the start runs the @Enhancement of the other one");
+        }
+    }
+
+    @Test
+    @DisplayName("an extension alone that removes annotations: a record, and the start runs it")
+    void anExtensionAloneThatRemovesAnnotations() {
+        List<Class<?>> classes = List.of(Plain.class, RemovingExtension.class);
+        FrozenExtensions.Outcome outcome = deployment(classes).freezeExtensions(output);
+
+        assertTrue(outcome.frozen(), outcome.reason());
+        assertEquals(List.of(RemovingExtension.class.getName()), outcome.startExtensions());
+        RemovingExtension.ENHANCED.set(0);
+        try (VaubanContainer container = deployment(classes).build()) {
+            assertEquals(List.of(RemovingExtension.class.getName()), container.extensionsAtStart().ranAtStart());
+            assertEquals(1, RemovingExtension.ENHANCED.get());
+        }
+    }
+
+    @Test
+    @DisplayName("an extension whose synthetic parameter cannot be written runs again at each start, alone")
+    void anExtensionWithAnUnwritableParameterRunsAgainAtStartAlone() {
+        List<Class<?>> classes = List.of(Promoted.class, Plain.class, StaticExtension.class, OpaqueExtension.class);
+        FrozenExtensions.Outcome outcome = deployment(classes).freezeExtensions(output);
+
+        assertTrue(outcome.frozen(), outcome.reason());
+        assertEquals(List.of(OpaqueExtension.class.getName()), outcome.startExtensions());
+        String reason = outcome.startReasons().get(OpaqueExtension.class.getName());
+        assertTrue(reason.contains("a synthetic component cannot be written"), reason);
+        assertTrue(reason.contains("param 'invoker'"), reason);
+
+        StaticExtension.RUNS.set(0);
+        try (VaubanContainer container = deployment(classes).build()) {
+            assertEquals(0, StaticExtension.RUNS.get(), "the start must not run a frozen extension");
+            assertEquals(List.of(OpaqueExtension.class.getName()), container.extensionsAtStart().ranAtStart());
+            assertEquals("hello", container.select(Greeting.class).text(), "the frozen synthetic bean");
+            assertEquals("opaque", container.select(Opaque.class).id(), "the one the start registered");
         }
     }
 

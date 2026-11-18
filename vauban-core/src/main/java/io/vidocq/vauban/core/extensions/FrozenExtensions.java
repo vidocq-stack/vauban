@@ -116,12 +116,23 @@ public record FrozenExtensions(String fingerprint, FrozenExtensions.Deployment d
      * @param reason          why none was, {@code null} otherwise
      * @param extensions      the extensions the build ran, in their order
      * @param startExtensions those of them that run again at each start
+     * @param startReasons    for each of those whose work the record cannot say, by its name, why: it removes
+     *                        annotations, or a synthetic component of its holds a parameter the metadata cannot
+     *                        express (vauban#343). An extension that asked whether it runs at build time, or that
+     *                        the build named, has no entry
      */
-    public record Outcome(boolean frozen, String reason, List<String> extensions, List<String> startExtensions) {
+    public record Outcome(boolean frozen, String reason, List<String> extensions, List<String> startExtensions,
+            SortedMap<String, String> startReasons) {
 
         public Outcome {
             extensions = List.copyOf(extensions);
             startExtensions = List.copyOf(startExtensions);
+            startReasons = Collections.unmodifiableSortedMap(new TreeMap<>(startReasons));
+        }
+
+        /** An outcome none of whose extensions was sent back to the start by the record. */
+        public Outcome(boolean frozen, String reason, List<String> extensions, List<String> startExtensions) {
+            this(frozen, reason, extensions, startExtensions, new TreeMap<>());
         }
 
         /** No record, for {@code reason}: the container start runs the extensions. */

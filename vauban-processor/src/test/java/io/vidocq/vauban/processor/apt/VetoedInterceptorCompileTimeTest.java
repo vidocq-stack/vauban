@@ -2845,8 +2845,8 @@ class VetoedInterceptorCompileTimeTest {
     /**
      * CDI 4.1 runs the phases after {@code @Enhancement} on the classes as it left them: an annotation it removed from
      * a class, a field, a method or a parameter is gone from what {@code @Registration} reads. They read the
-     * additions only, in the processor and at start; a build refuses to freeze a removal, so the extension runs at
-     * each start (BUG-20261118-45).
+     * additions only, in the processor and at start; a record cannot say a removal, so the extension runs again at
+     * each start (BUG-20261118-45, vauban#343).
      */
     @Test
     @DisplayName("@Registration does not see the annotations @Enhancement removed, everywhere")
@@ -5576,9 +5576,9 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
-     * {@link #seenThreeWays(Map, Class, List, StartedCheck)}; when {@code freezes} is {@code false}, the build refuses
-     * to freeze the extension, which then runs at each start: what it saw at build is what it saw while the build
-     * tried.
+     * {@link #seenThreeWays(Map, Class, List, StartedCheck)}; when {@code freezes} is {@code false}, the record
+     * cannot say what the extension did, and the build names it as running again at each start (vauban#343): what
+     * it saw at build is what it saw while the build ran it.
      */
     private SeenThreeWays seenThreeWays(Map<String, String> sources,
                                         Class<? extends BuildCompatibleExtension> extension, List<String> seen,
@@ -5605,7 +5605,8 @@ class VetoedInterceptorCompileTimeTest {
         try (var loader = loader(result)) {
             var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
                     .freezeExtensions(result.classes());
-            assertEquals(freezes, outcome.frozen(), outcome.reason());
+            assertTrue(outcome.frozen(), outcome.reason());
+            assertEquals(freezes ? List.of() : List.of(extension.getName()), outcome.startExtensions());
         }
         var atBuild = sorted(seen);
         if (!freezes) {

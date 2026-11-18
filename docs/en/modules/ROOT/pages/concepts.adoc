@@ -171,11 +171,14 @@ No brick jar is copied or marked: the record is the application's, one per deplo
 
 A deployment with nothing to freeze gets no record either, and the build says so without a warning: `nothing to freeze: the deployment has no build compatible extension`, or `nothing to freeze: every build compatible extension of the deployment ran at compile` when every bean archive carries the processor's marker, so that the start runs none of them. `FrozenExtensions.Outcome.nothingToFreeze()` answers `true` for both.
 
-The build writes no record, removes a stale one and says why, when the result cannot be frozen faithfully:
+The build writes no record, removes a stale one and says why, when an extension failed or reported an error: the start reports it, in the environment it belongs to.
 
-* an extension failed or reported an error: the start reports it, in the environment it belongs to;
-* an `@Enhancement` removed annotations, which a record of additions cannot say;
-* a synthetic bean or observer holds a parameter the metadata cannot express.
+[.tag-new]#NEW# An extension whose work the record cannot say runs again at each start, alone, and the others stay frozen (vauban#343):
+
+* its `@Enhancement` removed annotations, which a record of additions cannot say;
+* it gave a synthetic bean or observer a parameter the metadata cannot express.
+
+Both are legal CDI Lite, and the author of an extension need not know the record. `FrozenExtensions.Outcome.startReasons()` gives the reason by extension name, and the build prints one line for each: `Vauban: com.acme.Rescoping runs again at each start: it removes annotations from com.acme.Plain in @Enhancement, which a record of additions cannot say.` Such an extension used to turn the freeze off for the whole deployment.
 
 Two things keep a record from saying too much. An extension that asked `ExtensionPhase.isBuildTime()` during the build is recorded as running again at each start, and what it did is left out of the record; `startExtensions` names more of them, for an extension that depends on its start environment without asking. And a bean the embedding runtime adds itself, with `VaubanContainerBuilder.addHostBean(type, factory)`, stays out of the fingerprint: such a bean may depend on the start configuration (a holder for a connection pool that is configured or not), so it must not invalidate the record; in return, the frozen extensions never saw it. A class the deployment holds anyway, one its beans list names, stays in the fingerprint even when the runtime also adds it this way: the build counted it.
 
@@ -186,7 +189,7 @@ An extension is frozen when its work depends on the classes of the deployment an
 
 . *Compute from the deployment only.* What a phase reads — classes, annotations, the beans `@Registration` shows — is the same on the build machine and where the application starts. A configuration value, an environment variable, a file outside the application, a network resource is not: keep them out of the phases.
 . *Check the start environment in an observer of `Startup`, not in a phase.* A required configuration value, a key that must parse: collect at build what must be checked, hand it to the start as the parameters of a synthetic observer (`SyntheticComponents.addObserver(Startup.class).withParam(…).observeWith(…)`) or of a synthetic bean an ordinary observer injects, and do the check when `Startup` fires. To refuse the deployment, throw a `DeploymentException`: the container start fails with that very exception (xref:usage.adoc#lifecycle-observer-failures[When a lifecycle observer throws]). Give the observer an early `@Priority` so that it runs before the application's own `Startup` observers.
-. *Add, never remove.* `ClassConfig.addAnnotation` freezes; `removeAnnotation` and `removeAllAnnotations` do not, and send the whole deployment back to running its extensions at start. To replace an annotation's effect, add the one that wins.
+. *Add, never remove.* `ClassConfig.addAnnotation` freezes; `removeAnnotation` and `removeAllAnnotations` do not: the extension that calls one runs again at each start, alone since vauban#343, and the others stay frozen. To replace an annotation's effect, add the one that wins.
 . *Carry data in parameters the metadata can write.* Primitives, `String`, `Class`, enums, annotations, `ClassInfo`, `AnnotationInfo`, `InvokerInfo` and their arrays; state the extension keeps in a field is gone at start, since no extension instance exists there.
 
 When a phase cannot avoid the start environment, ask `ExtensionPhase.isBuildTime()` and skip that part at build time: the container then runs the extension again at each start, and only it. That is the slow path. It is worth moving the part that asks into a class of its own, so that the rest of the extension stays frozen.

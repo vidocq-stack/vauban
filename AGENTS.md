@@ -75,7 +75,8 @@ application once and records what they did; the packaged application loads that 
 - check the start environment in an observer of `jakarta.enterprise.event.Startup` that throws a
   `DeploymentException`, fed with what the build collected (`withParam`); models: Ravel's `ConfigStartCheck`,
   Cervantes' `JwtConfigurationCheck`;
-- add annotations, never remove them; carry data in parameters, never in fields of the extension;
+- add annotations rather than remove them: an extension that removes one runs again at each start, alone
+  (vauban#343); carry data in parameters, never in fields of the extension;
 - ask `ExtensionPhase.isBuildTime()` only as a last resort, in a class of its own: an extension that asks runs again
   at each start (Heisenberg's `InterceptorPriorityExtension`);
 - the brick's Vidocq runtime extension adds its own beans with `VaubanContainerBuilder.addHostBean`, never

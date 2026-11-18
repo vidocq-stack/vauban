@@ -178,8 +178,24 @@ class ExtensionFreezerTest {
                 ExtensionFreezer.report(new FrozenExtensions.Outcome(true, null,
                         List.of("com.acme.A", "com.acme.B", "com.acme.Check"), List.of("com.acme.Check"))));
         assertEquals(List.of("Vauban: the build compatible extensions are not frozen, the container start runs them:"
-                        + " com.acme.A removes annotations."),
-                ExtensionFreezer.report(FrozenExtensions.Outcome.notFrozen("com.acme.A removes annotations")));
+                        + " com.acme.A failed."),
+                ExtensionFreezer.report(FrozenExtensions.Outcome.notFrozen("com.acme.A failed")));
+    }
+
+    @Test
+    @DisplayName("the report names each extension the record cannot say, with the reason (vauban#343)")
+    void theReportNamesWhatTheRecordCannotSay() {
+        var reasons = new java.util.TreeMap<>(java.util.Map.of("com.acme.Removes", "it removes annotations"));
+        assertEquals(List.of("Vauban: froze 1 build compatible extension(s); the container start loads what they did.",
+                        "Vauban: 1 extension(s) run again at each start, having left work for it: com.acme.Check.",
+                        "Vauban: com.acme.Removes runs again at each start: it removes annotations."),
+                ExtensionFreezer.report(new FrozenExtensions.Outcome(true, null,
+                        List.of("com.acme.A", "com.acme.Check", "com.acme.Removes"),
+                        List.of("com.acme.Check", "com.acme.Removes"), reasons)));
+        assertEquals(List.of("Vauban: froze 1 build compatible extension(s); the container start loads what they did.",
+                        "Vauban: com.acme.Removes runs again at each start: it removes annotations."),
+                ExtensionFreezer.report(new FrozenExtensions.Outcome(true, null,
+                        List.of("com.acme.A", "com.acme.Removes"), List.of("com.acme.Removes"), reasons)));
     }
 
     @Test
