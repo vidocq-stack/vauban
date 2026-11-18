@@ -107,10 +107,7 @@ public final class QualifierUtils {
      * qualifier instance and its matching key must both carry it, so both go through this.
      */
     public static QualifierInstance withBeanName(QualifierInstance qualifier, String beanName) {
-        if (beanName == null || !qualifier.annotationName().equals(QualifierInstance.NAMED_NAME)) {
-            return qualifier;
-        }
-        if (!stringMember(qualifier, VALUE).isEmpty()) {
+        if (beanName == null || !qualifier.isNamedWithoutValue()) {
             return qualifier;
         }
         return new QualifierInstance(QualifierInstance.NAMED_NAME,

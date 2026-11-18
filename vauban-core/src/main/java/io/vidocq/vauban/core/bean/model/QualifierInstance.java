@@ -52,4 +52,13 @@ public record QualifierInstance(DotName annotationName, Map<String, AnnotationVa
     public boolean isAny() {
         return annotationName.equals(ANY_NAME);
     }
+
+    /**
+     * Whether this is {@code @Named} with no value: none written, or the empty default written out, which takes the
+     * default name of the bean or of the injection point (CDI 4.1 §3.1.5, BUG-20261118-27).
+     */
+    public boolean isNamedWithoutValue() {
+        return annotationName.equals(NAMED_NAME)
+                && (!(members.get("value") instanceof AnnotationValue.StringVal(var name)) || name.isEmpty());
+    }
 }

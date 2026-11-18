@@ -128,12 +128,14 @@ final class QualifierResolver {
     }
 
     /**
-     * CDI spec: @Named without a value on an injection point defaults to the field name.
+     * CDI spec: @Named without a value on an injection point defaults to the field name. {@code @Named("")} writes that
+     * default value out, as an extension does that rebuilds a {@code @Named} from the members the language model shows
+     * (BUG-20261118-27).
      */
     Set<QualifierInstance> resolveNamedDefault(Set<QualifierInstance> qualifiers, String defaultName) {
         var result = new LinkedHashSet<QualifierInstance>();
         for (var q : qualifiers) {
-            if (q.annotationName().equals(QualifierInstance.NAMED_NAME) && q.members().isEmpty()) {
+            if (q.isNamedWithoutValue()) {
                 // @Named without value → default to field/parameter name
                 result.add(new QualifierInstance(QualifierInstance.NAMED_NAME,
                         java.util.Map.of(BeanDiscovery.MEMBER_VALUE, new io.vidocq.vauban.indexer.model.AnnotationValue.StringVal(defaultName))));

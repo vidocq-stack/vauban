@@ -138,6 +138,24 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-27 — `@Named("")` on an injection point field keeps the empty name
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`bean.discovery.QualifierResolver.resolveNamedDefault`)
+- **Symptom**: `@Inject @Named("") Service service` asked for a bean named `""`, and the deployment failed as
+  unsatisfied; `@Inject @Named Service service` asks for `service`. `@Named("")` is `@Named` with its default value
+  written out. Since BUG-20261117-55, an extension that rebuilds a `@Named` from the members the language model shows
+  writes it so.
+- **Repro**: `NamedEmptyValueTest` in `vauban-core`, red on 9a79b173 (`stack-l1b-bug1827.log`, "RED on 9a79b173":
+  `CDI deployment validation failed`). The bean side, `@Named("") class Gadget`, was already named `gadget`.
+- **Cause**: `resolveNamedDefault` gave the default name to a `@Named` without members only.
+- **Fix**: it gives it to a `@Named` whose `value` is absent or empty, as the bean name and the names an extension
+  adds (`EnhancementApplier.addedName`) already did.
+- **Verification**: `stack-l1b-bug1827.log`, "GREEN on 9a79b173 + BUG-18-27 fix"; the module tests of the review
+  round.
+- **Found by**: the review of BUG-20261117-55.
+
 ## BUG-20261118-26 — In the processor, an annotation repeated on a type use shows twice, not in its container
 
 - **Date**: 2026-11-18
