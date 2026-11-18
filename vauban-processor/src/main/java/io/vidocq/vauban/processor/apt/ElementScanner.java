@@ -69,6 +69,8 @@ public final class ElementScanner {
 
     private final Elements elements;
     private final Optional<ConstructorTypeUses> constructorTypeUses;
+    /** How many types this scanner met that the compiler does not know (yet). */
+    private int errorTypes;
 
     /**
      * Creates a scanner that reads no source: a constructor's annotations that apply to a type use only are left out.
@@ -445,8 +447,22 @@ public final class ElementScanner {
                         ? typeMirrorToTypeInfo(wt.getSuperBound(), typeVariables) : null;
                 yield new TypeInfo.WildcardType(upper, lower);
             }
-            default -> new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)); // fallback
+            default -> {
+                if (mirror.getKind() == TypeKind.ERROR) {
+                    errorTypes++;
+                }
+                yield new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)); // fallback
+            }
         };
+    }
+
+    /**
+     * How many types the scans of this scanner met that the compiler does not know: a type another processor
+     * generates in this round, which exists from the next one on (BUG-20261117-50), or a class missing from the class
+     * path. A class whose scan met one is read again once the types exist.
+     */
+    public int errorTypesMet() {
+        return errorTypes;
     }
 
     /**
@@ -488,8 +504,11 @@ public final class ElementScanner {
      * {@code java.lang.Object}.
      */
     private Optional<DotName> unresolved(TypeMirror mirror) {
-        return mirror.getKind() == TypeKind.ERROR && mirror instanceof DeclaredType declared
-                && declared.asElement() instanceof TypeElement element
+        if (mirror.getKind() != TypeKind.ERROR) {
+            return Optional.empty();
+        }
+        errorTypes++;
+        return mirror instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element
                 ? Optional.of(binaryName(element)) : Optional.empty();
     }
 

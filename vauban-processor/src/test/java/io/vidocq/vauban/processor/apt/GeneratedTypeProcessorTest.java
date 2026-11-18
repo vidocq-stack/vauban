@@ -27,7 +27,6 @@ import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.lang.model.types.Type;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -53,17 +52,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * BUG-20261117-50: a type another processor generates in the first round is an error type when Vauban's processor
- * first scans the classes that name it, and {@code VaubanProcessor.indexOnce} never scans them again once the type
- * exists. The scan reads a field, a parameter or a return type of that type as {@code java.lang.Object}
- * ({@code ElementScanner.typeMirrorToTypeInfo} has no case for an error type), and a supertype by its simple name. A
- * class the other processor generates is scanned in a later round, when the types it names exist: a generated bean, a
- * generated injection point and a MapStruct mapper's generated implementation are read right.
+ * first scans the classes that name it. The scan read a field, a parameter or a return type of that type as
+ * {@code java.lang.Object}, and a supertype by its simple name, and {@code VaubanProcessor.indexOnce} never scanned the
+ * class again; the processor now scans it again in the round the pipeline runs in, where the type exists. A class the
+ * other processor generates is scanned in a later round, when the types it names exist: a generated bean, a generated
+ * injection point and a MapStruct mapper's generated implementation are read right.
  */
 @DisplayName("BUG-20261117-50 - in the processor, a type another processor generates in the first round")
 class GeneratedTypeProcessorTest {
 
-    private static final String NOT_READ = "BUG-20261117-50: the processor reads a type another processor generates in "
-            + "round 1 as java.lang.Object";
     private static final String BAZ = "p.Baz_";
     private static final String BAZ_SOURCE = "package p;\npublic interface Baz_ {\n    String hello();\n}\n";
     /** A bean another processor generates, which injects {@code Baz_}: it is scanned when {@code Baz_} exists. */
@@ -176,7 +173,6 @@ class GeneratedTypeProcessorTest {
      * build fails with "Ambiguous dependency: field User.baz of type ClassType[name=java.lang.Object]".
      */
     @Test
-    @Disabled(NOT_READ)
     @DisplayName("an injection point of a generated type")
     void anInjectionPointOfAGeneratedType() throws Exception {
         var result = compile(Map.of("p/User.java", """
@@ -209,7 +205,6 @@ class GeneratedTypeProcessorTest {
      * p.Baz_").
      */
     @Test
-    @Disabled(NOT_READ)
     @DisplayName("an observer of a generated type")
     void anObserverOfAGeneratedType() throws IOException {
         var result = compile(Map.of("p/Listener.java", """
@@ -232,7 +227,6 @@ class GeneratedTypeProcessorTest {
      * injected as {@code Car}, it works.
      */
     @Test
-    @Disabled(NOT_READ)
     @DisplayName("Immutables: a value produced and injected by the name of its generated class")
     void anImmutablesValueProducedAndInjectedByItsGeneratedName() throws Exception {
         var result = compile(Map.of("p/Car.java", """
@@ -270,7 +264,6 @@ class GeneratedTypeProcessorTest {
      * an extension reads the producer's types as {@code [java.lang.Object]}.
      */
     @Test
-    @Disabled(NOT_READ)
     @DisplayName("an extension sees the generated type of a producer")
     void anExtensionSeesTheGeneratedTypeOfAProducer() throws IOException {
         var result = compile(Map.of("p/Factory.java", """
@@ -296,7 +289,6 @@ class GeneratedTypeProcessorTest {
      * BUG-20261117-31.
      */
     @Test
-    @Disabled(NOT_READ)
     @DisplayName("an extension sees the generated supertypes of a bean")
     void anExtensionSeesTheGeneratedSupertypesOfABean() throws IOException {
         var result = compile(Map.of("p/Foo.java", """

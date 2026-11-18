@@ -134,6 +134,8 @@ public class VaubanProcessor extends AbstractProcessor {
     private boolean finalized = false;
     /** The APT rounds seen so far. */
     private int round;
+    /** The qualified names of the classes whose scan met a type the compiler did not know yet (BUG-20261117-50). */
+    private final Set<String> scannedBeforeTheirTypes = new LinkedHashSet<>();
     /** The types the current round added to {@link #accumulatedIndex}. */
     private final List<TypeElement> indexedThisRound = new ArrayList<>();
     /** Whether the pipeline ran before javac's last round, so that a later round may still bring a bean. */
@@ -329,6 +331,7 @@ public class VaubanProcessor extends AbstractProcessor {
         }
         finalized = true;
         generatedEarly = !roundEnv.processingOver();
+        scanAgainNowTheirTypesExist(scanner);
         // The whole pipeline reads a class the index does not hold as the compiler describes it: the extension phases
         // (VAU-BCE-008), and the bean discovery, whose bean types stopped at a superclass this compilation compiles,
         // which no class loader of the processor loads (BUG-20261117-03). The bean types of such a class carry the type
@@ -532,10 +535,31 @@ public class VaubanProcessor extends AbstractProcessor {
     private void indexOnce(TypeElement typeElement, ElementScanner scanner) {
         var name = DotName.of(typeElement.getQualifiedName().toString());
         if (!accumulatedIndex.contains(name)) {
+            var met = scanner.errorTypesMet();
             accumulatedIndex.add(scanner.scan(typeElement));
+            if (scanner.errorTypesMet() > met) {
+                scannedBeforeTheirTypes.add(typeElement.getQualifiedName().toString());
+            }
             indexVetoedPackage(accumulatedIndex, typeElement, scanner);
             indexedThisRound.add(typeElement);
         }
+    }
+
+    /**
+     * Scans again the classes whose scan met a type the compiler did not know: a type another processor generates in
+     * the round that first saw the class exists in the round the pipeline runs in. The index read it as
+     * {@code java.lang.Object}, a supertype by its simple name, so an injection point of a generated type was
+     * ambiguous and an observer of it did not compile (BUG-20261117-50). A class still missing is read as before.
+     */
+    private void scanAgainNowTheirTypesExist(ElementScanner scanner) {
+        var elements = processingEnv.getElementUtils();
+        for (var name : scannedBeforeTheirTypes) {
+            var type = elements.getTypeElement(name);
+            if (type != null) {
+                accumulatedIndex.add(scanner.scan(type));
+            }
+        }
+        scannedBeforeTheirTypes.clear();
     }
 
     /**

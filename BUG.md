@@ -1376,7 +1376,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-50 — The processor reads a type another processor generates in round 1 as `java.lang.Object`
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED
 - **Module**: `vauban-processor` (`apt.ElementScanner`, `VaubanProcessor`)
 - **Symptom**: a class of the compilation that names a type another annotation processor generates in the first
   round is read with that type as `java.lang.Object`, or, for a supertype, by its simple name. What that does, shape
@@ -1412,8 +1412,18 @@ suspected cause, status. Updated on every investigation.
   (`ElementScanner.typeMirrorToTypeInfo`) has no case for an error type and gives `java.lang.Object`; a supertype
   goes through `ElementScanner.unresolved`, which gives the binary name javac gives the error type, its simple name.
   `VaubanProcessor.indexOnce` (~531) scans a class once, in the round where it first appears, and never again.
-- **Fix idea**: at pipeline time, scan again the classes whose scan met an error type, now that the types exist.
-  That would also name the supertypes (BUG-20261117-31, "Who sees the change").
+- **Cause, proved**: red on e6013800 with the five `@Disabled` lifted (`stack-l2d-red.log`, "RED BUG-20261117-50 on
+  e6013800"): "Ambiguous dependency: field User.baz of type ClassType[name=java.lang.Object]", the same for
+  `Garage.car`, the observer that does not compile, a producer's types `[java.lang.Object]`, and the supertypes
+  `Base_` and `[Baz_]`.
+- **Fix**: `ElementScanner` counts the error types its scans meet (`errorTypesMet()`), in `typeMirrorToTypeInfo` and
+  in `unresolved`. `VaubanProcessor.indexOnce` notes a class whose scan met one, and the round the pipeline runs in
+  scans each again from its fresh element (`Elements.getTypeElement`), replacing its first scan in the index. A type
+  still missing reads as before.
+- **Verification**: `GeneratedTypeProcessorTest`, 5 of 5 green (`stack-l2d-dev50.log`, "BUG-50 fix (1)"); processor
+  444 (8 skipped), maven-plugin 172, architecture 56 (`stack-l2d-dev50.log`, "BUG-50 fix (2)").
+- **What stays**: a type another processor generates in the very round the pipeline runs in does not exist yet there
+  and still reads as before (by construction, not tested).
 - **Found by**: the review of BUG-20261117-31 (62e80eaf), with its `GeneratedSupertypeProbe`.
 
 ## BUG-20261117-49 — A client proxy generated from a class file skips a method that has a compiler bridge
