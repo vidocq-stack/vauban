@@ -774,7 +774,9 @@ public final class BceProcessor {
                 case METHOD_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
                     classConfig.setSourceBce(bce.getClass());
-                    for (var mc : classConfig.methods()) {
+                    // The methods it declares: @Enhancement is called "for each constructor or method that is declared
+                    // on each discovered type", where ClassConfig.methods() includes inherited ones (BUG-20261118-48)
+                    for (var mc : classConfig.configurableMethods()) {
                         invokeWithArg(method, bce, services, MethodConfig.class, mc);
                     }
                     if (classConfig.isModified()) {
@@ -790,7 +792,7 @@ public final class BceProcessor {
                 case FIELD_CONFIG -> {
                     var classConfig = new VaubanClassConfig(vaubanClassInfo);
                     classConfig.setSourceBce(bce.getClass());
-                    for (var fc : classConfig.fields()) {
+                    for (var fc : classConfig.configurableFields()) {
                         invokeWithArg(method, bce, services, FieldConfig.class, fc);
                     }
                     if (classConfig.isModified()) {

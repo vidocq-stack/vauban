@@ -79,17 +79,18 @@ public final class EnhancementPatchSerializer {
             for (var config : configs) {
                 append(patch, name.value(), config.getAddedAnnotationsIndexed());
                 for (var field : config.getFieldConfigs()) {
-                    append(patch, name.value() + "#field#" + field.info().name(),
+                    append(patch, name.value() + "#field#" + field.info().name() + declaring(config, field),
                             annotations(field.getAddedAnnotations(), field.getAddedAnnotationInfos(),
                                     field.getAddedAnnotationInstances()));
                 }
                 for (var method : config.getMethodConfigs()) {
-                    var key = name.value() + "#method#" + methodKey(method);
+                    var declaring = declaring(config, method);
+                    var key = name.value() + "#method#" + methodKey(method) + declaring;
                     append(patch, key, annotations(method.getAddedAnnotations(),
                             method.getAddedAnnotationInfos(), method.getAddedAnnotationInstances()));
                     for (int i = 0; i < method.getParameterConfigs().size(); i++) {
                         var parameter = method.getParameterConfigs().get(i);
-                        append(patch, name.value() + "#parameter#" + methodKey(method) + "#" + i,
+                        append(patch, name.value() + "#parameter#" + methodKey(method) + "#" + i + declaring,
                                 annotations(parameter.getAddedAnnotationClasses(),
                                         parameter.getAddedAnnotations(), parameter.getAddedAnnotationInstances()));
                     }
@@ -144,26 +145,79 @@ public final class EnhancementPatchSerializer {
             var indexedClass = indexed.get();
             var config = configs.computeIfAbsent(name, _ -> new VaubanClassConfig(
                     new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(indexedClass, lookup)));
-            if (parts[1].equals("field")) {
-                var field = config.getFieldConfigs().stream().filter(candidate -> candidate.info().name().equals(parts[2]))
-                        .findFirst().orElseThrow(() -> new IllegalStateException("Enhanced field is missing: " + target));
-                annotations.forEach(annotation -> field.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
-            } else {
-                var method = config.getMethodConfigs().stream().filter(candidate -> methodKey(candidate).equals(parts[2]))
-                        .findFirst().orElseThrow(() -> new IllegalStateException("Enhanced method is missing: " + target));
-                if (parts[1].equals("method")) {
-                    annotations.forEach(annotation -> method.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
-                } else if (parts[1].equals("parameter")) {
-                    var parameter = method.getParameterConfigs().get(Integer.parseInt(parts[3]));
-                    annotations.forEach(annotation -> parameter.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
-                } else {
-                    throw new IllegalStateException("Unknown enhancement target: " + target);
-                }
-            }
+            restore(config, parts, target, annotations, lookup);
         });
         var result = new LinkedHashMap<DotName, List<VaubanClassConfig>>();
         configs.forEach((name, config) -> result.put(name, List.of(config)));
         return result;
+    }
+
+    /** Adds {@code annotations} to the member of {@code config} the key split into {@code parts} names. */
+    private static void restore(VaubanClassConfig config, String[] parts, DotName target,
+            List<AnnotationInfo> annotations, IndexLookup lookup) {
+        var declaring = declaringClassOf(parts);
+        switch (parts[1]) {
+            case "field" -> {
+                var field = field(config, parts[2], declaring, target);
+                annotations.forEach(annotation -> field.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
+            }
+            case "method" -> {
+                var method = method(config, parts[2], declaring, target);
+                annotations.forEach(annotation -> method.addAnnotation(new VaubanAnnotationInfo(annotation, lookup)));
+            }
+            case "parameter" -> {
+                var parameter = method(config, parts[2], declaring, target).getParameterConfigs()
+                        .get(Integer.parseInt(parts[3]));
+                annotations.forEach(annotation -> parameter.addAnnotation(
+                        new VaubanAnnotationInfo(annotation, lookup)));
+            }
+            default -> throw new IllegalStateException("Unknown enhancement target: " + target);
+        }
+    }
+
+    /**
+     * The class an inherited member's key names last, or {@code null} for a key without it, as earlier versions wrote
+     * every key: a member the class configures itself (BUG-20261118-48).
+     */
+    private static String declaringClassOf(String[] parts) {
+        int memberParts = "parameter".equals(parts[1]) ? 4 : 3;
+        return parts.length > memberParts ? parts[parts.length - 1] : null;
+    }
+
+    private static VaubanFieldConfig field(VaubanClassConfig config, String name, String declaring, DotName target) {
+        return config.getFieldConfigs().stream()
+                .filter(candidate -> candidate.info().name().equals(name) && declaredBy(
+                        candidate.info().declaringClass(), config.isConfigurable(candidate), declaring))
+                .findFirst().orElseThrow(() -> new IllegalStateException("Enhanced field is missing: " + target));
+    }
+
+    private static VaubanMethodConfig method(VaubanClassConfig config, String key, String declaring, DotName target) {
+        return config.getMethodConfigs().stream()
+                .filter(candidate -> methodKey(candidate).equals(key) && declaredBy(
+                        candidate.info().declaringClass(), config.isConfigurable(candidate), declaring))
+                .findFirst().orElseThrow(() -> new IllegalStateException("Enhanced method is missing: " + target));
+    }
+
+    /**
+     * What a key adds after a member a class inherits: {@code #} and the class that declares it. Nothing after a member
+     * the class configures itself, as earlier versions wrote every key (BUG-20261118-48).
+     */
+    static String declaring(VaubanClassConfig config, VaubanFieldConfig field) {
+        return config.isConfigurable(field) ? "" : "#" + field.info().declaringClass().name();
+    }
+
+    /** {@link #declaring(VaubanClassConfig, VaubanFieldConfig)} for a method. */
+    static String declaring(VaubanClassConfig config, VaubanMethodConfig method) {
+        return config.isConfigurable(method) ? "" : "#" + method.info().declaringClass().name();
+    }
+
+    /**
+     * Whether a member matches the class a key names last: a member the class configures itself for a key without
+     * one, else a member that class declares.
+     */
+    private static boolean declaredBy(jakarta.enterprise.lang.model.declarations.ClassInfo declaringClass,
+            boolean configurable, String declaring) {
+        return declaring == null ? configurable : !configurable && declaringClass.name().equals(declaring);
     }
 
     /**

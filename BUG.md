@@ -31,6 +31,54 @@ suspected cause, status. Updated on every investigation.
   `stack-l4-51-dev.log`, "Green run 1".
 - **Found by**: the L4 review, round 5.
 
+## BUG-20261118-48 — `ClassConfig.methods()` and `fields()` leave out the inherited members, against their Javadoc
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-core` (`VaubanClassConfig`, `BceProcessor`, `EnhancementPatchSerializer`)
+- **Symptom**: in `@Enhancement`, `ClassConfig.methods()` and `fields()` of a class give the members it declares, and
+  its direct superinterfaces' methods, where their Javadoc says "as defined by `ClassInfo.methods`" and
+  "`ClassInfo.fields`", which include the inherited ones since BUG-20261117-42. An extension cannot qualify, through
+  a subclass, an injection point that subclass inherits.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aClassConfigConfiguresTheInheritedMembersForThatSubclassOnly` in
+  `vauban-processor`: `Configured` and `Sibling` extend `Base`, which injects a `Dep` into a field and an initializer;
+  an extension adds `@Named("special")` to both through `Configured`'s `ClassConfig`. `Configured` must get the
+  special `Dep`, `Base` and `Sibling` the default one, from the processor, at start and frozen.
+  `EnhancementPatchSerializerTest#anInheritedMemberIsKeyedByTheClassDeclaringIt` in `vauban-core`.
+- **Cause, proved**: red on b9d9b4db (`stack-l2d-red.log`, "RED BUG-20261118-48 on b9d9b4db (both outcomes
+  asserted)"): the extension sees no inherited member in any of the three, and `Configured` gets the default `Dep`;
+  "RED BUG-20261118-48 on b9d9b4db: the patch key of an inherited member": one key where a hidden field and the one
+  it hides need two. `VaubanClassConfig` built its configs from `VaubanClassInfo.configurableMethods()` and
+  `configurableFields()`, the declared members, and `methods()` and `fields()` gave those.
+- **Fix**: `VaubanClassConfig` gives a config of its own to every member of `ClassInfo.methods()` and `fields()`,
+  the configurable ones first. The configs belong to this class's `ClassConfig`, which `BceProcessor` keys by the
+  class configured: the applier applies them to that class's descriptors only (`modifications.get(bean.beanClass())`;
+  an inherited observer's descriptor names the subclass), where an inherited injection point keeps the description of
+  the class declaring it. `@Enhancement` still calls a `MethodConfig` or `FieldConfig` parameter with the configurable
+  members only (`configurableMethods()`, `configurableFields()`), as its Javadoc says. The frozen record, which the
+  processor writes too, names an inherited member with the class declaring it, after the key earlier versions wrote:
+  `Sub#field#f#p.Base`, `Sub#method#m(desc)#p.Base`, `Sub#parameter#m(desc)#i#p.Base`; a key without it is a member
+  the class configures itself, as every earlier record reads. Additive: no earlier key changes.
+- **Verification**: both tests green (`stack-l2d-r2.log`, "Round 2 (5)" and "Round 2 (6)"); the reactor in
+  `stack-l2d-r2.log`, "Round 2 (7)".
+- **Rebased onto a0cddcad (L4's lane)**: `EnhancedClasses`, the index the phases after `@Enhancement` read
+  (BUG-20261118-45), keyed the removals of a member by its name only, so a removal on an inherited field, through a
+  subclass that declares a field of the same name, emptied the subclass's own field. Red on 5fc788d1
+  (`stack-l2d-red.log`, "RED rebase onto a0cddcad, on 5fc788d1: an inherited field's removal in EnhancedClasses"):
+  `EnhancementPatchSerializerTest#aRemovalOnAnInheritedFieldLeavesTheFieldOfTheSameNameAlone`, `expected:
+  <[jakarta.inject.Inject]> but was: <[]>`. The removals take the key the additions take
+  (`EnhancementPatchSerializer.declaring`).
+- **What stays**: a binding added on a method counts for the whole bean, as the applier did before, now for an
+  inherited method too. The edited index of the later phases holds a member on the class that declares it, for every
+  subclass: a change made to an inherited member through a subclass reaches that subclass's beans, not what
+  `@Registration` or `@Synthesis` read of the member. Within one `InjectionPointInfo` of such a bean, `qualifiers()`
+  comes from the subclass's descriptor and shows the change, while `declaration()` reads the member from the edited
+  index (`VaubanBceInjectionPointInfo.declaration`) and does not: the language model has one identity per member,
+  that of the class declaring it.
+- **Found by**: the re-review of round 1 of batch D, lane L2.
+
+---
+
 ## BUG-20261118-47 — A non-generic inner class of a generic class has the raw types above it in its descriptor
 
 - **Date**: 2026-11-18
@@ -1897,7 +1945,9 @@ suspected cause, status. Updated on every investigation.
 - **What stays**: `@Enhancement` configures and visits the members a class declares, and its direct superinterfaces'
   methods the index holds, as before (`VaubanClassInfo.configurableMethods()`, `configurableFields()`): a
   `MethodConfig` changes the class it configures, and an inherited method belongs to its own class. `ClassConfig
-  .methods()` of a `MetaAnnotations` annotation type is its members, not `Annotation`'s.
+  .methods()` of a `MetaAnnotations` annotation type is its members, not `Annotation`'s. Since BUG-20261118-48,
+  `ClassConfig.methods()` and `fields()` of a class give its inherited members too, configured for that class alone;
+  the calls `@Enhancement` makes are unchanged.
 - **Verification**: the repro, green, with BUG-20261117-43's test now `[get, get]` (`Supplier.get`), three ways
   (`stack-l2d-dev42.log`, "BUG-42 fix (1)" and "BUG-42 fix (4)"); core 1752 (11 skipped), processor 440 (16
   skipped), maven-plugin 172 (`stack-l2d-dev42.log`, "BUG-42 fix (3)"), after `AnnotationMembersOutsideTheIndexTest`

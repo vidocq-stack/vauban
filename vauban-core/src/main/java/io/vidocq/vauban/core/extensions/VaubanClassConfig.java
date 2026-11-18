@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
@@ -36,6 +37,9 @@ public final class VaubanClassConfig implements ClassConfig {
     private final ClassInfo classInfo;
     private final List<VaubanMethodConfig> methodConfigs;
     private final List<VaubanFieldConfig> fieldConfigs;
+    /** How many of the first methods and fields {@code @Enhancement} calls an extension with (BUG-20261118-48). */
+    private final int configurableMethodCount;
+    private final int configurableFieldCount;
     private final Set<Class<? extends Annotation>> addedAnnotations = new LinkedHashSet<>();
     private final List<AnnotationInfo> addedAnnotationInfos = new ArrayList<>();
     /** The instances given to {@link #addAnnotation(Annotation)}, which carry member values. */
@@ -71,20 +75,34 @@ public final class VaubanClassConfig implements ClassConfig {
                 methodConfigs.add(new VaubanMethodConfig(new ReflectionMethodInfo(m, lookup)));
             }
         }
+        this.configurableMethodCount = methodConfigs.size();
+        this.configurableFieldCount = 0;
     }
 
     /**
-     * The configuration of a class in {@code @Enhancement}: its methods, constructors and fields are those it declares,
-     * and its direct superinterfaces' methods the index holds, the members a {@link VaubanClassInfo} configures; an
-     * inherited member belongs to the class that declares it (BUG-20261117-42).
+     * The configuration of a class in {@code @Enhancement}. Its {@link #methods()} and {@link #fields()} are those of
+     * {@link ClassInfo#methods()} and {@link ClassInfo#fields()}, inherited ones included, as their Javadoc says ("as
+     * defined by {@code ClassInfo.methods}"). Each is configured for this class alone: a member a superclass declares,
+     * configured here, changes this class's beans, never the superclass's nor its other subclasses'
+     * (BUG-20261118-48). {@code @Enhancement} calls an extension with the members a {@link VaubanClassInfo}
+     * configures, those the class declares and its direct superinterfaces' methods the index holds
+     * ({@link #configurableMethods()}, {@link #configurableFields()}, BUG-20261117-42).
      */
     public VaubanClassConfig(VaubanClassInfo classInfo) {
         this.annotationType = null;
         this.classInfo = classInfo;
 
         this.methodConfigs = new ArrayList<>();
+        var configured = new HashSet<String>();
         for (var m : classInfo.configurableMethods()) {
             methodConfigs.add(new VaubanMethodConfig(m));
+            configured.add(memberKey(m));
+        }
+        this.configurableMethodCount = methodConfigs.size();
+        for (var m : classInfo.methods()) {
+            if (configured.add(memberKey(m))) {
+                methodConfigs.add(new VaubanMethodConfig(m));
+            }
         }
         for (var m : classInfo.constructors()) {
             methodConfigs.add(new VaubanMethodConfig(m));
@@ -93,7 +111,55 @@ public final class VaubanClassConfig implements ClassConfig {
         this.fieldConfigs = new ArrayList<>();
         for (var f : classInfo.configurableFields()) {
             fieldConfigs.add(new VaubanFieldConfig(f));
+            configured.add(memberKey(f));
         }
+        this.configurableFieldCount = fieldConfigs.size();
+        for (var f : classInfo.fields()) {
+            if (configured.add(memberKey(f))) {
+                fieldConfigs.add(new VaubanFieldConfig(f));
+            }
+        }
+    }
+
+    /** A method by the class that declares it, its name and its parameter types. */
+    private static String memberKey(jakarta.enterprise.lang.model.declarations.MethodInfo method) {
+        return method.declaringClass().name() + "#" + method.name() + InjectionPointInfo.methodDescriptor(
+                method.parameters().stream().map(parameter -> LangModelTypeMapper.toIndexType(parameter.type()))
+                        .toList());
+    }
+
+    /** A field by the class that declares it and its name. */
+    private static String memberKey(jakarta.enterprise.lang.model.declarations.FieldInfo field) {
+        return field.declaringClass().name() + "#field#" + field.name();
+    }
+
+    /**
+     * The methods {@code @Enhancement} calls a {@code MethodConfig} parameter with: those the class declares, and its
+     * direct superinterfaces' methods the index holds; constructors left out (BUG-20261117-42).
+     */
+    public List<MethodConfig> configurableMethods() {
+        return methodConfigs.subList(0, configurableMethodCount).stream()
+                .filter(mc -> !mc.info().isConstructor())
+                .map(MethodConfig.class::cast)
+                .toList();
+    }
+
+    /** The fields {@code @Enhancement} calls a {@code FieldConfig} parameter with: those the class declares. */
+    public List<FieldConfig> configurableFields() {
+        return List.copyOf(fieldConfigs.subList(0, configurableFieldCount));
+    }
+
+    /**
+     * Whether {@code method} is one {@code @Enhancement} configures through this class's own members, a constructor,
+     * a method it declares or a direct superinterface's: the frozen record names any other by the class declaring it.
+     */
+    public boolean isConfigurable(VaubanMethodConfig method) {
+        return method.info().isConstructor() || methodConfigs.indexOf(method) < configurableMethodCount;
+    }
+
+    /** Whether {@code field} is one this class declares. */
+    public boolean isConfigurable(VaubanFieldConfig field) {
+        return fieldConfigs.indexOf(field) < configurableFieldCount;
     }
 
     @Override

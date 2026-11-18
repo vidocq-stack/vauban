@@ -154,6 +154,93 @@ class EnhancementPatchSerializerTest {
                 .getAddedAnnotations().stream().map(jakarta.enterprise.lang.model.AnnotationInfo::name).toList());
     }
 
+    /** A class whose field {@link Hiding} hides. */
+    static class Hidden {
+        String dependency;
+    }
+
+    /** A class that declares a field of the name of one it inherits. */
+    static class Hiding extends Hidden {
+        String dependency;
+    }
+
+    /**
+     * A field a class inherits, configured through it, is keyed by the class that declares it, after its name: the
+     * class hides one of the same name, which keeps the key earlier versions wrote. Each reads back onto its own
+     * field (BUG-20261118-48).
+     */
+    @Test
+    @DisplayName("an inherited member's entry names the class declaring it, beside a member of the same name")
+    void anInheritedMemberIsKeyedByTheClassDeclaringIt() throws IOException {
+        var index = indexOf(Hidden.class, Hiding.class);
+        var hiding = DotName.of(Hiding.class.getName());
+        var config = new VaubanClassConfig(new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(
+                index.getClassByName(hiding).orElseThrow(), new io.vidocq.vauban.core.langmodel.IndexLookup(index)));
+        for (var field : config.fields()) {
+            var declaring = field.info().declaringClass().name();
+            field.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of(declaring));
+        }
+
+        var additions = EnhancementPatchSerializer.additions(Map.of(hiding, List.of(config)));
+        var patch = new java.util.HashMap<DotName, List<AnnotationInfo>>();
+        additions.forEach((target, annotations) -> patch.put(DotName.of(target), annotations));
+        var read = EnhancementPatchSerializer.memberConfigurations(patch, index).get(hiding).getFirst();
+
+        assertEquals(java.util.Set.of(hiding.value() + "#field#dependency",
+                hiding.value() + "#field#dependency#" + Hidden.class.getName()), additions.keySet());
+        var named = new java.util.TreeMap<String, String>();
+        read.getFieldConfigs().forEach(field -> named.put(field.info().declaringClass().name(),
+                field.getAddedAnnotationInfos().getFirst().value().asString()));
+        assertEquals(Map.of(Hidden.class.getName(), Hidden.class.getName(), Hiding.class.getName(),
+                Hiding.class.getName()), named);
+    }
+
+    /** A class whose injected field {@link HidingInjected} hides. */
+    static class HiddenInjected {
+        @jakarta.inject.Inject
+        String dependency;
+    }
+
+    /** A class that declares an injected field of the name of one it inherits. */
+    static class HidingInjected extends HiddenInjected {
+        @jakarta.inject.Inject
+        String dependency;
+    }
+
+    /**
+     * The index the phases after {@code @Enhancement} read (BUG-20261118-45) takes the removal an extension made on an
+     * inherited field, through a subclass, as that subclass's alone: the field it declares of the same name keeps its
+     * annotations. The removal was keyed by the field's name only, the key of the field the subclass declares
+     * (BUG-20261118-48).
+     */
+    @Test
+    @DisplayName("a removal on an inherited field leaves the subclass's field of the same name as it is")
+    void aRemovalOnAnInheritedFieldLeavesTheFieldOfTheSameNameAlone() throws IOException {
+        var index = indexOf(HiddenInjected.class, HidingInjected.class);
+        var hiding = DotName.of(HidingInjected.class.getName());
+        var config = new VaubanClassConfig(new io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo(
+                index.getClassByName(hiding).orElseThrow(), new io.vidocq.vauban.core.langmodel.IndexLookup(index)));
+        config.getFieldConfigs().stream()
+                .filter(field -> field.info().declaringClass().name().equals(HiddenInjected.class.getName()))
+                .findFirst().orElseThrow().removeAllAnnotations();
+
+        var edited = EnhancedClasses.of(index, Map.of(hiding, List.of(config)));
+
+        assertEquals(List.of(DotName.of("jakarta.inject.Inject")), edited.getClassByName(hiding).orElseThrow()
+                .fields().getFirst().annotations().stream().map(AnnotationInfo::name).toList());
+    }
+
+    private static io.vidocq.vauban.indexer.VaubanIndex indexOf(Class<?>... classes) throws IOException {
+        var builder = new io.vidocq.vauban.indexer.IndexBuilder();
+        for (var type : classes) {
+            try (var in = type.getResourceAsStream(type.getName().substring(type.getName().lastIndexOf('.') + 1)
+                    + ".class")) {
+                builder.add(io.vidocq.vauban.indexer.scanner.ClassFileScanner.scan(in.readAllBytes()));
+            }
+        }
+        return builder.build();
+    }
+
     private static io.vidocq.vauban.indexer.VaubanIndex indexOfEnhanced() throws IOException {
         try (var in = Enhanced.class.getResourceAsStream("EnhancementPatchSerializerTest$Enhanced.class")) {
             return new io.vidocq.vauban.indexer.IndexBuilder()

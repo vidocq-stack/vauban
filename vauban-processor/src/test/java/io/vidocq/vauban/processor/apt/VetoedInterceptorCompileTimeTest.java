@@ -3956,6 +3956,111 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * {@code ClassConfig.methods()} and {@code fields()} give the inherited members too, "as defined by
+     * {@code ClassInfo.methods}" and {@code ClassInfo.fields}, their Javadoc says. A {@code @Named("special")} an
+     * extension adds, through {@code vi.types.Configured}, to the field and to the initializer parameter it inherits
+     * from {@code vi.types.Base} changes {@code Configured} only: {@code Base} and its other subclass
+     * {@code vi.types.Sibling} keep the default {@code Dep}, from the processor, at start and frozen. The config of a
+     * class held only its declared members (BUG-20261118-48).
+     */
+    @Test
+    @DisplayName("ClassConfig configures the inherited members for that subclass only, three ways")
+    void aClassConfigConfiguresTheInheritedMembersForThatSubclassOnly() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Special", """
+                @jakarta.inject.Qualifier
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface Special {
+                }""");
+        putType(sources, "Dep", "public interface Dep {\n}");
+        putType(sources, "PlainDep", DEPENDENT + "public class PlainDep implements Dep {\n}");
+        putType(sources, "SpecialDep", DEPENDENT + """
+                @Special
+                @jakarta.inject.Named("special")
+                public class SpecialDep implements Dep {
+                }""");
+        putType(sources, "Base", DEPENDENT + """
+                public class Base implements java.util.function.Supplier<Object> {
+                    @jakarta.inject.Inject
+                    Dep field;
+                    Dep viaMethod;
+
+                    @jakarta.inject.Inject
+                    void set(Dep dep) {
+                        viaMethod = dep;
+                    }
+
+                    @Override
+                    public Object get() {
+                        return field.getClass().getSimpleName() + "/" + viaMethod.getClass().getSimpleName();
+                    }
+                }""");
+        for (var subclass : List.of("Configured", "Sibling")) {
+            putType(sources, subclass, DEPENDENT + "@jakarta.enterprise.inject.Typed(" + subclass + ".class)\n"
+                    + "public class " + subclass + " extends Base {\n}");
+        }
+        var got = new ArrayList<String>();
+        StartedCheck injected = (container, loader) -> got.add(Stream.of("Configured", "Sibling", "Base")
+                .map(name -> name + " " + hello(container, loadType(loader, name))).toList().toString());
+
+        var seen = seenThreeWays(sources, InheritedMemberConfigurer.class, InheritedMemberConfigurer.SEEN, injected);
+        var processor = new VaubanProcessor();
+        processor.overrideBceClasses(List.of(InheritedMemberConfigurer.class));
+        var processed = ProcessorCompiler.compile(workDir.resolve("processed-alone"), sources, List.of(), processor);
+        assertTrue(processed.success(), () -> "compilation failed: " + processed.messages());
+        try (var loader = loader(processed); var container = VaubanContainer.builder().classLoader(loader)
+                .scanClasspath().build()) {
+            injected.check(container, loader);
+        }
+
+        var expected = "[Configured SpecialDep/SpecialDep, Sibling PlainDep/PlainDep, Base PlainDep/PlainDep]";
+        assertAll(() -> seen.distinct().assertEachIs(List.of("field field of vi.types.Base",
+                        "field viaMethod of vi.types.Base", "method get of vi.types.Base",
+                        "method set of vi.types.Base")),
+                () -> assertEquals(List.of(expected, expected, expected), got,
+                        "what each bean got, at start, frozen, and from the processor"));
+    }
+
+    private static Class<?> loadType(ClassLoader loader, String name) {
+        try {
+            return loader.loadClass(TYPES + name);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Records the members {@code ClassConfig} gives for {@code vi.types.Configured}, and qualifies the field and the
+     * initializer parameter it inherits {@code @Named("special")}.
+     */
+    public static class InheritedMemberConfigurer implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = Supplier.class, withSubtypes = true)
+        public void configure(ClassConfig type) {
+            if (!type.info().name().equals(TYPES + "Configured")) {
+                return;
+            }
+            for (var field : type.fields()) {
+                SEEN.add("field " + field.info().name() + " of " + field.info().declaringClass().name());
+                if (field.info().name().equals("field")) {
+                    field.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of("special"));
+                }
+            }
+            for (var method : type.methods()) {
+                if (method.info().declaringClass().name().startsWith(TYPES)) {
+                    SEEN.add("method " + method.info().name() + " of " + method.info().declaringClass().name());
+                }
+                if (method.info().name().equals("set")) {
+                    method.parameters().getFirst().addAnnotation(
+                            jakarta.enterprise.inject.literal.NamedLiteral.of("special"));
+                }
+            }
+        }
+    }
+
+    /**
      * The members and annotations of a class with superclasses and superinterfaces, the same in the processor, at
      * start and frozen: its methods and fields, those of its superclasses up to {@code java.lang.Object} and of every
      * superinterface, direct or not, each once; its annotations and the {@code @Inherited} ones of its superclasses
