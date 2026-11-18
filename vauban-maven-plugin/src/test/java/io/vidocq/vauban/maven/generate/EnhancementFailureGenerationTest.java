@@ -25,7 +25,6 @@ import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.spi.DefinitionException;
-import jakarta.enterprise.inject.spi.DeploymentException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -46,7 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@code vauban:generate} fails when an {@code @Enhancement} it runs throws, as the start does: the exception is a
- * deployment problem, no longer dropped with the archive enhanced as if nothing happened (BUG-20261118-05).
+ * definition error (BUG-20261118-57), no longer dropped with the archive enhanced as if nothing happened
+ * (BUG-20261118-05).
  */
 @DisplayName("VaubanGenerator - an exception of @Enhancement fails the generation")
 class EnhancementFailureGenerationTest {
@@ -77,12 +77,12 @@ class EnhancementFailureGenerationTest {
     }
 
     @Test
-    @DisplayName("an exception of @Enhancement fails vauban:generate with the exception as its cause")
+    @DisplayName("an exception of @Enhancement fails vauban:generate with a definition error, the exception its cause")
     void anExceptionOfEnhancementFailsTheGeneration() throws IOException, URISyntaxException {
         try (var loader = loaderFor(ThrowingEnhancement.class)) {
             var config = configWith(loader);
 
-            var thrown = assertThrows(DeploymentException.class, () -> VaubanGenerator.generate(config));
+            var thrown = assertThrows(DefinitionException.class, () -> VaubanGenerator.generate(config));
 
             assertAll(() -> assertTrue(thrown.getMessage().contains(ThrowingEnhancement.CAUSE), thrown.getMessage()),
                     () -> assertEquals(ThrowingEnhancement.CAUSE, thrown.getCause().getMessage()));

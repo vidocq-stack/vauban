@@ -32,7 +32,6 @@ import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
 import jakarta.enterprise.inject.build.compatible.spi.Types;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
 import jakarta.enterprise.inject.spi.DefinitionException;
-import jakarta.enterprise.inject.spi.DeploymentException;
 import org.junit.jupiter.api.Test;
 
 import java.lang.classfile.ClassFile;
@@ -51,8 +50,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * What {@link BceProcessor} tolerates and what it does not: members whose signature names an absent type are left
- * out; an exception a {@code @Discovery} method throws is a definition error (BUG-20261118-04), and one an extension
- * throws in the enhancement of the archives, its constructor included, a deployment problem (BUG-20261118-05).
+ * out; an exception a {@code @Discovery} method throws is a definition error (BUG-20261118-04), and so is one an
+ * extension throws in the enhancement of the archives, its constructor included (BUG-20261118-05,
+ * BUG-20261118-57).
  */
 class BceProcessorFailureToleranceTest {
 
@@ -111,9 +111,9 @@ class BceProcessorFailureToleranceTest {
         var pairs = List.<Map.Entry<Class<?>, Class<?>>>of(Map.entry(FailingConstructor.class, Object.class));
 
         var discovery = BceProcessor.processDiscovery(extensions, lookup);
-        var enhancement = assertThrows(DeploymentException.class,
+        var enhancement = assertThrows(DefinitionException.class,
                 () -> BceProcessor.processEnhancementOnly(extensions, archiveClasses, index, loader));
-        var replay = assertThrows(DeploymentException.class,
+        var replay = assertThrows(DefinitionException.class,
                 () -> BceProcessor.replayEnhancementForTargets(pairs, index));
 
         assertAll(() -> assertTrue(discovery.bceInstances().isEmpty()),
@@ -163,6 +163,48 @@ class BceProcessorFailureToleranceTest {
 
         assertAll(() -> assertTrue(thrown.getMessage().contains(FailingDiscovery.class.getName()), thrown.getMessage()),
                 () -> assertInstanceOf(IllegalStateException.class, thrown.getCause()));
+    }
+
+    /** Throws a {@code DeploymentException} from its constructor. */
+    public static class DeploymentProblemConstructor implements BuildCompatibleExtension {
+        public DeploymentProblemConstructor() {
+            throw new jakarta.enterprise.inject.spi.DeploymentException("not deployable");
+        }
+    }
+
+    /**
+     * A constructor that fails in the full cycle, with no instance of {@code @Discovery}, is a definition error whose
+     * cause is what the constructor threw, not the reflective wrapper (BUG-20261118-57).
+     */
+    @Test
+    void aConstructorThatFailsInTheFullCycleIsADefinitionErrorWithItsOwnCause() {
+        var lookup = lookupWithTarget();
+
+        var result = BceProcessor.process(List.of(FailingConstructor.class), List.of(), lookup.index(),
+                getClass().getClassLoader(), Map.of(), List.of());
+
+        assertAll(() -> assertEquals(List.of(), result.deploymentErrors()),
+                () -> assertEquals(1, result.definitionErrors().size(), () -> result.definitionErrors().toString()),
+                () -> assertTrue(result.definitionErrors().getFirst().contains("cannot be built"),
+                        result.definitionErrors().getFirst()),
+                () -> assertInstanceOf(IllegalStateException.class, result.definitionErrorCauses().getFirst()));
+    }
+
+    /**
+     * A constructor that throws a {@code DeploymentException} in the full cycle stays a deployment problem, as a phase
+     * method's does (BUG-20261118-57).
+     */
+    @Test
+    void aConstructorThatThrowsADeploymentExceptionStaysADeploymentProblem() {
+        var lookup = lookupWithTarget();
+
+        var result = BceProcessor.process(List.of(DeploymentProblemConstructor.class), List.of(), lookup.index(),
+                getClass().getClassLoader(), Map.of(), List.of());
+
+        assertAll(() -> assertEquals(List.of(), result.definitionErrors()),
+                () -> assertEquals(1, result.deploymentErrors().size(), () -> result.deploymentErrors().toString()),
+                () -> assertInstanceOf(jakarta.enterprise.inject.spi.DeploymentException.class,
+                        result.deploymentErrorCauses().getFirst()));
     }
 
     @Test

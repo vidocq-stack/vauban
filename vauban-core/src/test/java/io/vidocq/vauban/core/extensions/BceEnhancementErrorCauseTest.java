@@ -24,7 +24,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
-import jakarta.enterprise.inject.spi.DeploymentException;
+import jakarta.enterprise.inject.spi.DefinitionException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -34,7 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * VAU-BCE-003 — the typed exception thrown by a BCE phase survives in the
- * {@link DeploymentException} cause chain.
+ * cause chain of the failed deployment: a {@link DefinitionException} for one of
+ * {@code @Enhancement} (BUG-20261118-57).
  *
  * <p>Several TCKs deploy invalid archives and assert the deployment fails with
  * a spec-defined exception (e.g. MP Fault Tolerance's
@@ -42,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code @ShouldThrowException} walks the cause chain). Flattening BCE errors
  * to strings loses that type and makes those scenarios untestable.</p>
  */
-@DisplayName("VAU-BCE-003 — BCE errors keep their typed cause in DeploymentException")
+@DisplayName("VAU-BCE-003 — BCE errors keep their typed cause in the failed deployment")
 class BceEnhancementErrorCauseTest {
 
     /** Spec-defined exception a BCE would throw on invalid configuration. */
@@ -64,12 +65,12 @@ class BceEnhancementErrorCauseTest {
     }
 
     @Test
-    @DisplayName("@Enhancement exception is reachable through the DeploymentException causes")
+    @DisplayName("@Enhancement exception is reachable through the DefinitionException causes")
     void enhancementExceptionIsPreservedAsCause() {
         var builder = VaubanContainer.builder()
                 .addBeanClass(RejectingBce.class)
                 .addBeanClass(SomeBean.class);
-        DeploymentException failure = assertThrows(DeploymentException.class, () -> {
+        DefinitionException failure = assertThrows(DefinitionException.class, () -> {
             try (var _ = builder.build()) {
                 // deployment must fail before the container is usable
             }

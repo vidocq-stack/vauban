@@ -35,6 +35,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
@@ -57,8 +58,10 @@ public final class BceProcessor {
      * @return enhancement modifications keyed by class DotName
      * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method has a parameter
      *         of an unsupported type, reported before any call (BUG-20261118-22)
-     * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension threw, at start as under
-     *         {@code vauban:generate} (BUG-20261118-05)
+     * @throws jakarta.enterprise.inject.spi.DefinitionException when an extension threw, at start as under
+     *         {@code vauban:generate} (BUG-20261118-05, BUG-20261118-57)
+     * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension reported an error through
+     *         {@code Messages}
      */
     public static Map<DotName, List<VaubanClassConfig>> processEnhancementOnly(
             List<Class<?>> bceClasses,
@@ -81,8 +84,7 @@ public final class BceProcessor {
             Map<Class<?>, Object> instances) {
         var lookup = new IndexLookup(index);
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
-        var errors = new ArrayList<String>();
-        var errorCauses = new ArrayList<Throwable>();
+        var failures = new PhaseFailures();
         var archiveTypes = typesOf(archiveClasses);
         failOnInvalidEnhancementMethods(bceClasses);
 
@@ -91,15 +93,15 @@ public final class BceProcessor {
                 ExtensionAsks.<Exception>of(bceClass, () -> {
                     var known = instances.get(bceClass);
                     var bce = known != null ? known : instantiateBce(bceClass);
-                    processEnhancement(bce, bceClass, List.of(), archiveTypes, lookup, classLoader, errors,
-                            errorCauses, modifications);
+                    processEnhancement(bce, bceClass, List.of(), archiveTypes, lookup, classLoader,
+                            new EnhancementSink(failures, modifications));
                 });
             } catch (Exception e) {
-                failedToBuild(bceClass, e, errors, errorCauses);
+                failedToBuild(bceClass, e, failures);
             }
         }
 
-        DeploymentFailures.failOnDeploymentErrors(errors, errorCauses);
+        failures.failOnErrors();
         return modifications;
     }
 
@@ -117,14 +119,17 @@ public final class BceProcessor {
      * @return enhancement modifications keyed by target DotName
      * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method has a parameter
      *         of an unsupported type, reported before any call (BUG-20261118-22)
-     * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension threw (BUG-20261118-05)
+     * @throws jakarta.enterprise.inject.spi.DefinitionException when an extension threw (BUG-20261118-05,
+     *         BUG-20261118-57)
+     * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension reported an error through
+     *         {@code Messages}
      */
     public static Map<DotName, List<VaubanClassConfig>> replayEnhancementForTargets(
             List<Map.Entry<Class<?>, Class<?>>> replayPairs,
             VaubanIndex index) {
         var lookup = new IndexLookup(index);
         var modifications = new HashMap<DotName, List<VaubanClassConfig>>();
-        var sink = new EnhancementSink(new ArrayList<>(), new ArrayList<>(), modifications);
+        var sink = new EnhancementSink(new PhaseFailures(), modifications);
         failOnInvalidEnhancementMethods(replayPairs.stream().<Class<?>>map(Map.Entry::getKey).distinct().toList());
 
         for (var pair : replayPairs) {
@@ -141,11 +146,11 @@ public final class BceProcessor {
                     }
                 });
             } catch (Exception e) {
-                failedToBuild(bceClass, e, sink.errors(), sink.errorCauses());
+                failedToBuild(bceClass, e, sink.failures());
             }
         }
 
-        DeploymentFailures.failOnDeploymentErrors(sink.errors(), sink.errorCauses());
+        sink.failures().failOnErrors();
         return modifications;
     }
 
@@ -163,12 +168,62 @@ public final class BceProcessor {
 
     /**
      * Records what an extension threw outside its methods, where {@code processEnhancement} records what they threw:
-     * a constructor that fails is a deployment problem too (BUG-20261118-05).
+     * a constructor that fails is a failure of the phase too (BUG-20261118-05), a definition error
+     * (BUG-20261118-57).
      */
-    private static void failedToBuild(Class<?> bceClass, Exception e, List<String> errors, List<Throwable> causes) {
+    private static void failedToBuild(Class<?> bceClass, Exception e, PhaseFailures failures) {
         var cause = unwrapped(e);
-        errors.add("@Enhancement of " + bceClass.getName() + " failed: " + cause);
-        causes.add(cause);
+        failures.thrown("@Enhancement of " + bceClass.getName() + " failed: " + cause, cause);
+    }
+
+    /**
+     * Where the failures of the phases go, one mapping for all of them (BUG-20261118-57): an exception an extension's
+     * constructor, or its {@code @Discovery}, {@code @Enhancement}, {@code @Registration} or {@code @Synthesis} method,
+     * throws is a definition error, as CDI 4.1 treats one of a {@code BeforeBeanDiscovery} (BUG-20261118-04), a
+     * {@code ProcessAnnotatedType}, a {@code ProcessBean} or an {@code AfterBeanDiscovery} observer, the portable
+     * events of the same phases. A {@code DeploymentException} it throws stays a deployment problem, one rule
+     * everywhere: CDI 4.1 makes an invoker built for an invalid target method a deployment problem, which the invoker
+     * factory throws, and the CDI TCK expects. An exception of
+     * {@code @Validation}, as one of an {@code AfterDeploymentValidation} observer, and an error reported through
+     * {@code Messages}, as its Javadoc says, are deployment problems. Each list of causes holds the exceptions behind
+     * the errors of its kind, which the exception of the failed deployment carries (VAU-BCE-003).
+     */
+    record PhaseFailures(List<String> definitionErrors, List<Throwable> definitionErrorCauses,
+                         List<String> deploymentErrors, List<Throwable> deploymentErrorCauses) {
+
+        PhaseFailures() {
+            this(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+        }
+
+        /**
+         * What an extension's constructor, or its {@code @Discovery}, {@code @Enhancement}, {@code @Registration} or
+         * {@code @Synthesis} method threw.
+         */
+        void thrown(String error, Throwable cause) {
+            if (cause instanceof jakarta.enterprise.inject.spi.DeploymentException) {
+                deploymentProblem(error, cause);
+            } else {
+                definitionErrors.add(error);
+                definitionErrorCauses.add(cause);
+            }
+        }
+
+        /** What a {@code @Validation} method threw. */
+        void deploymentProblem(String error, Throwable cause) {
+            deploymentErrors.add(error);
+            deploymentErrorCauses.add(cause);
+        }
+
+        /** The errors a method reported through {@code Messages}. */
+        void reported(List<String> errors) {
+            deploymentErrors.addAll(errors);
+        }
+
+        /** Throws the {@code DefinitionException} of the definition errors, then the deployment problems'. */
+        void failOnErrors() {
+            DeploymentFailures.failOnDefinitionErrors(definitionErrors, definitionErrorCauses);
+            DeploymentFailures.failOnDeploymentErrors(deploymentErrors, deploymentErrorCauses);
+        }
     }
 
     /**
@@ -178,6 +233,11 @@ public final class BceProcessor {
             List<VaubanSyntheticBeanBuilder<?>> syntheticBeans,
             List<VaubanSyntheticObserverBuilder<?>> syntheticObservers,
             List<String> definitionErrors,
+            /*
+             * The exceptions behind definitionErrors: what an @Enhancement, a @Registration or a @Synthesis method
+             * threw (BUG-20261118-57).
+             */
+            List<Throwable> definitionErrorCauses,
             List<String> deploymentErrors,
             Map<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> enhancementModifications,
             /*
@@ -221,7 +281,8 @@ public final class BceProcessor {
     /**
      * What {@code @Discovery} did. {@code definitionErrors} and their causes are the exceptions its methods threw: a
      * definition error, as CDI 4.1 treats an exception of a {@code BeforeBeanDiscovery} or an
-     * {@code AfterTypeDiscovery} observer, the portable events of the same phase (BUG-20261118-04).
+     * {@code AfterTypeDiscovery} observer, the portable events of the same phase (BUG-20261118-04), except a
+     * {@code DeploymentException}, which joins the deployment problems (BUG-20261118-57).
      * {@code deploymentErrors} are those its methods reported through {@code Messages}: a deployment problem, as the
      * Javadoc of {@code Messages} says (BUG-20261118-22).
      */
@@ -231,7 +292,9 @@ public final class BceProcessor {
             Map<Class<?>, Object> bceInstances,
             List<String> definitionErrors,
             List<Throwable> definitionErrorCauses,
-            List<String> deploymentErrors
+            List<String> deploymentErrors,
+            /* The DeploymentExceptions its methods threw (BUG-20261118-57). */
+            List<Throwable> deploymentErrorCauses
     ) {}
 
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
@@ -239,9 +302,9 @@ public final class BceProcessor {
         var metaAnnotations = new VaubanMetaAnnotations(lookup);
         var scannedClasses = new VaubanScannedClasses();
         var bceInstances = new LinkedHashMap<Class<?>, Object>();
-        var definitionErrors = new ArrayList<String>();
-        var definitionErrorCauses = new ArrayList<Throwable>();
-        var deploymentErrors = new ArrayList<String>();
+        var failures = new PhaseFailures();
+        var definitionErrors = failures.definitionErrors();
+        var deploymentErrors = failures.deploymentErrors();
 
         for (var bceClass : bceClasses) {
             try {
@@ -256,14 +319,15 @@ public final class BceProcessor {
                     }
                 });
             } catch (Exception e) {
+                // The constructor runs here: a DeploymentException of either stays a deployment problem, as in the
+                // other phases (BUG-20261118-57)
                 var cause = unwrapped(e);
-                definitionErrors.add("@Discovery of " + bceClass.getName() + " failed: " + cause);
-                definitionErrorCauses.add(cause);
+                failures.thrown("@Discovery of " + bceClass.getName() + " failed: " + cause, cause);
             }
         }
 
         return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances, definitionErrors,
-                definitionErrorCauses, deploymentErrors);
+                failures.definitionErrorCauses(), deploymentErrors, failures.deploymentErrorCauses());
     }
 
     /**
@@ -375,9 +439,9 @@ public final class BceProcessor {
                                  boolean deferLookups,
                                  Enhanced enhanced) {
         var lookup = new IndexLookup(index);
-        var definitionErrors = new ArrayList<String>();
-        var deploymentErrors = new ArrayList<String>();
-        var deploymentErrorCauses = new ArrayList<Throwable>();
+        var failures = new PhaseFailures();
+        var definitionErrors = failures.definitionErrors();
+        var deploymentErrors = failures.deploymentErrors();
         var allSyntheticBeans = new ArrayList<VaubanSyntheticBeanBuilder<?>>();
         var allSyntheticObservers = new ArrayList<VaubanSyntheticObserverBuilder<?>>();
         var allEnhancementMods = new HashMap<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>>();
@@ -387,15 +451,15 @@ public final class BceProcessor {
             ExtensionMethodValidator.validateExtensionMethods(bceClass, definitionErrors);
         }
         if (!definitionErrors.isEmpty()) {
-            return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
-                    allEnhancementMods, deploymentErrorCauses, InvokerLookups.NONE);
+            return result(failures, allSyntheticBeans, allSyntheticObservers, allEnhancementMods,
+                    InvokerLookups.NONE);
         }
 
         // Reuse the instances of the Discovery phase to keep the state an extension builds across phases.
         // An extension that fails in one phase takes no part in the next ones.
         var extensions = new LinkedHashMap<Class<?>, Object>();
         for (var bceClass : bceClasses) {
-            runPhase(bceClass, deploymentErrors, deploymentErrorCauses, () -> {
+            runPhase(bceClass, failures::thrown, () -> {
                 var bce = bceInstances != null ? bceInstances.get(bceClass) : null;
                 extensions.put(bceClass, bce != null ? bce : instantiateBce(bceClass));
             });
@@ -403,10 +467,10 @@ public final class BceProcessor {
         var archiveTypes = typesOf(allArchiveClasses);
 
         // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
-        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
+        runPhase(extensions, failures::thrown, (bceClass, bce) -> {
             if (!enhanced.extensions().contains(bceClass)) {
-                processEnhancement(bce, bceClass, beans, archiveTypes, lookup, classLoader, deploymentErrors,
-                        deploymentErrorCauses, allEnhancementMods);
+                processEnhancement(bce, bceClass, beans, archiveTypes, lookup, classLoader,
+                        new EnhancementSink(failures, allEnhancementMods));
             }
         });
 
@@ -425,13 +489,13 @@ public final class BceProcessor {
         var invokers = new ArrayList<VaubanInvokerFactory>();
         var registrationContext = new RegistrationContext(enhancedLookup, classLoader, types,
                 EnhancedClasses.inheritedParameters(enhancedLookup.index(), phaseModifications));
-        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
+        runPhase(extensions, failures::thrown, (bceClass, bce) ->
                 processRegistration(bce, bceClass, registered, observers, interceptorsAsBeans(interceptors,
-                        managedBean), registrationContext, deploymentErrors, invokers));
+                        managedBean), registrationContext, failures, invokers));
 
         // Phase: @Synthesis
-        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
-            var synthesisResult = processSynthesis(bce, bceClass, types, deploymentErrors);
+        runPhase(extensions, failures::thrown, (bceClass, bce) -> {
+            var synthesisResult = processSynthesis(bce, bceClass, types, failures);
             synthesisResult.beans().forEach(bean -> bean.setSourceExtension(bceClass));
             synthesisResult.observers().forEach(observer -> observer.setSourceExtension(bceClass));
             allSyntheticBeans.addAll(synthesisResult.beans());
@@ -446,11 +510,20 @@ public final class BceProcessor {
         }
 
         // Phase: @Validation
-        runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
-                processValidation(bce, bceClass, types, deploymentErrors));
+        runPhase(extensions, failures::deploymentProblem, (bceClass, bce) ->
+                processValidation(bce, bceClass, types, failures));
 
-        return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
-                allEnhancementMods, deploymentErrorCauses, deferLookups ? invokerLookups : InvokerLookups.NONE);
+        return result(failures, allSyntheticBeans, allSyntheticObservers, allEnhancementMods,
+                deferLookups ? invokerLookups : InvokerLookups.NONE);
+    }
+
+    private static Result result(PhaseFailures failures, List<VaubanSyntheticBeanBuilder<?>> syntheticBeans,
+                                 List<VaubanSyntheticObserverBuilder<?>> syntheticObservers,
+                                 Map<DotName, List<VaubanClassConfig>> enhancementModifications,
+                                 InvokerLookups invokerLookups) {
+        return new Result(syntheticBeans, syntheticObservers, failures.definitionErrors(),
+                failures.definitionErrorCauses(), failures.deploymentErrors(), enhancementModifications,
+                failures.deploymentErrorCauses(), invokerLookups);
     }
 
     /**
@@ -470,27 +543,29 @@ public final class BceProcessor {
         return merged;
     }
 
-    /** One phase of every extension still taking part, in their order. */
-    private static void runPhase(Map<Class<?>, Object> extensions, List<String> deploymentErrors,
-                                 List<Throwable> deploymentErrorCauses, PhaseStep step) {
+    /**
+     * One phase of every extension still taking part, in their order; {@code failed} records what escapes a step, as
+     * {@link PhaseFailures} maps the phase's exceptions.
+     */
+    private static void runPhase(Map<Class<?>, Object> extensions, BiConsumer<String, Throwable> failed,
+                                 PhaseStep step) {
         for (var it = extensions.entrySet().iterator(); it.hasNext(); ) {
             var extension = it.next();
-            if (!runPhase(extension.getKey(), deploymentErrors, deploymentErrorCauses,
-                    () -> step.run(extension.getKey(), extension.getValue()))) {
+            if (!runPhase(extension.getKey(), failed, () -> step.run(extension.getKey(), extension.getValue()))) {
                 it.remove();
             }
         }
     }
 
-    private static boolean runPhase(Class<?> bceClass, List<String> deploymentErrors,
-                                    List<Throwable> deploymentErrorCauses, PhaseAction action) {
+    private static boolean runPhase(Class<?> bceClass, BiConsumer<String, Throwable> failed, PhaseAction action) {
         try {
             ExtensionAsks.of(bceClass, action::run);
             return true;
         } catch (Exception e) {
-            deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": "
-                    + java.util.Objects.requireNonNullElse(e.getMessage(), e.getClass().getName()));
-            deploymentErrorCauses.add(e);
+            // What the constructor threw, not its reflective wrapper (BUG-20261118-57)
+            var cause = unwrapped(e);
+            failed.accept("BCE processing failed for " + bceClass.getName() + ": "
+                    + java.util.Objects.requireNonNullElse(cause.getMessage(), cause.getClass().getName()), cause);
             return false;
         }
     }
@@ -740,9 +815,7 @@ public final class BceProcessor {
                                            List<BeanDescriptor> beans,
                                            List<Class<?>> archiveClasses,
                                            IndexLookup lookup, ClassLoader classLoader,
-                                           List<String> errors,
-                                           List<Throwable> errorCauses,
-                                           Map<io.vidocq.vauban.indexer.model.DotName, List<VaubanClassConfig>> modifications) {
+                                           EnhancementSink sink) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var enhancement = method.getAnnotation(Enhancement.class);
             if (enhancement == null) continue;
@@ -752,7 +825,6 @@ public final class BceProcessor {
 
             var withAnnotations = enhancement.withAnnotations();
             var processedClasses = new java.util.HashSet<DotName>();
-            var sink = new EnhancementSink(errors, errorCauses, modifications);
 
             // First try beans (normal CDI path)
             for (var bean : beans) {
@@ -817,11 +889,10 @@ public final class BceProcessor {
     }
 
     /**
-     * Where the {@code @Enhancement} invocations of one phase report: the error messages, the
-     * exceptions behind them, and the modifications keyed by the class they modify.
+     * Where the {@code @Enhancement} invocations of one phase report: their failures, and the modifications keyed by
+     * the class they modify.
      */
-    private record EnhancementSink(List<String> errors, List<Throwable> errorCauses,
-                                   Map<DotName, List<VaubanClassConfig>> modifications) {
+    private record EnhancementSink(PhaseFailures failures, Map<DotName, List<VaubanClassConfig>> modifications) {
     }
 
     private static void invokeEnhancement(Method method, Object bce, EnhancementParamKind paramKind,
@@ -881,10 +952,9 @@ public final class BceProcessor {
             }
         } catch (Exception e) {
             var unwrapped = unwrapped(e);
-            sink.errors().add(phaseError("@Enhancement", method, unwrapped));
-            sink.errorCauses().add(unwrapped);
+            sink.failures().thrown(phaseError("@Enhancement", method, unwrapped), unwrapped);
         }
-        sink.errors().addAll(services.messages().getErrors());
+        sink.failures().reported(services.messages().getErrors());
     }
 
     /** The {@code Messages} and {@code Types} an {@code @Enhancement} method may declare besides its target. */
@@ -958,7 +1028,7 @@ public final class BceProcessor {
                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
                                             List<InterceptorBean> interceptors,
                                             RegistrationContext context,
-                                            List<String> errors,
+                                            PhaseFailures failures,
                                             List<VaubanInvokerFactory> invokers) {
         var lookup = context.lookup();
         var classLoader = context.classLoader();
@@ -975,14 +1045,14 @@ public final class BceProcessor {
                         continue;
                     }
                     var observerInfo = new VaubanBceObserverInfo(observer, declaringBean(observer, beans), lookup);
-                    invokeRegistrationMethodWithObserver(method, bce, observerInfo, types, errors);
+                    invokeRegistrationMethodWithObserver(method, bce, observerInfo, types, failures);
                 }
                 continue;
             }
 
             for (var target : registrationTargets(method, registration.types(), beans, interceptors, lookup,
                     classLoader)) {
-                invokers.add(invokeRegistrationMethod(method, bce, target, context, errors));
+                invokers.add(invokeRegistrationMethod(method, bce, target, context, failures));
             }
         }
     }
@@ -1067,7 +1137,7 @@ public final class BceProcessor {
 
     private static void invokeRegistrationMethodWithObserver(Method method, Object bce,
                                                               VaubanBceObserverInfo observerInfo,
-                                                              VaubanTypes types, List<String> errors) {
+                                                              VaubanTypes types, PhaseFailures failures) {
         var messages = new VaubanMessages();
         var params = method.getParameters();
         var args = new Object[params.length];
@@ -1085,17 +1155,15 @@ public final class BceProcessor {
         try {
             method.invoke(bce, args);
         } catch (Exception e) {
-            errors.add(registrationError(method, e));
+            failures.thrown(registrationError(method, e), unwrapped(e));
         }
-
-        if (messages.hasErrors()) {
-            errors.addAll(messages.getErrors());
-        }
+        failures.reported(messages.getErrors());
     }
 
     /** Calls the {@code @Registration} {@code method} for {@code beanInfo}; returns the invokers it built. */
     private static VaubanInvokerFactory invokeRegistrationMethod(Method method, Object bce, BeanInfo beanInfo,
-                                                                 RegistrationContext context, List<String> errors) {
+                                                                 RegistrationContext context,
+                                                                 PhaseFailures failures) {
         var classLoader = context.classLoader();
         var types = context.types();
         var invokerFactory = new VaubanInvokerFactory(classLoader, context.inherited());
@@ -1105,12 +1173,9 @@ public final class BceProcessor {
         try {
             method.invoke(bce, args);
         } catch (Exception e) {
-            errors.add(registrationError(method, e));
+            failures.thrown(registrationError(method, e), unwrapped(e));
         }
-
-        if (messages.hasErrors()) {
-            errors.addAll(messages.getErrors());
-        }
+        failures.reported(messages.getErrors());
         return invokerFactory;
     }
 
@@ -1156,7 +1221,7 @@ public final class BceProcessor {
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
     private static SynthesisResult processSynthesis(Object bce, Class<?> bceClass,
                                                      VaubanTypes types,
-                                                     List<String> errors) {
+                                                     PhaseFailures failures) {
         var components = new VaubanSyntheticComponents();
 
         for (var method : getDeclaredMethodsSafe(bceClass)) {
@@ -1172,9 +1237,10 @@ public final class BceProcessor {
             try {
                 method.invoke(bce, args);
             } catch (Exception e) {
-                errors.add(phaseError("@Synthesis", method, unwrapped(e)));
+                var thrown = unwrapped(e);
+                failures.thrown(phaseError("@Synthesis", method, thrown), thrown);
             }
-            errors.addAll(messages.getErrors());
+            failures.reported(messages.getErrors());
         }
 
         return new SynthesisResult(components.getBeanDefinitions(), components.getObserverDefinitions());
@@ -1184,7 +1250,8 @@ public final class BceProcessor {
      * Process @Validation methods — collect errors that cause DeploymentException.
      */
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
-    private static void processValidation(Object bce, Class<?> bceClass, VaubanTypes types, List<String> errors) {
+    private static void processValidation(Object bce, Class<?> bceClass, VaubanTypes types,
+                                          PhaseFailures failures) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Validation.class) == null) continue;
 
@@ -1203,14 +1270,10 @@ public final class BceProcessor {
             try {
                 method.invoke(bce, args);
             } catch (Exception e) {
-                errors.add(phaseError("@Validation", method, unwrapped(e)));
+                var thrown = unwrapped(e);
+                failures.deploymentProblem(phaseError("@Validation", method, thrown), thrown);
             }
-
-            if (messages.hasErrors()) {
-                for (var msg : messages.getErrors()) {
-                    errors.add(msg);
-                }
-            }
+            failures.reported(messages.getErrors());
         }
     }
 

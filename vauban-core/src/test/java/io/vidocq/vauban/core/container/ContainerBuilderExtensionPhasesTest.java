@@ -23,17 +23,26 @@ import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.spi.AlterableContext;
 import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.context.spi.CreationalContext;
+import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
+import jakarta.enterprise.inject.build.compatible.spi.Messages;
 import jakarta.enterprise.inject.build.compatible.spi.MetaAnnotations;
+import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
+import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
+import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
+import jakarta.enterprise.inject.build.compatible.spi.Validation;
+import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.inject.Scope;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.lang.annotation.Annotation;
@@ -50,6 +59,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -85,6 +95,58 @@ class ContainerBuilderExtensionPhasesTest {
         @Enhancement(types = Plain.class)
         public void enhance(ClassConfig plain) {
             throw new IllegalArgumentException("second problem");
+        }
+    }
+
+    /** Fails while registering {@link Plain}. */
+    public static class FailingRegistration implements BuildCompatibleExtension {
+        @Registration(types = Plain.class)
+        public void register(BeanInfo plain) {
+            throw new IllegalStateException("registration problem");
+        }
+    }
+
+    /** Fails in {@code @Synthesis}. */
+    public static class FailingSynthesis implements BuildCompatibleExtension {
+        @Synthesis
+        public void synthesize(SyntheticComponents components) {
+            throw new IllegalStateException("synthesis problem");
+        }
+    }
+
+    /** Fails in {@code @Validation}. */
+    public static class FailingValidation implements BuildCompatibleExtension {
+        @Validation
+        public void validate(Messages messages) {
+            throw new IllegalStateException("validation problem");
+        }
+    }
+
+    /** Throws a {@code DeploymentException} while registering {@link Plain}, as an invoker factory does. */
+    public static class DeploymentProblemInRegistration implements BuildCompatibleExtension {
+        @Registration(types = Plain.class)
+        public void register(BeanInfo plain) {
+            throw new DeploymentException("not a valid invoker target");
+        }
+    }
+
+    /** Throws a {@code DeploymentException} from its constructor. */
+    public static class DeploymentProblemInConstructor implements BuildCompatibleExtension {
+        public DeploymentProblemInConstructor() {
+            throw new DeploymentException("not deployable");
+        }
+
+        @Validation
+        public void validate(Messages messages) {
+            messages.info("built");
+        }
+    }
+
+    /** Throws a {@code DeploymentException} in {@code @Discovery}. */
+    public static class DeploymentProblemInDiscovery implements BuildCompatibleExtension {
+        @Discovery
+        public void discover(ScannedClasses scanned) {
+            throw new DeploymentException("not deployable");
         }
     }
 
@@ -226,18 +288,77 @@ class ContainerBuilderExtensionPhasesTest {
 
     @Test
     @DisplayName("extensions failing a phase: the first exception is the cause, the others are suppressed")
-    void deploymentErrorCauses() {
+    void extensionErrorCauses() {
         var builder = VaubanContainer.builder()
                 .addBeanClass(Plain.class)
                 .addBeanClass(FirstFailingExtension.class)
                 .addBeanClass(SecondFailingExtension.class);
 
-        var thrown = assertThrows(DeploymentException.class, builder::build);
+        var thrown = assertThrows(DefinitionException.class, builder::build);
 
         assertNotNull(thrown.getCause());
         assertEquals(1, thrown.getSuppressed().length);
         assertEquals(java.util.Set.of("first problem", "second problem"),
                 java.util.Set.of(thrown.getCause().getMessage(), thrown.getSuppressed()[0].getMessage()));
+    }
+
+    /**
+     * An exception of {@code @Enhancement}, {@code @Registration} or {@code @Synthesis} fails the start with a
+     * {@code DefinitionException}, the exception as its cause, as one of {@code @Discovery} does (BUG-20261118-57).
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(classes = {FirstFailingExtension.class, FailingRegistration.class, FailingSynthesis.class})
+    @DisplayName("an exception of @Enhancement, @Registration or @Synthesis is a definition error")
+    void anExceptionOfAPhaseIsADefinitionError(Class<?> extension) {
+        var builder = VaubanContainer.builder().addBeanClass(Plain.class).addBeanClass(extension);
+
+        var thrown = assertThrows(DefinitionException.class, builder::build);
+
+        assertInstanceOf(IllegalStateException.class, thrown.getCause());
+        assertTrue(thrown.getMessage().contains(thrown.getCause().getMessage()), thrown.getMessage());
+    }
+
+    /** An exception of {@code @Validation} stays a deployment problem, the exception as its cause (BUG-20261118-57). */
+    @Test
+    @DisplayName("an exception of @Validation is a deployment problem")
+    void anExceptionOfValidationIsADeploymentProblem() {
+        var builder = VaubanContainer.builder().addBeanClass(Plain.class).addBeanClass(FailingValidation.class);
+
+        var thrown = assertThrows(DeploymentException.class, builder::build);
+
+        assertEquals("validation problem", thrown.getCause().getMessage());
+    }
+
+    /**
+     * A {@code DeploymentException} a phase method throws, such as the one an invoker factory throws for a method it
+     * cannot invoke, stays a deployment problem: the CDI TCK's invalid invoker tests expect it (BUG-20261118-57).
+     */
+    @Test
+    @DisplayName("a DeploymentException thrown in @Registration stays a deployment problem")
+    void aDeploymentExceptionOfRegistrationStaysADeploymentProblem() {
+        var builder = VaubanContainer.builder().addBeanClass(Plain.class)
+                .addBeanClass(DeploymentProblemInRegistration.class);
+
+        var thrown = assertThrows(DeploymentException.class, builder::build);
+
+        assertTrue(thrown.getMessage().contains("not a valid invoker target"), thrown.getMessage());
+    }
+
+    /**
+     * A {@code DeploymentException} an extension's constructor or {@code @Discovery} method throws stays a deployment
+     * problem at start, the exception as its cause: one rule everywhere (BUG-20261118-57). The start builds the
+     * extension in {@code @Discovery}.
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(classes = {DeploymentProblemInConstructor.class, DeploymentProblemInDiscovery.class})
+    @DisplayName("a DeploymentException of a constructor or of @Discovery stays a deployment problem at start")
+    void aDeploymentExceptionOfDiscoveryStaysADeploymentProblem(Class<?> extension) {
+        var builder = VaubanContainer.builder().addBeanClass(Plain.class).addBeanClass(extension);
+
+        var thrown = assertThrows(DeploymentException.class, builder::build);
+
+        assertTrue(thrown.getMessage().contains("not deployable"), thrown.getMessage());
+        assertInstanceOf(DeploymentException.class, thrown.getCause());
     }
 
     @Test

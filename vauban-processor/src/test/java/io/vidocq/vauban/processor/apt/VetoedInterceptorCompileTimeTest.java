@@ -5009,6 +5009,104 @@ class VetoedInterceptorCompileTimeTest {
                 DeploymentException.class);
     }
 
+    /** What the extensions below throw, in the phase each one fails. */
+    static final String PHASE_CAUSE = "the extension cannot go on";
+
+    /** Throws in {@code @Enhancement}, for each {@code @Dependent} listener. */
+    public static class ThrowingEnhancement implements BuildCompatibleExtension {
+
+        @Enhancement(types = java.util.EventListener.class, withSubtypes = true, withAnnotations = Dependent.class)
+        public void listeners(ClassInfo type) {
+            throw new IllegalStateException(PHASE_CAUSE);
+        }
+    }
+
+    /**
+     * Throws in {@code @Registration}, for each listener bean: not an {@code IllegalStateException}, whose message the
+     * phase reports alone.
+     */
+    public static class ThrowingRegistration implements BuildCompatibleExtension {
+
+        @Registration(types = java.util.EventListener.class)
+        public void listeners(BeanInfo bean) {
+            throw new UnsupportedOperationException(PHASE_CAUSE);
+        }
+    }
+
+    /** Throws in {@code @Synthesis}. */
+    public static class ThrowingSynthesis implements BuildCompatibleExtension {
+
+        @Synthesis
+        public void synthesize(jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents components) {
+            throw new IllegalStateException(PHASE_CAUSE);
+        }
+    }
+
+    /** Throws in {@code @Validation}. */
+    public static class ThrowingValidation implements BuildCompatibleExtension {
+
+        @jakarta.enterprise.inject.build.compatible.spi.Validation
+        public void validate(Messages messages) {
+            throw new IllegalStateException(PHASE_CAUSE);
+        }
+    }
+
+    /**
+     * An exception an {@code @Enhancement}, a {@code @Registration} or a {@code @Synthesis} method throws is a
+     * definition error, as one of {@code @Discovery} is: the build fails, the start and the start after the freeze
+     * throw a {@code DefinitionException} with the exception as its cause (BUG-20261118-57).
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"Enhancement", "Registration", "Synthesis"})
+    @DisplayName("an exception of a phase after @Discovery is a definition error in the build, the start and the freeze")
+    void anExceptionOfAPhaseIsADefinitionError(String phase) throws Exception {
+        var extension = switch (phase) {
+            case "Enhancement" -> ThrowingEnhancement.class;
+            case "Registration" -> ThrowingRegistration.class;
+            default -> ThrowingSynthesis.class;
+        };
+
+        var started = failsThreeWays(withListenerSubtypes(), extension, "@" + phase + " error: " + PHASE_CAUSE,
+                DefinitionException.class);
+
+        assertEquals(PHASE_CAUSE, started.getCause().getMessage());
+    }
+
+    /**
+     * An exception a {@code @Validation} method throws stays a deployment problem, the exception as its cause
+     * (BUG-20261118-57).
+     */
+    @Test
+    @DisplayName("an exception of @Validation stays a deployment problem in the build, the start and the freeze")
+    void anExceptionOfValidationIsADeploymentProblem() throws Exception {
+        var started = failsThreeWays(withListenerSubtypes(), ThrowingValidation.class,
+                "@Validation error: " + PHASE_CAUSE, DeploymentException.class);
+
+        assertEquals(PHASE_CAUSE, started.getCause().getMessage());
+    }
+
+    /** Throws a {@code DeploymentException} in {@code @Discovery}. */
+    public static class DeploymentProblemInDiscovery implements BuildCompatibleExtension {
+
+        @Discovery
+        public void discover(ScannedClasses scanned) {
+            throw new DeploymentException(PHASE_CAUSE);
+        }
+    }
+
+    /**
+     * A {@code DeploymentException} a {@code @Discovery} method throws stays a deployment problem, as one of any other
+     * phase does: one rule everywhere (BUG-20261118-57).
+     */
+    @Test
+    @DisplayName("a DeploymentException of @Discovery stays a deployment problem in the build, the start and the freeze")
+    void aDeploymentExceptionOfDiscoveryStaysADeploymentProblem() throws Exception {
+        var started = failsThreeWays(withAVetoedPackage(), DeploymentProblemInDiscovery.class, PHASE_CAUSE,
+                DeploymentException.class);
+
+        assertEquals(PHASE_CAUSE, started.getCause().getMessage());
+    }
+
     /** {@link #failsThreeWays} for an extension that fails in {@code @Discovery}, with a definition error. */
     private RuntimeException discoveryFailsThreeWays(Class<? extends BuildCompatibleExtension> extension,
                                                      String failure) throws Exception {

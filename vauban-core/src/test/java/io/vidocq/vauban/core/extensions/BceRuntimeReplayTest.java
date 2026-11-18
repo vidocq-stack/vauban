@@ -309,7 +309,7 @@ class BceRuntimeReplayTest {
     // ======================================================================
 
     @Nested
-    @DisplayName("BUG-20261118-05 - an exception of @Enhancement fails the start on every path")
+    @DisplayName("BUG-20261118-05 - an exception of @Enhancement fails the start on every path, a definition error")
     class EnhancementFailures {
 
         @Test
@@ -378,7 +378,7 @@ class BceRuntimeReplayTest {
 
         /** The start over {@code jars} fails with the extension's exception, thrown by the {@code path} it names. */
         private void assertStartFails(String path, Path... jars) throws Exception {
-            var thrown = startFails(jakarta.enterprise.inject.spi.DeploymentException.class, path, jars);
+            var thrown = startFails(jakarta.enterprise.inject.spi.DefinitionException.class, path, jars);
 
             assertAll(() -> assertTrue(thrown.getMessage().contains(ThrowingOnBBce.CAUSE), thrown.getMessage()),
                     () -> assertEquals(ThrowingOnBBce.CAUSE, thrown.getCause().getMessage()));

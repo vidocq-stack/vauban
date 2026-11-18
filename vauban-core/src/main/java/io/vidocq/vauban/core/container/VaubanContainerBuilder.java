@@ -1027,7 +1027,7 @@ public final class VaubanContainerBuilder {
         if (discoveryResult != null) {
             failOn(discoveryResult.definitionErrors(), discoveryResult.definitionErrorCauses(), DEFINITION_FAILED,
                     jakarta.enterprise.inject.spi.DefinitionException::new);
-            failOnDeploymentErrors(discoveryResult.deploymentErrors(), List.of());
+            failOnDeploymentErrors(discoveryResult.deploymentErrors(), discoveryResult.deploymentErrorCauses());
         }
         // What @Discovery registered: by the extensions that just ran, by those the build froze, or both.
         var extensionDiscovery = registeredAtDiscovery(discoveryResult, frozen, discoveryClassLoader);
@@ -1601,11 +1601,12 @@ public final class VaubanContainerBuilder {
 
     /**
      * BCE definition errors → DefinitionException; BCE deployment errors → DeploymentException. The first typed
-     * exception a BCE threw becomes the cause (VAU-BCE-003): specs define the exception a failed deployment must
-     * surface, and TCKs assert it through the cause chain (@ShouldThrowException).
+     * exception a BCE threw becomes the cause of each (VAU-BCE-003): specs define the exception a failed deployment
+     * must surface, and TCKs assert it through the cause chain (@ShouldThrowException). What an {@code @Enhancement},
+     * {@code @Registration} or {@code @Synthesis} method threw is a definition error (BUG-20261118-57).
      */
     private static void failOnExtensionErrors(BceProcessor.Result bceResult) {
-        failOn(bceResult.definitionErrors(), List.of(), DEFINITION_FAILED,
+        failOn(bceResult.definitionErrors(), bceResult.definitionErrorCauses(), DEFINITION_FAILED,
                 jakarta.enterprise.inject.spi.DefinitionException::new);
         failOnDeploymentErrors(bceResult.deploymentErrors(), bceResult.deploymentErrorCauses());
     }

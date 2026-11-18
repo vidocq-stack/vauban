@@ -912,16 +912,28 @@ The `ApplicationContext` is built in memory, without opening any package.
   `NullPointerException` in application code. `Bean#getInjectionPoints()` likewise throws rather
   than reporting no injection points.
 * An exception a `@Discovery` method throws is a definition error, as CDI 4.1 treats one of a
-  `BeforeBeanDiscovery` observer: the build fails with a compilation error, and the start with a
+  `BeforeBeanDiscovery` observer, except a `DeploymentException`, which stays a deployment problem
+  (BUG-20261118-57): the build fails with a compilation error, and the start with a
   `DefinitionException` whose cause is the exception, both naming the extension
   (`@Discovery of com.acme.Ext failed: java.lang.IllegalStateException: ...`); the freeze records
   nothing, and the start that follows fails in turn. The container used to ignore it, and the
   deployment went on without what the method had not registered (BUG-20261118-04).
-* An exception an `@Enhancement` method throws fails the start with a `DeploymentException` on
-  every path: in the full extension cycle, in the enhancement of an archive the processor did not
-  see, and in the replay of `META-INF/vauban-bce-runtime.list` for a pre-processed jar. The
-  enhancement under `vauban:generate` fails the generation the same way. The last two used to drop
-  it (BUG-20261118-05).
+* An exception an `@Enhancement` method throws fails the start on every path: in the full
+  extension cycle, in the enhancement of an archive the processor did not see, and in the replay of
+  `META-INF/vauban-bce-runtime.list` for a pre-processed jar. The enhancement under
+  `vauban:generate` fails the generation the same way. The last two used to drop it
+  (BUG-20261118-05).
+* An exception an `@Enhancement`, a `@Registration` or a `@Synthesis` method throws is a definition
+  error, as one of `@Discovery` is, and as CDI 4.1 treats one of a `ProcessAnnotatedType`, a
+  `ProcessBean` or an `AfterBeanDiscovery` observer: the build fails with a compilation error, and
+  the start, the start after a freeze and, for `@Enhancement`, `vauban:generate` with a
+  `DefinitionException` whose cause is the exception. A `DeploymentException` an extension throws,
+  from its constructor or any phase method, `@Discovery` included, stays a deployment problem: the
+  one `InvokerFactory.createInvoker` throws for a method it cannot invoke say, as CDI 4.1 makes an
+  invoker for an invalid target method a deployment problem and the CDI TCK expects. An exception of `@Validation`, as one of an
+  `AfterDeploymentValidation` observer, and an error reported through `Messages` are deployment
+  problems: a `DeploymentException`. The three phases failed with a `DeploymentException`, and only
+  `@Enhancement` carried the exception as its cause (BUG-20261118-57).
 * The build compatible extension phase resolves a bean class across the whole deployment: the
   classes the container holds, the loader set on the builder, then the build's context loader —
   inside a Vauban layer, the layer's loader, which sees the application and the libraries it

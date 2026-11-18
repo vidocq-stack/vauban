@@ -28,6 +28,7 @@ import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
 import jakarta.enterprise.inject.build.compatible.spi.Validation;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
+import jakarta.enterprise.inject.spi.DefinitionException;
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import org.junit.jupiter.api.DisplayName;
@@ -96,7 +97,10 @@ class PhaseErrorReportTest {
         var initializer = SeContainerInitializer.newInstance().disableDiscovery()
                 .addBeanClasses(Target.class, extension);
 
-        var thrown = assertThrows(DeploymentException.class, initializer::initialize);
+        // An exception of @Validation is a deployment problem, one of the other phases a definition error
+        // (BUG-20261118-57)
+        var expected = extension == AssertingValidation.class ? DeploymentException.class : DefinitionException.class;
+        var thrown = assertThrows(expected, initializer::initialize);
 
         var message = thrown.getMessage();
         assertAll(() -> assertTrue(message.contains(extension.getName() + ".verify"), message),

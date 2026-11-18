@@ -53,6 +53,52 @@ suspected cause, status. Updated on every investigation.
   - 2026-11-18: the comment of `isOuterInstance` said only class files older than Java 21 lack the attribute. Every
     class of a `--strip-debug` image lacks it.
 
+## BUG-20261118-57 — An exception of `@Enhancement`, `@Registration` or `@Synthesis` is a deployment problem
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18)
+- **Module**: `vauban-core` (`extensions.BceProcessor`, `container.VaubanContainerBuilder`,
+  `extensions.internal.DeploymentFailures`)
+- **Symptom**: a method of `@Enhancement`, `@Registration` or `@Synthesis` that throws fails the start, the start after
+  a freeze and, for `@Enhancement`, `vauban:generate` with a `DeploymentException`, where one of `@Discovery` fails
+  them with a `DefinitionException` (BUG-20261118-04). Only `@Enhancement` carried the exception as the cause; an
+  exception of `@Registration`, `@Synthesis` or `@Validation` was a line of the message alone.
+- **Decision** (maintainer): an exception of `@Enhancement`, `@Registration` or `@Synthesis` is a definition error, as
+  CDI 4.1 treats one of a `ProcessAnnotatedType`, a `ProcessBean` or an `AfterBeanDiscovery` observer; one of
+  `@Validation` stays a deployment problem, as one of an `AfterDeploymentValidation` observer. An error reported
+  through `Messages` stays a deployment problem, as its Javadoc says.
+- **TCK**: the CDI TCK's invalid invoker tests (`invokers/invalid/*`, seven) expect a `DeploymentException` from the
+  `DeploymentException` that `InvokerFactory.createInvoker` throws, uncaught, in `@Registration`. A
+  `DeploymentException` an extension throws, from its constructor or any phase method, `@Discovery` included, therefore
+  stays a deployment problem, one rule everywhere, as CDI 4.1 says ("Attempting to build an invoker for an invalid
+  target method leads to a deployment problem", §"Building an invoker", `tck-audit-cdi.xml:5932` in
+  `cdi-tck-core-impl-4.1.0`) and the CDI TCK expects. Measured
+  without that exception to the rule (`phase-r2-m2-carveout-red.log`, not committed): the seven tests still pass, as
+  Arquillian's `@ShouldThrowException` walks the cause chain and finds the `DeploymentException` under the
+  `DefinitionException`; `ContainerBuilderExtensionPhasesTest#aDeploymentExceptionOfRegistrationStaysADeploymentProblem`
+  fails. The TCK states the type; it does not force it.
+- **Repro**: `ContainerBuilderExtensionPhasesTest#anExceptionOfAPhaseIsADefinitionError` (one per phase),
+  `#anExceptionOfValidationIsADeploymentProblem`, `#aDeploymentExceptionOfRegistrationStaysADeploymentProblem` and
+  `#extensionErrorCauses` in `vauban-core`; `VetoedInterceptorCompileTimeTest#anExceptionOfAPhaseIsADefinitionError`
+  (one per phase: the build, the start, the freeze and the start after it) and
+  `#anExceptionOfValidationIsADeploymentProblem` in `vauban-processor`;
+  `EnhancementFailureGenerationTest#anExceptionOfEnhancementFailsTheGeneration` in `vauban-maven-plugin`.
+- **Cause**: `BceProcessor` sent every exception of the phases after `@Discovery` to the deployment errors, and
+  recorded the cause of `@Enhancement`'s alone.
+- **Fix**: one mapping, `BceProcessor.PhaseFailures`, for every phase and every path (the full cycle, the enhancement
+  of an unprocessed archive, the replay, `vauban:generate`): an exception of `@Enhancement`, `@Registration` or
+  `@Synthesis`, the extension's constructor and what escapes a phase included, is a definition error with the
+  exception as its cause, unless it is a `DeploymentException`; `@Discovery`'s catch, where the start builds the
+  extension, applies the same mapping (round 3: a constructor or a `@Discovery` method that threw a
+  `DeploymentException` gave a `DefinitionException`, `phase-r3.log`, "R3 red"); an exception of `@Validation` is
+  a deployment problem with its cause; a `Messages` error a deployment problem. `BceProcessor.Result` carries `definitionErrorCauses`, which
+  the start throws as the cause of its `DefinitionException`. The processor fails the build as before.
+- **Verification**: red, `phase-57-red.log`, "BUG-57 red: one test per phase, no fix" (`DeploymentException` where
+  `DefinitionException` was expected, and no cause for `@Validation`). Green, `phase-57-green.log`, "BUG-57 green 2";
+  `phase-57-verify.log`, "BUG-57 verify 2" (`-Pquality clean install`); `phase-57-tck.log` (CDI 774/774, language
+  model 67, AtInject 1/1).
+- **Found by**: the maintainer's decision after BUG-20261118-04.
+
 ## BUG-20261118-56 — `Outer<String>.Plain` loses its owner in the language model
 
 - **Date**: 2026-11-18

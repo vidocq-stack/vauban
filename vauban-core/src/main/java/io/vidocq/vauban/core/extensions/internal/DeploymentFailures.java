@@ -46,7 +46,12 @@ public final class DeploymentFailures {
 
     /** Throws the {@code DefinitionException} of {@code errors}. */
     public static void failOnDefinitionErrors(List<String> errors) {
-        failOn(errors, List.of(), DEFINITION_FAILED, jakarta.enterprise.inject.spi.DefinitionException::new);
+        failOnDefinitionErrors(errors, List.of());
+    }
+
+    /** Throws the {@code DefinitionException} of {@code errors}, the first of {@code causes} as its cause. */
+    public static void failOnDefinitionErrors(List<String> errors, List<Throwable> causes) {
+        failOn(errors, causes, DEFINITION_FAILED, jakarta.enterprise.inject.spi.DefinitionException::new);
     }
 
     /** Throws the {@code DeploymentException} of {@code errors}, the first of {@code causes} as its cause. */
