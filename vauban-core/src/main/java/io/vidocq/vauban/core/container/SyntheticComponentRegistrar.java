@@ -324,8 +324,8 @@ final class SyntheticComponentRegistrar {
         return switch (type) {
             case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) -> name.value();
             case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, var arguments, _) -> raw.value()
-                    + arguments.stream().map(SyntheticComponentRegistrar::typeName)
-                            .collect(java.util.stream.Collectors.joining(", ", "<", ">"));
+                    + (arguments.isEmpty() ? "" : arguments.stream().map(SyntheticComponentRegistrar::typeName)
+                            .collect(java.util.stream.Collectors.joining(", ", "<", ">")));
             case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType(var component, var dimensions) ->
                     typeName(component) + "[]".repeat(dimensions);
             case io.vidocq.vauban.indexer.model.TypeInfo.PrimitiveType(var kind) ->

@@ -117,6 +117,19 @@ class AnnotationLiteralRenderingTest {
         assertTrue(literals.contains(rendering), rendering);
     }
 
+    /**
+     * A member type of a parameterized type is written after its owner, {@code Outer<String>.Inner<Integer>}, which
+     * javac accepts; it was written {@code Outer.Inner<Integer>}, its owner dropped, which javac rejects ("improperly
+     * formed type") (BUG-20261117-21).
+     */
+    @Test
+    void anInnerClassOfAGenericClassIsWrittenAfterItsOwner() throws IOException {
+        var rendered = AnnotationArtefacts.render(List.of(indexed(OwnedClassMember.class))).literals();
+
+        assertTrue(rendered.contains("java.lang.Class<? extends io.vidocq.vauban.processor.codegen.provider"
+                + ".OwnedClassMember.Outer<java.lang.String>.Inner<java.lang.Integer>>"), rendered);
+    }
+
     @Test
     void aTypeKeptInTheClassFileOnlyIsNotRendered() throws IOException {
         assertFalse(literals.contains("ClassRetained"));

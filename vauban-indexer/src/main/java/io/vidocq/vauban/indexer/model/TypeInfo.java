@@ -64,8 +64,15 @@ public sealed interface TypeInfo {
      * @param owner         the parameterized type that encloses it, or {@code null}
      */
     record ParameterizedType(DotName rawType, List<TypeInfo> typeArguments, TypeInfo owner) implements TypeInfo {
+        /**
+         * @throws IllegalArgumentException for a type without arguments and without owner, which is a class type:
+         *         only a member type of a parameterized type, {@code Outer<String>.Plain}, has none (BUG-20261118-47)
+         */
         public ParameterizedType {
             typeArguments = List.copyOf(typeArguments);
+            if (typeArguments.isEmpty() && owner == null) {
+                throw new IllegalArgumentException(rawType + " has no type argument and no owner: it is a class type");
+            }
         }
 
         /** A parameterized type that no parameterized type encloses. */

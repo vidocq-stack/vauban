@@ -1044,7 +1044,8 @@ public final class BeanDiscovery {
                 var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType parameterizedOwner
                         && reflectTypeToTypeInfo(parameterizedOwner, visited) instanceof TypeInfo.ParameterizedType
                         ownerInfo ? ownerInfo : null;
-                yield args.isEmpty()
+                // Outer<String>.Plain has no argument of its own and keeps its owner (BUG-20261118-47)
+                yield args.isEmpty() && (owner == null || pt.getActualTypeArguments().length > 0)
                         ? new TypeInfo.ClassType(rawType)
                         : new TypeInfo.ParameterizedType(rawType, args, owner);
             }

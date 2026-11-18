@@ -108,11 +108,18 @@ class ClassFileScannerTest {
     static class Outer<O> {
         class Inner<P extends O> {
         }
+
+        class Plain {
+        }
     }
 
     /** Produces an inner class of a generic class, as {@code Outer<Number>.Inner<Integer>}. */
     static class InnerFactory {
         Outer<Number>.Inner<Integer> inner() {
+            return null;
+        }
+
+        Outer<Number>.Plain plain() {
             return null;
         }
     }
@@ -771,6 +778,31 @@ class ClassFileScannerTest {
                     () -> assertEquals(List.of(new ClassType(DotName.of("java.lang.Integer"))),
                             returned.typeArguments()),
                     () -> assertEquals(outer, returned.owner()));
+        }
+
+        /**
+         * {@code Outer<Number>.Plain}, an inner class without type parameters of a generic class, is a parameterized
+         * type without arguments, its owner {@code Outer<Number>}, as reflection gives it; it was a class type, which
+         * has no owner (BUG-20261118-47).
+         */
+        @Test
+        @DisplayName("an inner class without type parameters of a generic class has its owner")
+        void aNonGenericInnerClassHasItsOwner() throws IOException {
+            var returned = scan(InnerFactory.class).methods().stream()
+                    .filter(m -> m.name().equals("plain")).findFirst().orElseThrow().returnType();
+            var outer = new ParameterizedType(DotName.of(Outer.class.getName()),
+                    List.of(new ClassType(DotName.of("java.lang.Number"))));
+            assertEquals(new ParameterizedType(DotName.of(Outer.Plain.class.getName()), List.of(), outer), returned);
+        }
+
+        @Test
+        @DisplayName("a parameterized type without arguments needs an owner")
+        void aParameterizedTypeWithoutArgumentsNeedsAnOwner() {
+            var plain = DotName.of(Outer.Plain.class.getName());
+            var noArguments = List.<TypeInfo>of();
+            var failure = assertThrows(IllegalArgumentException.class,
+                    () -> new ParameterizedType(plain, noArguments));
+            assertTrue(failure.getMessage().contains(plain.value()), failure.getMessage());
         }
 
         @Test

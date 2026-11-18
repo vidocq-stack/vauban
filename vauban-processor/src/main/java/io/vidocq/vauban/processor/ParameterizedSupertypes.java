@@ -235,7 +235,9 @@ final class ParameterizedSupertypes implements Function<TypeInfo, Optional<List<
         var owner = type.getEnclosingType().getKind() == TypeKind.DECLARED
                 && typeInfo(type.getEnclosingType(), reading) instanceof TypeInfo.ParameterizedType parameterized
                 ? parameterized : null;
-        return arguments.isEmpty() ? new TypeInfo.ClassType(name)
+        // Outer<String>.Plain declares no type parameter and keeps its owner, as reflection gives it (BUG-20261118-47)
+        var ownArguments = !type.getTypeArguments().isEmpty();
+        return arguments.isEmpty() && (ownArguments || owner == null) ? new TypeInfo.ClassType(name)
                 : new TypeInfo.ParameterizedType(name, arguments, owner);
     }
 

@@ -142,12 +142,14 @@ final class ClassTypeParameters {
     private TypeInfo classType(Signature.ClassTypeSig type) {
         // classDesc() joins an inner class to its outer class with '$': the binary name the index keys classes by.
         var name = DotName.fromDescriptor(type.classDesc().descriptorString());
-        if (type.typeArgs().isEmpty()) {
-            return new TypeInfo.ClassType(name);
-        }
         // The enclosing type, where it carries type arguments the classes above this one may name (BUG-20261117-21)
         var owner = type.outerType().map(this::classType)
                 .filter(TypeInfo.ParameterizedType.class::isInstance).orElse(null);
+        // Without arguments of its own, a member type of a parameterized type keeps that owner, as reflection gives
+        // Outer<String>.Plain: a parameterized type without arguments (BUG-20261118-47)
+        if (type.typeArgs().isEmpty() && owner == null) {
+            return new TypeInfo.ClassType(name);
+        }
         return new TypeInfo.ParameterizedType(name, type.typeArgs().stream().map(this::typeArgument).toList(), owner);
     }
 

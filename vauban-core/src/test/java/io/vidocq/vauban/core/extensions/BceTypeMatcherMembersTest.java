@@ -152,7 +152,8 @@ class BceTypeMatcherMembersTest {
     @Test
     void anObserverMatchesTheTypesOfTheEventItObserves() {
         var lookup = new IndexLookup(new IndexBuilder().add(indexed("com.acme.Listener", Plain.class.getName())).build());
-        var lists = observerOf(new TypeInfo.ParameterizedType(DotName.of(java.util.List.class.getName()), List.of()));
+        var lists = observerOf(new TypeInfo.ParameterizedType(DotName.of(java.util.List.class.getName()),
+                List.of(new TypeInfo.ClassType(DotName.of("java.lang.String")))));
         var arrays = observerOf(new TypeInfo.ArrayType(TypeInfo.PrimitiveType.fromDescriptor('I'), 1));
 
         assertTrue(BceTypeMatcher.matchesObserverTypes(new Class<?>[] {java.util.Collection.class}, lists, lookup,
@@ -357,7 +358,8 @@ class BceTypeMatcherMembersTest {
     void aParameterizedBeanTypeMatchesByItsRawType() {
         var bean = new BeanDescriptor(BeanDescriptor.minimal(DotName.of("com.acme.Bean")).id(), DotName.of("com.acme.Bean"),
                 BeanDescriptor.BeanKind.MANAGED,
-                Set.of(new TypeInfo.ParameterizedType(DotName.of("java.util.ArrayList"), List.of())),
+                Set.of(new TypeInfo.ParameterizedType(DotName.of("java.util.ArrayList"),
+                        List.of(new TypeInfo.ClassType(DotName.of("java.lang.String"))))),
                 Set.of(), null, false, 0, List.of(), null);
 
         assertTrue(BceTypeMatcher.matchesTypes(new Class<?>[] {java.util.List.class}, bean, LOADER));

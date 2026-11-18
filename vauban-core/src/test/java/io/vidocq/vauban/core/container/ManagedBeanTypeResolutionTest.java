@@ -173,7 +173,8 @@ class ManagedBeanTypeResolutionTest {
     @DisplayName("a type argument whose class cannot be loaded drops the whole parameterized type")
     void missingTypeArgument() {
         var types = syntheticTypes(new TypeInfo.ParameterizedType(DotName.of(LIST),
-                List.of(new TypeInfo.ParameterizedType(DotName.of(MISSING_CLASS), List.of()))));
+                List.of(new TypeInfo.ParameterizedType(DotName.of(MISSING_CLASS),
+                        List.of(new TypeInfo.ClassType(DotName.of("java.lang.String")))))));
 
         assertEquals(Set.of(Object.class), types);
     }

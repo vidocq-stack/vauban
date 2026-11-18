@@ -56,7 +56,6 @@ import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.declarations.MethodInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.WildcardType;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -2072,12 +2071,12 @@ class VetoedInterceptorCompileTimeTest {
 
     /**
      * A producer of {@code Outer<String>.Plain}, where {@code Plain implements Holder<O>} declares no type parameter: the
-     * type above it is {@code Holder<String>}, as {@code Bean.getTypes()} says. The index names a type without type
-     * arguments as a class type, which has no owner, so the descriptor has the raw {@code Holder}, at build, at start
-     * and frozen (BUG-20261118-47).
+     * type above it is {@code Holder<String>}, as {@code Bean.getTypes()} says. The index names it, as reflection does,
+     * a parameterized type without arguments whose owner is {@code Outer<String>}, so the descriptor has
+     * {@code Holder<String>}, at build, at start and frozen. It named it a class type, which has no owner, and the
+     * descriptor had the raw {@code Holder} (BUG-20261118-47).
      */
     @Test
-    @Disabled("BUG-20261118-47: a non-generic inner class of a generic class is a class type, which has no owner")
     @DisplayName("a producer of a non-generic inner class of a generic class has the type above it parameterized")
     void aProducerOfANonGenericInnerClassHasTheTypesAboveIt() throws Exception {
         var sources = withAnInnerClassProducer();

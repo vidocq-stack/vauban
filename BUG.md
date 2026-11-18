@@ -34,23 +34,47 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-47 — A non-generic inner class of a generic class has the raw types above it in its descriptor
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
-- **Module**: `vauban-indexer` (`TypeInfo.ClassType`), as `vauban-core` (`BeanDiscovery`) and `vauban-processor`
-  (`ParameterizedSupertypes`) read it
+- **Status**: FIXED
+- **Module**: `vauban-indexer` (`TypeInfo.ParameterizedType`, `ClassTypeParameters`), `vauban-processor`
+  (`ParameterizedSupertypes`, `ElementScanner`, `AnnotationArtefacts`), `vauban-core` (`BeanDiscovery`,
+  `TypeInfoUtils`, `TypeMapper`, `SyntheticComponentRegistrar`)
 - **Symptom**: `@Produces Outer<String>.Plain plain()`, where `Outer<O>` declares `class Plain implements Holder<O>`
   and `Plain` declares no type parameter: the producer has the raw `Holder` in the processor, at start and frozen, where
   `Bean.getTypes()` has `Holder<String>`. The shape BUG-20261117-21 left.
 - **Repro**: `VetoedInterceptorCompileTimeTest#aProducerOfANonGenericInnerClassHasTheTypesAboveIt` in
-  `vauban-processor`, disabled with this id; red when enabled on 814ae485 (`stack-l2d-red.log`, "RED
-  BUG-20261118-47 on 814ae485 (container expectation in reflection's form)"): the three ways see `Holder`, the
-  container `Holder<java.lang.String>`.
-- **Cause**: the index names a type without type arguments as a `ClassType`, which has no owner, so `Outer<String>`
-  is lost; reflection gives a `ParameterizedType` without arguments whose owner is `Outer<String>` (`Outer$Plain<>`).
-- **Why not fixed with BUG-20261117-21**: carrying the owner takes either a `ClassType` with an owner, a second change
-  of a public record whose patterns reach every brick, or a `ParameterizedType` without arguments, which every reader
-  of the index takes for one with arguments: the language model's `ParameterizedType`, the source the processor
-  writes (`AnnotationArtefacts`), the observed type notation, Vidocq's dev console. Each needs a decision and its own
-  tests.
+  `vauban-processor`; `OwnedTypesAtBuildAndStartTest` (`Items implements Supplier<Box<String>.Plain>`);
+  `ClassFileScannerTest$EnclosingTypes#aNonGenericInnerClassHasItsOwner` and
+  `#aParameterizedTypeWithoutArgumentsNeedsAnOwner` in `vauban-indexer`.
+- **Cause, proved**: red on a278b032 (`stack-l2d-red.log`, "RED round 2 on a278b032 (new tests, main of a278b032)"):
+  the three ways see `vi.types.Holder` where the container has `Holder<java.lang.String>`; at start `Supplier` has
+  `ClassType[name=p.Box$Plain]`; the scan returns a `ClassType` for `Outer<Number>.Plain`; the record accepts a
+  parameterized type without arguments nor owner. The index named a type without type arguments a `ClassType`, which
+  has no owner, so `Outer<String>` was lost; reflection gives a `ParameterizedType` without arguments whose owner is
+  `Outer<String>`.
+- **Fix**: the index names it as reflection does, `ParameterizedType(Outer$Plain, [], Outer<String>)`, without
+  touching `ClassType`. The bytecode scan (`ClassTypeParameters`), the processor (`ParameterizedSupertypes`,
+  `ElementScanner`) and reflection (`BeanDiscovery`, `TypeInfoUtils`) fold a type without arguments into a
+  `ClassType` only where it has no parameterized owner. The compact constructor of `ParameterizedType` refuses empty
+  arguments without an owner: that is a class type. The language model has no owner, so `TypeMapper` maps the new
+  shape to a `ClassType`, as the extensions saw it before; `AnnotationArtefacts.sourceName` and
+  `SyntheticComponentRegistrar.typeName` write no `<>` for it.
+- **Audit of the readers that assume arguments** (`git grep` of `typeArguments().get(0)`, `getFirst()`, `size()`,
+  `isEmpty()`, `getActualTypeArguments()[0]` and `.length`, and of every `case ParameterizedType` and
+  `new ParameterizedType`): the `getActualTypeArguments()[0]` readers (`BeanInjector:290`, `DisposerInvoker:173,486`,
+  `VaubanContainer:1276,1298`, `VaubanInjectionPoint:68`, `EventDispatcher:699`, `EventImpl:105`) read `Instance<T>`,
+  `Provider<T>`, `Event<T>` or `InjectionPoint`'s type, top-level generic types that always have an argument;
+  `IndexClassValidator.typeArguments` compares the count with the class's type parameters, zero for `Plain`;
+  `AssignabilityRules` matches a `ClassType` and the new shape by `rawEquivalentArguments`, true on no argument; the
+  readers that iterate (`ClassChecksums`, `EventDispatcher.isParameterizedAs`, `ObserverInjectionPoints`,
+  `VaubanProcessor.collectClassNames`, `TypeRef`, `ManagedBean.reflectParameterized`) take an empty list as it is;
+  the producers from the language model (`LangModelTypeMapper`, `VaubanMethodInfo`, `TypeAnnotationReader.receiver`,
+  `BeanDiscovery.beanClassType`) build a parameterized type only with arguments. Five tests of `vauban-core` built a
+  parameterized type without arguments as an input; they use a class type or an argument now. Left as they are: the
+  `toString` of Vauban's reflective types writes `Outer$Plain<>` (diagnostics only), and
+  `ParameterizedSupertypes.walk` walks a supertype `Outer<String>.Plain`, which needs an enclosing instance, as a raw
+  class.
+- **Verification**: the four tests green (`stack-l2d-r2.log`, "Round 2 (1)"); the whole reactor green ("Round 2
+  (3)": indexer 142, core 1782 with 8 skipped, processor 462 with 3 skipped).
 - **Found by**: the review of BUG-20261117-21, round 1 of batch D, lane L2.
 
 ---
@@ -2961,8 +2985,8 @@ suspected cause, status. Updated on every investigation.
   (`aProducerOfAnInnerClassKeepsItsTypeVariableFromTheEnclosingType`).
 - **Round 1 verification**: those tests green (`stack-l2d-r1.log`, "Round 1 (2)" and "(3)"); the full build and the
   CDI TCK in `stack-l2d-r1.log`.
-- **What stays**: an inner class that declares no type parameter, `Outer<String>.Plain`, is a `ClassType`, which has
-  no owner (BUG-20261118-47). Vidocq's dev console (`CdiInventory.type`) names two components in its record pattern
+- **What stays**: an inner class that declares no type parameter, `Outer<String>.Plain`, was a `ClassType`, which has
+  no owner, until BUG-20261118-47. Vidocq's dev console (`CdiInventory.type`) names two components in its record pattern
   and needs `, _` to compile against this Vauban (a one-line companion). The language model has no owner:
   `LangModelTypeMapper` and `VaubanMethodInfo`'s receiver give none, and `TypeAnnotationReader.receiver` gives the
   receiver of an inner class's methods without its enclosing type, which only the language model reads.

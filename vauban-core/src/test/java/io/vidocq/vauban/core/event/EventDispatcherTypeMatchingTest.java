@@ -131,7 +131,7 @@ class EventDispatcherTypeMatchingTest {
                 Arguments.of(classType("int"), int.class, true),
                 Arguments.of(MISSING_TYPE, String.class, false),
                 Arguments.of(INTEGER, String.class, false),
-                Arguments.of(new TypeInfo.ParameterizedType(DotName.of(MISSING), List.of()), String.class, false),
+                Arguments.of(new TypeInfo.ParameterizedType(DotName.of(MISSING), List.of(INTEGER)), String.class, false),
                 Arguments.of(new TypeInfo.ArrayType(MISSING_TYPE, 1), String[].class, false),
                 Arguments.of(new TypeInfo.TypeVariable("T", List.of(new TypeInfo.TypeVariable("U", List.of()))),
                         String.class, true),

@@ -419,20 +419,17 @@ public final class ElementScanner {
                 // Outer/Nested). getQualifiedName() loses the '$' and breaks proxy method signatures
                 // whose return/param type is a nested class. Top-level types are unaffected.
                 var dotName = DotName.of(elements.getBinaryName(element).toString());
-                if (declaredType.getTypeArguments().isEmpty()) {
-                    yield new TypeInfo.ClassType(dotName);
-                } else {
-                    var typeArgs = declaredType.getTypeArguments().stream()
-                            .map(argument -> typeMirrorToTypeInfo(argument, typeVariables))
-                            .toList();
-                    // The enclosing type, where it carries type arguments, as the class file's signature names it
-                    // (BUG-20261117-21)
-                    var enclosing = declaredType.getEnclosingType();
-                    var owner = enclosing.getKind() == TypeKind.DECLARED
-                            && typeMirrorToTypeInfo(enclosing, typeVariables) instanceof TypeInfo.ParameterizedType
-                            parameterized ? parameterized : null;
-                    yield new TypeInfo.ParameterizedType(dotName, typeArgs, owner);
-                }
+                var typeArgs = declaredType.getTypeArguments().stream()
+                        .map(argument -> typeMirrorToTypeInfo(argument, typeVariables))
+                        .toList();
+                // The enclosing type, where it carries type arguments, as the class file's signature names it
+                // (BUG-20261117-21); Outer<String>.Plain, without arguments of its own, keeps it (BUG-20261118-47)
+                var enclosing = declaredType.getEnclosingType();
+                var owner = enclosing.getKind() == TypeKind.DECLARED
+                        && typeMirrorToTypeInfo(enclosing, typeVariables) instanceof TypeInfo.ParameterizedType
+                        parameterized ? parameterized : null;
+                yield typeArgs.isEmpty() && owner == null ? new TypeInfo.ClassType(dotName)
+                        : new TypeInfo.ParameterizedType(dotName, typeArgs, owner);
             }
             case ARRAY -> {
                 // Count dimensions

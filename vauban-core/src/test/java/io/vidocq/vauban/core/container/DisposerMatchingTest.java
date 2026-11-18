@@ -315,7 +315,7 @@ class DisposerMatchingTest {
                 disposer(Shop.class.getName(), DISPOSE, listOfCandies), listProducer));
         assertTrue(DisposerInvoker.disposerMatchesProducerType(shopDisposer(DISPOSE), sweetMethod()));
         assertFalse(DisposerInvoker.disposerMatchesProducerType(
-                disposer(Shop.class.getName(), DISPOSE, new TypeInfo.ParameterizedType(
-                        DotName.of(java.util.List.class.getName()), List.of())), sweetMethod()));
+                disposer(Shop.class.getName(), DISPOSE, new TypeInfo.ClassType(
+                        DotName.of(java.util.List.class.getName()))), sweetMethod()));
     }
 }

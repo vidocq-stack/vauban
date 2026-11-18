@@ -92,7 +92,11 @@ public final class TypeInfoUtils {
         // The enclosing type, where it is parameterized, as the index reads it (BUG-20261117-21)
         var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType parameterized
                 ? fromParameterizedType(parameterized, converting) : null;
-        return new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(DotName.of(raw.getName()), args, owner);
+        // Without arguments, only a member type of a parameterized type, Outer<String>.Plain, is parameterized
+        // (BUG-20261118-47)
+        var rawName = DotName.of(raw.getName());
+        return args.isEmpty() && owner == null ? new io.vidocq.vauban.indexer.model.TypeInfo.ClassType(rawName)
+                : new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(rawName, args, owner);
     }
 
     private static TypeInfo fromWildcardType(java.lang.reflect.WildcardType wt,

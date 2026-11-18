@@ -518,13 +518,25 @@ public final class AnnotationArtefacts {
         return name + "[]".repeat(dimensions);
     }
 
+    /**
+     * The class of a parameterized type, after its owner where it has one: {@code p.Outer<String>.Inner}, which javac
+     * accepts where {@code p.Outer.Inner<Integer>}, a raw owner, is "improperly formed" (BUG-20261117-21).
+     */
+    private String ownedName(DotName rawType, TypeInfo owner) {
+        if (owner == null) {
+            return sourceName(rawType);
+        }
+        var binaryName = rawType.value();
+        return sourceName(owner) + "." + binaryName.substring(binaryName.lastIndexOf('$') + 1);
+    }
+
     /** The type as the declaration writes it — what a field, a parameter or an override must say. */
     String sourceName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(DotName name) -> sourceName(name);
-            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments, _) -> sourceName(rawType)
-                    + typeArguments.stream().map(this::sourceName)
-                            .collect(Collectors.joining(", ", "<", ">"));
+            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments, TypeInfo owner) ->
+                    ownedName(rawType, owner) + (typeArguments.isEmpty() ? "" : typeArguments.stream()
+                            .map(this::sourceName).collect(Collectors.joining(", ", "<", ">")));
             case TypeInfo.ArrayType(TypeInfo componentType, int dimensions) ->
                     sourceName(componentType) + "[]".repeat(dimensions);
             case TypeInfo.PrimitiveType(TypeInfo.PrimitiveType.Kind kind) -> kind.name().toLowerCase(java.util.Locale.ROOT);

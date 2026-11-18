@@ -52,7 +52,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * BUG-20261117-21: a member type of a parameterized type, {@code Box<String>.Item<Integer>}, is one type at build and
  * at start, its enclosing type included, now that the enclosing type is part of the type. The bean types of
  * {@code Items extends ArrayList<Box<String>.Item<Integer>>} named it without its owner at build, where the processor
- * reads the classes above a bean from the compiler, and with it at start, where reflection reads them.
+ * reads the classes above a bean from the compiler, and with it at start, where reflection reads them. So does
+ * {@code Box<String>.Plain}, which declares no type parameter: it was a class type, without its owner, in the processor
+ * and in the class file's scan (BUG-20261118-47).
  */
 @DisplayName("BUG-20261117-21 - a member type of a parameterized type is one type at build and at start")
 class OwnedTypesAtBuildAndStartTest {
@@ -64,12 +66,19 @@ class OwnedTypesAtBuildAndStartTest {
                     public class Box<B> {
                         public class Item<I> {
                         }
+                        public class Plain {
+                        }
                     }
                     """,
             "p/Items.java", """
                     package p;
                     @jakarta.enterprise.context.Dependent
-                    public class Items extends java.util.ArrayList<Box<String>.Item<Integer>> {
+                    public class Items extends java.util.ArrayList<Box<String>.Item<Integer>>
+                            implements java.util.function.Supplier<Box<String>.Plain> {
+                        @Override
+                        public Box<String>.Plain get() {
+                            return null;
+                        }
                     }
                     """);
 
@@ -81,10 +90,16 @@ class OwnedTypesAtBuildAndStartTest {
         assertTrue(result.success(), () -> String.join("\n", result.messages()));
         var atStart = startTypes(result.classes());
 
+        var boxOfString = new TypeInfo.ParameterizedType(DotName.of("p.Box"), List.of(classType("java.lang.String")));
         var item = new TypeInfo.ParameterizedType(DotName.of("p.Box$Item"), List.of(classType("java.lang.Integer")),
-                new TypeInfo.ParameterizedType(DotName.of("p.Box"), List.of(classType("java.lang.String"))));
+                boxOfString);
         var listOfItems = new TypeInfo.ParameterizedType(DotName.of("java.util.List"), List.<TypeInfo>of(item));
+        // Box<String>.Plain: no type argument of its own, its owner still part of it (BUG-20261118-47)
+        var plain = new TypeInfo.ParameterizedType(DotName.of("p.Box$Plain"), List.of(), boxOfString);
+        var supplierOfPlains = new TypeInfo.ParameterizedType(DotName.of("java.util.function.Supplier"),
+                List.<TypeInfo>of(plain));
         assertTrue(atStart.contains(listOfItems), () -> "at start: " + atStart);
+        assertTrue(atStart.contains(supplierOfPlains), () -> "at start: " + atStart);
         assertEquals(atStart, atBuild.types, "the bean types at build");
     }
 
