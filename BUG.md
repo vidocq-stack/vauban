@@ -3196,7 +3196,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-11 — `@Registration` over beans ignores primitive and array bean types
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-core` (`BceTypeMatcher.matchesTypes`, `rawTypeName`)
 - **Symptom**: a `@Registration` method with a `BeanInfo` parameter is not called for a producer of `int` with
   `types = Integer.class` or `Serializable.class`, nor for a producer of `String[]` with `types = Serializable.class`.
@@ -3213,6 +3213,20 @@ suspected cause, status. Updated on every investigation.
   array through its component. The bricks' `@Registration` methods name `Object`, `Config`, `Servlet`, `Filter` and
   `EventListener`: none of them gains a bean.
 - **Found by**: the review of BUG-20261117-02.
+- **Cause** (proved): `BceTypeMatcher.matchesTypes` loaded the class each bean type names (`rawTypeName`), and a
+  primitive or an array type names none: only the bean type `Object` of such a producer matched, on the three paths.
+- **Fix**: `@Registration` matches beans with `BceTypeMatcher.matchesRegistrationTypes`: the bean types of a producer
+  of a primitive or an array type are that type and `Object` (CDI 4.1, 2.2.1), so a primitive type, or a class type
+  named after one, matches its primitive class and its wrapper, and an array its own array class; a class or
+  parameterized type as before. `@Enhancement`, which matches classes, keeps `matchesTypes`. A first version read
+  them by assignability (`int` matched `Number` and `Serializable`, `String[]` matched `Serializable` and
+  `CharSequence[]`); the L4 review found it, red `stack-l4-11b-red.log` "Red run 1", green `stack-l4-11b-dev.log`
+  "Dev run 1".
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-11-red.log`, "Red run 1" (the repro enabled on the code of the BUG-20261117-09
+  commit: `[serializable vi.Logger]` in the three places). Green, `stack-l4-11-dev.log`: "Dev run 1" (the repro, the
+  `BceTypeMatcher*` and `BceRegistration*` tests), "Dev run 2" (`BceTypeMatcherMembersTest#aRegistrationMatchesAPrimitiveOrArrayBeanTypeByTheTypeItself`,
+  and vauban-core, vauban-processor, vauban-maven-plugin).
 
 ## BUG-20261117-10 — In the processor, `@Registration` does not see the annotations `@Enhancement` added
 

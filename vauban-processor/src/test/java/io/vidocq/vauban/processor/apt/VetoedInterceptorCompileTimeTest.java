@@ -2295,6 +2295,16 @@ class VetoedInterceptorCompileTimeTest {
             SEEN.add(SERIALIZABLE + described(bean));
         }
 
+        @Registration(types = int.class)
+        public void ints(BeanInfo bean) {
+            SEEN.add("int " + described(bean));
+        }
+
+        @Registration(types = String[].class)
+        public void stringArrays(BeanInfo bean) {
+            SEEN.add("strings " + described(bean));
+        }
+
         private static String described(BeanInfo bean) {
             if (bean.isClassBean() || bean.isInterceptor()) {
                 return bean.declaringClass().name();
@@ -2305,14 +2315,14 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
-     * CDI 4.1 calls a {@code @Registration} method for each bean with a bean type assignable to one of its types, and a
-     * primitive type is its wrapper there (§2.2.1): a producer of {@code int} is an {@code Integer} and a
-     * {@code Serializable}, a producer of {@code String[]} a {@code Serializable}. The processor, the container at
-     * start and the build that freezes the extensions match a bean type by loading the class it names, and a primitive
-     * or an array type names none: they call neither method for either producer (BUG-20261117-11).
+     * CDI 4.1 calls a {@code @Registration} method for each bean whose bean types contain one of its types, and the
+     * bean types of a producer of a primitive or an array type are that type and {@code Object} (§2.2.1), a primitive
+     * read as its wrapper too: a producer of {@code int} is an {@code int} and an {@code Integer}, not a
+     * {@code Serializable}; one of {@code String[]} a {@code String[]}. The processor, the container at start and the
+     * build that freezes the extensions matched a bean type by loading the class it names, and a primitive or an array
+     * type names none: they called no method for either producer (BUG-20261117-11).
      */
     @Test
-    @Disabled("BUG-20261117-11: a BeanInfo of a primitive or an array bean type matches no @Registration type")
     @DisplayName("@Registration gets the producers of primitive and array types from the processor, at start and frozen")
     void registrationGetsTheProducersOfPrimitiveAndArrayTypesFromTheProcessorAtStartAndFrozen() throws Exception {
         var sources = withASerializableInterceptor();
@@ -2333,8 +2343,8 @@ class VetoedInterceptorCompileTimeTest {
 
         var seen = seenThreeWays(sources, ProducedTypeRecorder.class, ProducedTypeRecorder.SEEN);
 
-        seen.assertEachIs(List.of("integer producer of int", "serializable producer of int",
-                "serializable producer of java.lang.String[]", SERIALIZABLE + LOGGER));
+        seen.assertEachIs(List.of("int producer of int", "integer producer of int",
+                SERIALIZABLE + LOGGER, "strings producer of java.lang.String[]"));
     }
 
     /** Records the method, the event parameter, the bean and the qualifiers of each observer of {@code vi.Hearer}. */

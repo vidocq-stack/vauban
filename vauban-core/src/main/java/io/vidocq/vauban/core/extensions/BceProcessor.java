@@ -843,7 +843,7 @@ public final class BceProcessor {
             for (var bean : beans) {
                 // An interceptor is matched below, as an interceptor
                 if (!interceptorClasses.contains(bean.beanClass())
-                        && BceTypeMatcher.matchesTypes(expected, bean, classLoader)) {
+                        && BceTypeMatcher.matchesRegistrationTypes(expected, bean, classLoader)) {
                     targets.add(new VaubanBceBeanInfo(bean, lookup));
                 }
             }

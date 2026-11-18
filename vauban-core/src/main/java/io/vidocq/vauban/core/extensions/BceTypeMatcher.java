@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.types.TypeInfoUtils;
@@ -299,6 +300,33 @@ final class BceTypeMatcher {
         for (var beanTypeInfo : bean.types()) {
             var beanTypeName = rawTypeName(beanTypeInfo);
             if (beanTypeName.isPresent() && loadsAsSubtypeOfAny(types, beanTypeName.get(), classLoader)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a bean of a {@code @Registration} method matches: its bean types contain one of {@code types}. A class or
+     * parameterized type is read as {@link #matchesTypes(Class[], BeanDescriptor, ClassLoader)} reads it. The bean
+     * types of a producer of a primitive or an array type are that type and {@code Object} (CDI 4.1, 2.2.1): a
+     * primitive type, or a class type named after one as the container reads it by reflection, matches its primitive
+     * class and its wrapper, an array its own array class; {@code Object} is matched as a bean type of its own. A
+     * producer of {@code int} or {@code String[]} matched no type but {@code Object} (BUG-20261117-11).
+     */
+    static boolean matchesRegistrationTypes(Class<?>[] types, BeanDescriptor bean, ClassLoader classLoader) {
+        for (var beanType : bean.types()) {
+            boolean matches = switch (asPrimitives(beanType)) {
+                case TypeInfo.PrimitiveType(var kind) -> List.of(types).contains(primitiveOf(kind))
+                        || List.of(types).contains(wrapperOf(kind));
+                case TypeInfo.ArrayType array -> {
+                    var name = BeanDiscovery.erasedName(array);
+                    yield Stream.of(types).anyMatch(type -> type.isArray() && type.getTypeName().equals(name));
+                }
+                default -> rawTypeName(beanType).filter(name -> loadsAsSubtypeOfAny(types, name, classLoader))
+                        .isPresent();
+            };
+            if (matches) {
                 return true;
             }
         }

@@ -39,6 +39,7 @@ import java.lang.reflect.AccessFlag;
 import java.util.List;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -307,6 +308,49 @@ class BceTypeMatcherMembersTest {
                 Set.of(), null, false, 0, List.of(), null);
 
         assertFalse(BceTypeMatcher.matchesTypes(new Class<?>[] {Object.class}, bean, LOADER));
+    }
+
+    /** A bean with only {@code type} and {@code Object}, as a producer of it has. */
+    private static BeanDescriptor producerOf(TypeInfo type) {
+        return new BeanDescriptor(BeanDescriptor.minimal(DotName.of("com.acme.Producers")).id(),
+                DotName.of("com.acme.Producers"), BeanDescriptor.BeanKind.PRODUCER_METHOD,
+                Set.of(type, new TypeInfo.ClassType(DotName.of(Object.class.getName()))), Set.of(), null, false, 0,
+                List.of(), null);
+    }
+
+    /**
+     * A {@code @Registration} method is called for a bean whose bean types contain an expected type, and the bean types
+     * of a producer of a primitive or an array type are that type and {@code Object} (CDI 4.1, 2.2.1): a producer of
+     * {@code int} matches {@code int}, its wrapper {@code Integer} and {@code Object}, not {@code Number}; one of
+     * {@code String[]} matches {@code String[]} and {@code Object}, not {@code Serializable} nor
+     * {@code CharSequence[]} (BUG-20261117-11).
+     */
+    @Test
+    void aRegistrationMatchesAPrimitiveOrArrayBeanTypeByTheTypeItself() {
+        var primitive = producerOf(TypeInfo.PrimitiveType.fromDescriptor('I'));
+        var named = producerOf(new TypeInfo.ClassType(DotName.of("int")));
+        var strings = producerOf(new TypeInfo.ArrayType(new TypeInfo.ClassType(DotName.of(String.class.getName())), 1));
+        var ints = producerOf(new TypeInfo.ArrayType(TypeInfo.PrimitiveType.fromDescriptor('I'), 1));
+        Class<?>[] integer = {Integer.class};
+        Class<?>[] primitiveInt = {int.class};
+        Class<?>[] serializable = {java.io.Serializable.class};
+        Class<?>[] sequences = {CharSequence[].class};
+        Class<?>[] stringArrays = {String[].class};
+        Class<?>[] intArrays = {int[].class};
+        Class<?>[] objects = {Object[].class};
+        Class<?>[] number = {Number.class};
+
+        assertAll(() -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(integer, primitive, LOADER)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(primitiveInt, primitive, LOADER)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(primitiveInt, named, LOADER)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(stringArrays, strings, LOADER)),
+                () -> assertTrue(BceTypeMatcher.matchesRegistrationTypes(intArrays, ints, LOADER)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(number, named, LOADER)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(serializable, primitive, LOADER)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(serializable, strings, LOADER)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(sequences, strings, LOADER)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(objects, ints, LOADER)),
+                () -> assertFalse(BceTypeMatcher.matchesRegistrationTypes(sequences, primitive, LOADER)));
     }
 
     @Test
