@@ -229,8 +229,17 @@ public final class EnhancementPatchSerializer {
     /** {@link #target(DotName, VaubanClassConfig, VaubanFieldConfig)} for a method's parameter {@code position}. */
     static String target(DotName name, VaubanClassConfig config, VaubanMethodConfig method, int position) {
         return config.isConfigurable(method) ? name.value() + "#" + PARAMETER + "#" + methodKey(method) + "#" + position
-                : name.value() + "#" + INHERITED_PARAMETER + "#" + methodKey(method) + "#" + position + "#"
-                        + method.info().declaringClass().name();
+                : inheritedParameterTarget(name.value(), method.info(), position);
+    }
+
+    /**
+     * The key of the parameter {@code position} of {@code method}, which the class {@code name} inherits, configured
+     * through that class (BUG-20261118-52).
+     */
+    static String inheritedParameterTarget(String name, jakarta.enterprise.lang.model.declarations.MethodInfo method,
+            int position) {
+        return name + "#" + INHERITED_PARAMETER + "#" + methodKey(method) + "#" + position + "#"
+                + method.declaringClass().name();
     }
 
     /**
@@ -247,8 +256,13 @@ public final class EnhancementPatchSerializer {
      * its {@code MethodInfo.name()} is its class's (BUG-20261117-54), so that an earlier frozen record stays valid.
      */
     static String methodKey(VaubanMethodConfig method) {
-        var name = method.info().isConstructor() ? "<init>" : method.info().name();
-        return name + InjectionPointInfo.methodDescriptor(method.info().parameters().stream()
+        return methodKey(method.info());
+    }
+
+    /** {@link #methodKey(VaubanMethodConfig)} of a method of the language model. */
+    static String methodKey(jakarta.enterprise.lang.model.declarations.MethodInfo method) {
+        var name = method.isConstructor() ? "<init>" : method.name();
+        return name + InjectionPointInfo.methodDescriptor(method.parameters().stream()
                 .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList());
     }
 

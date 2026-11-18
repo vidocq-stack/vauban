@@ -423,9 +423,11 @@ public final class BceProcessor {
         var registered = withInheritedInjectionPoints(enhancedBeans, enhancedLookup.index(), phaseModifications,
                 qualifiers);
         var invokers = new ArrayList<VaubanInvokerFactory>();
+        var registrationContext = new RegistrationContext(enhancedLookup, classLoader, types,
+                EnhancedClasses.inheritedParameters(enhancedLookup.index(), phaseModifications));
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
                 processRegistration(bce, bceClass, registered, observers, interceptorsAsBeans(interceptors,
-                        managedBean), enhancedLookup, classLoader, types, deploymentErrors, invokers));
+                        managedBean), registrationContext, deploymentErrors, invokers));
 
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
@@ -939,6 +941,15 @@ public final class BceProcessor {
     }
 
     /**
+     * What the {@code @Registration} phase reads besides its targets: the classes as {@code @Enhancement} left them,
+     * the class loader, the types, and the annotations the configs of a class left on the parameters of the methods it
+     * inherits, which its invokers' lookups read (BUG-20261118-55).
+     */
+    private record RegistrationContext(IndexLookup lookup, ClassLoader classLoader, VaubanTypes types,
+                                       EnhancedClasses.InheritedParameters inherited) {
+    }
+
+    /**
      * Process @Registration methods — main phase for Invokers.
      */
     @SuppressWarnings({"java:S3011", "java:S135", "java:S107"}) // CDI spec requires reflective access; BCE processing requires multiple contextual parameters
@@ -946,10 +957,12 @@ public final class BceProcessor {
                                             List<BeanDescriptor> beans,
                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
                                             List<InterceptorBean> interceptors,
-                                            IndexLookup lookup, ClassLoader classLoader,
-                                            VaubanTypes types,
+                                            RegistrationContext context,
                                             List<String> errors,
                                             List<VaubanInvokerFactory> invokers) {
+        var lookup = context.lookup();
+        var classLoader = context.classLoader();
+        var types = context.types();
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var registration = method.getAnnotation(Registration.class);
             if (registration == null) continue;
@@ -969,7 +982,7 @@ public final class BceProcessor {
 
             for (var target : registrationTargets(method, registration.types(), beans, interceptors, lookup,
                     classLoader)) {
-                invokers.add(invokeRegistrationMethod(method, bce, target, classLoader, types, errors));
+                invokers.add(invokeRegistrationMethod(method, bce, target, context, errors));
             }
         }
     }
@@ -1081,10 +1094,11 @@ public final class BceProcessor {
     }
 
     /** Calls the {@code @Registration} {@code method} for {@code beanInfo}; returns the invokers it built. */
-    private static VaubanInvokerFactory invokeRegistrationMethod(Method method, Object bce,
-                                                                 BeanInfo beanInfo, ClassLoader classLoader,
-                                                                 VaubanTypes types, List<String> errors) {
-        var invokerFactory = new VaubanInvokerFactory(classLoader);
+    private static VaubanInvokerFactory invokeRegistrationMethod(Method method, Object bce, BeanInfo beanInfo,
+                                                                 RegistrationContext context, List<String> errors) {
+        var classLoader = context.classLoader();
+        var types = context.types();
+        var invokerFactory = new VaubanInvokerFactory(classLoader, context.inherited());
         var messages = new VaubanMessages();
         var args = resolveRegistrationArgs(method, beanInfo, invokerFactory, messages, types);
 

@@ -113,6 +113,21 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
     /** An invoker that calls {@code method} itself; {@code shape} is how a generated class would call it. */
     VaubanInvoker(Method method, Class<?> beanClass, boolean instanceLookup, Set<Integer> argumentLookups,
                   InvokerShape shape) {
+        this(method, beanClass, instanceLookup, argumentLookups, shape,
+                shape == null ? Map.of() : lookedUpAnnotations(method, beanClass, shape, argumentLookups));
+    }
+
+    /**
+     * An invoker that calls {@code method} itself, its looked-up parameters as the build recorded them
+     * ({@code lookupPoints}): the frozen form of an invoker no generated class calls, whose parameters a config of the
+     * bean class qualified (BUG-20261118-55, review round 3).
+     */
+    VaubanInvoker(Method method, Class<?> beanClass, boolean instanceLookup, Map<Integer, LookupPoint> lookupPoints) {
+        this(method, beanClass, instanceLookup, lookupPoints.keySet(), null, lookupPoints);
+    }
+
+    private VaubanInvoker(Method method, Class<?> beanClass, boolean instanceLookup, Set<Integer> argumentLookups,
+                          InvokerShape shape, Map<Integer, LookupPoint> lookupPoints) {
         this.target = new InvokerTarget(beanClass.getName(), method.getDeclaringClass().getName(), method.getName(),
                 Arrays.stream(method.getParameterTypes()).map(Class::getName).toList());
         this.beanClass = beanClass;
@@ -123,7 +138,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         this.shape = shape;
         this.method = method;
         this.generatedClass = null;
-        this.lookupPoints = Map.of();
+        this.lookupPoints = Map.copyOf(lookupPoints);
         this.call.set(reflectiveCall(method, isStatic));
     }
 
@@ -143,6 +158,23 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         this.method = null;
         this.generatedClass = generatedClass;
         this.lookupPoints = Map.copyOf(lookupPoints);
+    }
+
+    /**
+     * The looked-up parameters of {@code method} with the annotations {@code shape} gives them: for a method the bean
+     * class inherits, those the configs of the bean class left, which reflection does not show (BUG-20261118-55).
+     * Their types load through the bean class's loader, as for a frozen invoker: the declaring class's may not see
+     * them (review round 3).
+     */
+    private static Map<Integer, LookupPoint> lookedUpAnnotations(Method method, Class<?> beanClass,
+            InvokerShape shape, Set<Integer> positions) {
+        var points = new java.util.HashMap<Integer, LookupPoint>();
+        for (int position : positions) {
+            points.put(position, new LookupPoint(method.getGenericParameterTypes()[position],
+                    SyntheticParamCodec.annotations(shape.parameters().get(position).annotations(),
+                            beanClass.getClassLoader())));
+        }
+        return points;
     }
 
     /** The invoked method; {@code null} for an invoker that calls it through the class the build generated. */
@@ -434,8 +466,10 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
             return new VaubanInjectionPoint(point.type(), qualifiers(beanManager, point.annotations()), null, null);
         }
         var parameter = method.getParameters()[position];
+        var point = lookupPoints.get(position);
         return new VaubanInjectionPoint(parameter, position, method, parameter.getParameterizedType(),
-                qualifiers(beanManager, List.of(parameter.getAnnotations())), null);
+                qualifiers(beanManager, point != null ? point.annotations() : List.of(parameter.getAnnotations())),
+                null);
     }
 
     private static Set<Annotation> qualifiers(BeanManager beanManager, List<Annotation> annotations) {

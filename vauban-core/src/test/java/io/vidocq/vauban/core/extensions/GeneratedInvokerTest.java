@@ -70,6 +70,11 @@ class GeneratedInvokerTest {
             return texts + named;
         }
 
+        /** {@link #lookedUp} again, for a test of its own: its generated class has a name of its own. */
+        public String lookedUpAgain(List<String> texts, @Named("x") String named) {
+            return texts + named;
+        }
+
         private String hidden() {
             return "hidden";
         }
@@ -110,6 +115,62 @@ class GeneratedInvokerTest {
                         new Object[] {null, (byte) 1, true}), "null for a primitive"),
                 () -> assertEquals(1.5f, half.invoke(null, new Object[] {3})),
                 () -> assertNull(widened.method(), "no method resolved"));
+    }
+
+    /**
+     * A {@code G:} record with a generated class and an empty type frame for a looked-up parameter, which the writer
+     * leaves empty when the notation cannot write the type: the start reads the type from the method, which it
+     * resolves for that, and still calls through the generated class. It failed with a {@code NullPointerException}
+     * (BUG-20261118-55, review round 5).
+     */
+    @Test
+    @DisplayName("an empty type frame beside a generated class takes the type of the method")
+    void anEmptyTypeFrameBesideAGeneratedClassTakesTheMethodsType() throws Exception {
+        var method = method("lookedUpAgain");
+        var described = new InvokerTarget.Described(InvokerTarget.of(Target.class.getName(), method), false,
+                Set.of(0, 1), InvokerShape.of(classInfo(), method));
+        var bean = new VaubanSyntheticBeanBuilder<>(String.class);
+        bean.withParam("invoker", described);
+        var classes = InvokerClasses.of(List.of(bean), List.of(), Target.class.getName()::equals);
+        var name = classes.classes().keySet().iterator().next();
+        MethodHandles.lookup().defineClass(classes.classes().get(name));
+        var encoded = classes.<String, RuntimeException>writing(() -> SyntheticParamCodec.encode(described));
+
+        var read = (VaubanInvoker) SyntheticParamCodec.decode(withoutTheFirstType(encoded),
+                getClass().getClassLoader());
+        assertEquals(name, read.generatedClass().getName(), "still through the generated class");
+        var texts = assertInstanceOfParameterized(read.lookupPoint(0).type());
+        assertEquals(List.class, texts.getRawType());
+        assertEquals(String.class, texts.getActualTypeArguments()[0]);
+        assertEquals(List.of("x"), read.lookupPoint(1).annotations().stream()
+                .map(annotation -> ((Named) annotation).value()).toList());
+    }
+
+    /** {@code encoded}, a {@code G:} record, with the type frame of its first looked-up parameter emptied. */
+    private static String withoutTheFirstType(String encoded) {
+        var top = frames(encoded.substring(2));
+        var points = frames(top.get(2));
+        points.set(1, "");
+        var out = new StringBuilder("G:").append(framed(top.get(0))).append(framed(top.get(1)));
+        out.append(framed(String.join("", points.stream().map(GeneratedInvokerTest::framed).toList())));
+        top.subList(3, top.size()).forEach(rest -> out.append(framed(rest)));
+        return out.toString();
+    }
+
+    /** The frames {@code value} holds, each written as its length, a colon and itself. */
+    private static List<String> frames(String value) {
+        var frames = new java.util.ArrayList<String>();
+        for (int at = 0; at < value.length(); ) {
+            var colon = value.indexOf(':', at);
+            var length = Integer.parseInt(value.substring(at, colon));
+            frames.add(value.substring(colon + 1, colon + 1 + length));
+            at = colon + 1 + length;
+        }
+        return frames;
+    }
+
+    private static String framed(String value) {
+        return value.length() + ":" + value;
     }
 
     @Test

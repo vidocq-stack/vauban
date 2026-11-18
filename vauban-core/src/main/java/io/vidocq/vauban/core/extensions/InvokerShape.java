@@ -67,16 +67,28 @@ record InvokerShape(boolean direct, String owner, boolean ownerInterface, boolea
      * @param type        its declared type, in the notation of the synthetic metadata; {@code null} when that notation
      *                    cannot write it, and the invoker then stays reflective if it looks the parameter up
      * @param annotations its annotations, its qualifiers among them
+     * @param configured  whether {@code annotations} are not those the method declares: the configs of the bean class
+     *                    changed them on a method it inherits, which reflection does not show (BUG-20261118-55)
      */
-    record Parameter(String type, List<AnnotationInfo> annotations) {
+    record Parameter(String type, List<AnnotationInfo> annotations, boolean configured) {
 
         Parameter {
             annotations = List.copyOf(annotations);
         }
     }
 
-    /** The shape of an invoker of {@code method} for a bean of class {@code bean}. */
+    /** The shape of an invoker of {@code method} for a bean of class {@code bean}, no member configured. */
     static InvokerShape of(ClassInfo bean, MethodInfo method) {
+        return of(bean, method, EnhancedClasses.InheritedParameters.NONE);
+    }
+
+    /**
+     * The shape of an invoker of {@code method} for a bean of class {@code bean}: the parameters of a method the bean
+     * class inherits have the annotations the {@code @Enhancement} configs of the bean class left them
+     * ({@code inherited}), as the container injects them; they had those of the class that declares the method
+     * (BUG-20261118-55).
+     */
+    static InvokerShape of(ClassInfo bean, MethodInfo method, EnhancedClasses.InheritedParameters inherited) {
         var beanPackage = packageOf(bean.name());
         var declaring = method.declaringClass();
         var bound = new HashSet<String>();
@@ -89,9 +101,20 @@ record InvokerShape(boolean direct, String owner, boolean ownerInterface, boolea
         return new InvokerShape(direct, ownedByDeclaring ? declaring.name() : bean.name(),
                 ownedByDeclaring && declaring.isInterface(), method.isStatic(),
                 method.returnType().isVoid() ? "void" : InvokerTarget.erasedName(method.returnType()),
-                method.parameters().stream().map(parameter -> new Parameter(notation(parameter.type()),
-                        parameter.annotations().stream().map(LangModelAnnotations::toIndex).toList())).toList(),
-                bound);
+                parameters(bean, method, inherited), bound);
+    }
+
+    private static List<Parameter> parameters(ClassInfo bean, MethodInfo method,
+            EnhancedClasses.InheritedParameters inherited) {
+        var inheritedMethod = !method.declaringClass().name().equals(bean.name());
+        var parameters = new java.util.ArrayList<Parameter>();
+        for (int i = 0; i < method.parameters().size(); i++) {
+            var parameter = method.parameters().get(i);
+            var declared = parameter.annotations().stream().map(LangModelAnnotations::toIndex).toList();
+            var annotations = inheritedMethod ? inherited.of(bean.name(), method, i, declared) : declared;
+            parameters.add(new Parameter(notation(parameter.type()), annotations, !annotations.equals(declared)));
+        }
+        return parameters;
     }
 
     private static String notation(Type type) {

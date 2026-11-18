@@ -25,6 +25,8 @@ import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
+import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Parameters;
@@ -68,7 +70,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * a checked exception thrown as it is, and looked-up arguments of a parameterized and a qualified type. A private
  * method has no invoker (BUG-20261118-37). A looked-up argument of an inner class of a generic class,
  * {@code Outer<String>.Inner<Integer>}, keeps its owner: an {@code Outer<Long>.Inner<Integer>} does not satisfy it
- * (BUG-20261118-49).
+ * (BUG-20261118-49). A looked-up argument of a method the bean class inherits takes the qualifier the config of
+ * the bean class gave its parameter, {@code @Named("x")} on {@code Base.pick(String)} through {@code Service}
+ * (BUG-20261118-55); so does one of {@code far}, a protected method of a superclass of another package, which no
+ * generated class can call: the frozen record keeps that parameter's annotations (review round 3).
  */
 @DisplayName("BUG-20261118-37 - the invoker the build describes is generated, and calls no Method")
 class GeneratedInvokerCompileTimeTest {
@@ -77,7 +82,7 @@ class GeneratedInvokerCompileTimeTest {
     private static final String DISPOSED = "inv.Disposed";
     private static final String LOOKED_UP_TARGET = "usedAndDestroyed";
     private static final List<String> METHODS = List.of("inherited", "packaged", "greet", "identity", "joined",
-            "twice", "sum", "nothing", "fail", "ite", "lookedUp", "owned", "hidden");
+            "twice", "sum", "nothing", "fail", "ite", "lookedUp", "owned", "pick", "far", "hidden");
 
     @TempDir
     Path workDir;
@@ -125,7 +130,7 @@ class GeneratedInvokerCompileTimeTest {
                     if (method.name().equals("lookedUp")) {
                         builder.withArgumentLookup(0).withArgumentLookup(1);
                     }
-                    if (method.name().equals("owned")) {
+                    if (Set.of("owned", "pick", "far").contains(method.name())) {
                         builder.withArgumentLookup(0);
                     }
                     BUILT.put(method.name(), builder.build());
@@ -156,6 +161,20 @@ class GeneratedInvokerCompileTimeTest {
                 pending.addAll(next.superInterfacesDeclarations());
             }
             return methods;
+        }
+
+        /**
+         * Qualifies {@code @Named("x")}, through {@code Service}'s config, the parameter of {@code pick}, which
+         * {@code Service} inherits from {@code Base}, and that of {@code far}, which it inherits from {@code Remote}.
+         */
+        @Enhancement(types = Object.class, withSubtypes = true)
+        public void enhance(ClassConfig type) {
+            if (!type.info().name().equals(SERVICE)) {
+                return;
+            }
+            type.methods().stream().filter(method -> Set.of("pick", "far").contains(method.info().name()))
+                    .forEach(method -> method
+                    .parameters().getFirst().addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of("x")));
         }
 
         @Synthesis
@@ -195,7 +214,7 @@ class GeneratedInvokerCompileTimeTest {
         assertTrue(result.success(), () -> "compilation failed: " + result.messages());
 
         try (var classes = Files.list(result.classes().resolve("inv"))) {
-            assertEquals(13, classes.filter(file -> file.getFileName().toString().contains("$$VaubanInvoker$"))
+            assertEquals(14, classes.filter(file -> file.getFileName().toString().contains("$$VaubanInvoker$"))
                     .count(), "the invoker classes, one per method but the private one");
         }
         assertInvokersCall(result, Place.PROCESSOR);
@@ -220,7 +239,8 @@ class GeneratedInvokerCompileTimeTest {
     }
 
     /**
-     * In a named module that exports and opens nothing, the start makes the generated class through the lookup the
+     * In a named module that exports and opens nothing but the package of {@code far}'s class, which no generated
+     * class can call, the start makes the generated class through the lookup the
      * generated provider of its package grants, and calls each method through it.
      */
     @Test
@@ -236,6 +256,8 @@ class GeneratedInvokerCompileTimeTest {
                     requires io.vidocq.vauban.api;
                     requires jakarta.cdi;
                     requires jakarta.inject;
+                    // far: no generated class can call it, its invoker stays reflective
+                    opens inv.other to io.vidocq.vauban.core;
                     provides io.vidocq.vauban.api.VaubanComponentProvider with inv._VaubanComponents;
                 }
                 """);
@@ -282,9 +304,9 @@ class GeneratedInvokerCompileTimeTest {
             expected.add(LOOKED_UP_TARGET);
             assertEquals(expected, invokers.keySet(), "the invokers");
             assertTrue(InvokersBce.REFUSED.contains("hidden"), "the private method has no invoker");
-            for (var invoker : invokers.values()) {
-                var vauban = (VaubanInvoker) invoker;
-                if (place.generated) {
+            for (var invoker : invokers.entrySet()) {
+                var vauban = (VaubanInvoker) invoker.getValue();
+                if (place.generated && !invoker.getKey().equals("far")) {
                     assertNull(vauban.method(), "a generated invoker resolved its method");
                     assertNotNull(vauban.generatedClass(), "the generated class");
                 } else {
@@ -341,7 +363,11 @@ class GeneratedInvokerCompileTimeTest {
                 },
                 () -> assertEquals("held x", invokers.get("lookedUp").invoke(service, new Object[2]), "lookups"),
                 () -> assertEquals("text", invokers.get("owned").invoke(service, new Object[1]),
-                        "the looked-up Outer<String>.Inner<Integer>, not the Outer<Long> one (BUG-20261118-49)"));
+                        "the looked-up Outer<String>.Inner<Integer>, not the Outer<Long> one (BUG-20261118-49)"),
+                () -> assertEquals("x", invokers.get("pick").invoke(service, new Object[1]),
+                        "the @Named(\"x\") String the config of Service gave the inherited parameter (BUG-20261118-55)"),
+                () -> assertEquals("x", invokers.get("far").invoke(service, new Object[1]),
+                        "the same, for an invoker no generated class can call (BUG-20261118-55, review round 3)"));
     }
 
     private URLClassLoader loader(ProcessorCompiler.Result result) throws IOException {
@@ -350,16 +376,29 @@ class GeneratedInvokerCompileTimeTest {
 
     private static Map<String, String> sources() {
         var sources = new LinkedHashMap<String, String>();
+        sources.put("inv/other/Remote.java", """
+                package inv.other;
+
+                public class Remote {
+                    protected String far(String value) {
+                        return value;
+                    }
+                }
+                """);
         sources.put("inv/Base.java", """
                 package inv;
 
-                public class Base<T> {
+                public class Base<T> extends inv.other.Remote {
                     public String inherited(T value) {
                         return "base " + value;
                     }
 
                     String packaged() {
                         return "packaged";
+                    }
+
+                    public String pick(String value) {
+                        return value;
                     }
                 }
                 """);
@@ -424,6 +463,12 @@ class GeneratedInvokerCompileTimeTest {
                     @Named("x")
                     String x() {
                         return "x";
+                    }
+
+                    @Produces
+                    @Named("y")
+                    String y() {
+                        return "y";
                     }
                 }
                 """);

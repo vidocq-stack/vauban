@@ -25,6 +25,7 @@ import jakarta.enterprise.lang.model.declarations.MethodInfo;
 
 import java.lang.reflect.Method;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -58,6 +59,14 @@ public final class VaubanInvokerBuilder implements InvokerBuilder<InvokerInfo> {
     /** The method, as the language model gives it: what the build and the start check the lookups against. */
     public MethodInfo getMethodInfo() {
         return methodInfo;
+    }
+
+    /**
+     * The annotations of the parameter {@code position} as a lookup reads them: those the method declares, or, for a
+     * method the bean class inherits, those the bean class's configs left it (BUG-20261118-55).
+     */
+    List<io.vidocq.vauban.indexer.model.AnnotationInfo> parameterAnnotations(int position) {
+        return shape.parameters().get(position).annotations();
     }
 
     /** The method the invoker calls, by names. */

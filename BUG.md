@@ -5,6 +5,42 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-55 — An invoker's lookup ignores a qualifier a subclass's config gave an inherited parameter
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes, round 2)
+- **Module**: `vauban-core` (`InvokerShape`, `ExtensionMethodValidator`, `VaubanInvoker`, `EnhancedClasses`)
+- **Symptom**: `Service extends Base<String>` inherits `pick(String)`; an `@Enhancement` adds `@Named("x")` to its
+  parameter through `Service`'s `ClassConfig`, and `@Named("x")` and `@Named("y")` produce a `String`. An invoker of
+  `pick` for the bean `Service` that looks its argument up is refused, in the processor, at start and frozen:
+  _Invoker argument lookup ambiguous: 2 beans found for parameter type java.lang.String at position 0 of method
+  inv.Base.pick_. Weld asks for `@Named("x") String`.
+- **Repro**: `GeneratedInvokerCompileTimeTest`, its four tests, method `pick`.
+- **Cause** (proved): the lookup check (`ExtensionMethodValidator.qualifiersOf`), the `G:` record (`InvokerShape`) and
+  the call of an invoker the start built (`VaubanInvoker`, by reflection) read the parameter as `Base` declares it.
+  The edits of a subclass to an inherited member stay out of the index on purpose (BUG-20261118-48).
+- **Fix**: `EnhancedClasses.inheritedParameters` applies the bean class's configs to the parameters of the methods it
+  inherits, by the `inheritedParameter` key (BUG-20261118-52); `InvokerShape` records those annotations, and the
+  lookup check and the invoker built at start read them from it. The `G:` record already wrote the looked-up
+  parameter's annotations. Review round 3: an invoker no generated class calls (`far`, a protected method of a
+  superclass of another package) was recorded by names (`V:`), and read `Remote`'s annotations by reflection in the
+  processor's metadata and frozen; when a config changed a looked-up parameter's annotations
+  (`InvokerShape.Parameter.configured`), it is now a `G:` with an empty class frame, which the start resolves by
+  names and calls itself with the recorded annotations (an empty type frame: the type is read from the method).
+  `V:` does not change, and is still written when no looked-up parameter was configured. A Vauban older than this
+  one refuses an unknown `G:` cleanly. The annotations the start-built invoker reads load through the bean class's
+  loader, as the frozen path does. Review round 5: the start resolves the method whenever a type frame is empty, beside a
+  generated class too; that failed with a `NullPointerException`.
+- **What stays**: nothing known.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l2d-r2-55.log`, "BUG-55 red: two named producers" (the four tests, _ambiguous_).
+  Green, same log, "BUG-55 green". Round 3: red, `stack-l2d-r3-55.log`, "Round 3 red on c060428c" (method `far`:
+  _AmbiguousResolutionException_ in the processor, frozen and module tests; the start passed); green, same log,
+  "Round 3 green: G: with an empty class frame, module opens inv.other". Round 5: red, `stack-l2d-r5-55.log`, "Round 5 red on dd8e00d4"
+  (`GeneratedInvokerTest#anEmptyTypeFrameBesideAGeneratedClassTakesTheMethodsType`: `NullPointerException`); green,
+  same log, "Round 5 green: the method resolved for an empty type frame".
+- **Found by**: the re-review of the final fixes.
+
 ## BUG-20261118-52 — An earlier Vauban reads a key of an inherited member as the subclass's own member
 
 - **Date**: 2026-11-18
@@ -70,8 +106,7 @@ suspected cause, status. Updated on every investigation.
   labelled by the class that declares the observer, as every other point; a validation message now names
   `ToolListenerBase.on()`, not `InheritedToolListener.on()`.
 - **What stays**: `qualifiers()` holds `@Any`, as for every injection point Vauban gives. The arguments an invoker
-  looks up (`ExtensionMethodValidator`, `InvokerShape`) take their qualifiers from the language model's parameter,
-  `Base`'s, not from the config of `Configured`: the same in the three places, read from the code, not tested.
+  looks up took their qualifiers from `Base`'s parameter: BUG-20261118-55.
 - **TCK**: not covered.
 - **Verification**: red, `stack-l2d-ff-50.log`, "BUG-50 red: final test on the code without the fix". Green, same
   log, "BUG-50 green: core and processor suites" (core 1787, processor 479). Round 2: red, `stack-l2d-r2-50.log`,

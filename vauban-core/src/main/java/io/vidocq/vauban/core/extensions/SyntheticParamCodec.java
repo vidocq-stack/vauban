@@ -32,6 +32,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -123,23 +124,29 @@ public final class SyntheticParamCodec {
     /**
      * An invoker: by the class the build generated for it, {@code G:}, when the metadata being written has one
      * (BUG-20261118-37), with its static flag and what each looked-up parameter is; by names only, {@code V:}, when
-     * not. Both end with the names, so the start can still call the method itself.
+     * not. Both end with the names, so the start can still call the method itself. An invoker with no generated class
+     * whose looked-up parameter a config of the bean class qualified is a {@code G:} with an empty class frame: its
+     * annotations are recorded, reflection would read those the method declares (BUG-20261118-55, review round 3);
+     * its type frame is empty when the notation cannot write it, the start reads it from the method.
      */
     private static String invoker(InvokerInfo info, InvokerTarget target, boolean instanceLookup,
                                   java.util.Set<Integer> lookups) {
         var names = invoker(target, instanceLookup, lookups);
         var generated = InvokerClasses.generatedFor(info);
-        if (generated == null) {
+        var shape = InvokerClasses.shapeOf(info);
+        if (generated == null && (shape == null
+                || lookups.stream().noneMatch(position -> shape.parameters().get(position).configured()))) {
             return "V:" + names;
         }
-        var shape = InvokerClasses.shapeOf(info);
         var points = new StringBuilder();
         for (var position : new java.util.TreeSet<>(lookups)) {
             var parameter = shape.parameters().get(position);
-            points.append(frame(String.valueOf(position))).append(frame(parameter.type()))
+            points.append(frame(String.valueOf(position)))
+                    .append(frame(Objects.requireNonNullElse(parameter.type(), "")))
                     .append(frame(encodeAnnotations(parameter.annotations())));
         }
-        return "G:" + frame(generated) + frame(String.valueOf(shape.isStatic())) + frame(points.toString()) + names;
+        return "G:" + frame(Objects.requireNonNullElse(generated, "")) + frame(String.valueOf(shape.isStatic()))
+                + frame(points.toString()) + names;
     }
 
     /**
@@ -335,27 +342,48 @@ public final class SyntheticParamCodec {
                 load(recorded.target().beanClass(), loader), recorded.instanceLookup(), recorded.argumentLookups());
     }
 
-    /** An invoker that calls its method through the class the build generated, and resolves no method. */
+    /**
+     * An invoker that calls its method through the class the build generated, and resolves no method; or, its class
+     * frame empty, one that resolves its method by names and calls it itself, its looked-up parameters as recorded
+     * (BUG-20261118-55, review round 3).
+     */
     private static VaubanInvoker readGeneratedInvoker(Frames frames, ClassLoader loader) {
-        var generated = load(frames.next(), loader);
+        var generatedName = frames.next();
         var isStatic = Boolean.parseBoolean(frames.next());
-        var points = new java.util.HashMap<Integer, VaubanInvoker.LookupPoint>();
         var recordedPoints = new Frames(frames.next());
-        while (recordedPoints.hasNext()) {
-            var position = Integer.parseInt(recordedPoints.next());
-            var type = io.vidocq.vauban.core.event.VaubanObserverMethod.reflectTypeOf(
-                    ObservedTypeNotation.read(recordedPoints.next()), loader);
-            points.put(position, new VaubanInvoker.LookupPoint(type,
-                    annotations(decodeAnnotations(recordedPoints.next()), loader)));
-        }
         var recorded = RecordedInvoker.read(frames);
         var target = recorded.target();
-        return new VaubanInvoker(target, load(target.beanClass(), loader), load(target.declaringClass(), loader),
-                isStatic, recorded.instanceLookup(), points, generated);
+        var beanClass = load(target.beanClass(), loader);
+        var positions = new ArrayList<Integer>();
+        var notations = new ArrayList<String>();
+        var encodedAnnotations = new ArrayList<String>();
+        while (recordedPoints.hasNext()) {
+            positions.add(Integer.parseInt(recordedPoints.next()));
+            notations.add(recordedPoints.next());
+            encodedAnnotations.add(recordedPoints.next());
+        }
+        // The method, when the invoker calls it itself or a type frame is empty: the type is then the method's
+        // (review round 5)
+        var method = generatedName.isEmpty() || notations.stream().anyMatch(String::isEmpty)
+                ? VaubanInvoker.resolve(target, loader) : null;
+        var points = new java.util.HashMap<Integer, VaubanInvoker.LookupPoint>();
+        for (int i = 0; i < positions.size(); i++) {
+            var position = positions.get(i);
+            var type = notations.get(i).isEmpty() ? Objects.requireNonNull(method).getGenericParameterTypes()[position]
+                    : io.vidocq.vauban.core.event.VaubanObserverMethod.reflectTypeOf(
+                            ObservedTypeNotation.read(notations.get(i)), loader);
+            points.put(position, new VaubanInvoker.LookupPoint(type,
+                    annotations(decodeAnnotations(encodedAnnotations.get(i)), loader)));
+        }
+        if (generatedName.isEmpty()) {
+            return new VaubanInvoker(method, beanClass, recorded.instanceLookup(), points);
+        }
+        return new VaubanInvoker(target, beanClass, load(target.declaringClass(), loader), isStatic,
+                recorded.instanceLookup(), points, load(generatedName, loader));
     }
 
     /** The annotations of {@code infos} whose type {@code loader} loads, as instances. */
-    private static java.util.List<Annotation> annotations(java.util.List<AnnotationInfo> infos, ClassLoader loader) {
+    static java.util.List<Annotation> annotations(java.util.List<AnnotationInfo> infos, ClassLoader loader) {
         var annotations = new ArrayList<Annotation>();
         for (var info : infos) {
             AnnotationInstances.typeNamed(info.name().value(), loader)

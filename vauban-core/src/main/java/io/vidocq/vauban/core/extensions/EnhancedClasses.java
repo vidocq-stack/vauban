@@ -66,6 +66,37 @@ final class EnhancedClasses {
         return builder.build();
     }
 
+    /**
+     * The annotations of the parameters of the methods a class inherits, as the {@code @Enhancement} configs of that
+     * class left them (BUG-20261118-55): the index holds such a parameter on the class that declares it, for every
+     * subclass, and {@link #of} leaves it so (BUG-20261118-48).
+     */
+    @FunctionalInterface
+    interface InheritedParameters {
+
+        /** No config: each parameter keeps the annotations it declares. */
+        InheritedParameters NONE = (beanClass, method, position, annotations) -> annotations;
+
+        /**
+         * The annotations of the parameter {@code position} of {@code method}, which {@code beanClass} inherits, given
+         * the ones it declares.
+         */
+        List<AnnotationInfo> of(String beanClass, jakarta.enterprise.lang.model.declarations.MethodInfo method,
+                int position, List<AnnotationInfo> annotations);
+    }
+
+    /** {@link InheritedParameters} of what {@code modifications} did, the index {@code index}. */
+    static InheritedParameters inheritedParameters(VaubanIndex index,
+            Map<DotName, List<VaubanClassConfig>> modifications) {
+        if (modifications.isEmpty()) {
+            return InheritedParameters.NONE;
+        }
+        var edits = new Edits(EnhancementPatchSerializer.additions(modifications), removals(modifications),
+                new IndexLookup(index));
+        return (beanClass, method, position, annotations) -> edits.apply(
+                EnhancementPatchSerializer.inheritedParameterTarget(beanClass, method, position), annotations);
+    }
+
     /** What the annotations of a target lose: all of them, or those a predicate matches. */
     private record Removal(boolean all, List<Predicate<jakarta.enterprise.lang.model.AnnotationInfo>> predicates) {
 

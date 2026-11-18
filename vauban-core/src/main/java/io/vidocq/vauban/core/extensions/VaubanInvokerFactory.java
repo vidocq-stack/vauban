@@ -34,11 +34,21 @@ import java.util.List;
 @SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class VaubanInvokerFactory implements InvokerFactory {
 
+    private final EnhancedClasses.InheritedParameters inherited;
     private final ClassLoader classLoader;
     private final List<VaubanInvokerBuilder> builders = new ArrayList<>();
 
     public VaubanInvokerFactory(ClassLoader classLoader) {
+        this(classLoader, EnhancedClasses.InheritedParameters.NONE);
+    }
+
+    /**
+     * @param inherited the annotations the {@code @Enhancement} configs of a bean class left on the parameters of the
+     *                  methods it inherits (BUG-20261118-55)
+     */
+    VaubanInvokerFactory(ClassLoader classLoader, EnhancedClasses.InheritedParameters inherited) {
         this.classLoader = classLoader;
+        this.inherited = inherited;
     }
 
     public List<VaubanInvokerBuilder> getBuilders() {
@@ -86,7 +96,7 @@ public final class VaubanInvokerFactory implements InvokerFactory {
         var beanClass = loadable(beanClassName);
         var reflectMethod = beanClass == null ? null : VaubanInvoker.resolve(target, classLoader);
         var builder = new VaubanInvokerBuilder(target, method, reflectMethod, beanClass,
-                InvokerShape.of(bean.declaringClass(), method));
+                InvokerShape.of(bean.declaringClass(), method, inherited));
         builders.add(builder);
         return builder;
     }

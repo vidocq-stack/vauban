@@ -28,7 +28,6 @@ import io.vidocq.vauban.core.bean.resolution.QualifierMatcher;
 import io.vidocq.vauban.core.bean.validation.DeploymentValidator;
 import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.VaubanIndex;
-import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
@@ -204,7 +203,7 @@ final class ExtensionMethodValidator {
                 new QualifierMatcher(new AnnotationTypes(index, List.of(classLoader), qualifiers.nonbindingMembers())));
         for (var builder : builders) {
             for (int idx : builder.getArgumentLookups()) {
-                validateArgumentLookup(builder.getMethodInfo(), idx, resolver, qualifiers, errors);
+                validateArgumentLookup(builder, idx, resolver, new LookupQualifiers(qualifiers, index), errors);
             }
         }
     }
@@ -221,9 +220,9 @@ final class ExtensionMethodValidator {
      * <p>The parameter is read from the language model, which describes a class the build compiles as one it loads:
      * the build checks the lookups of an invoker of a bean it compiles too (BUG-20261117-48).
      */
-    private static void validateArgumentLookup(jakarta.enterprise.lang.model.declarations.MethodInfo method, int idx,
-                                               BeanResolver resolver, BceProcessor.RegisteredQualifiers qualifiers,
-                                               List<String> errors) {
+    private static void validateArgumentLookup(VaubanInvokerBuilder builder, int idx, BeanResolver resolver,
+                                               LookupQualifiers qualifiers, List<String> errors) {
+        var method = builder.getMethodInfo();
         var parameter = method.parameters().get(idx);
         var type = parameter.type();
         var where = (type.isTypeVariable() ? type.asTypeVariable().name() : type) + " at position " + idx
@@ -239,7 +238,7 @@ final class ExtensionMethodValidator {
             return;
         }
         var lookup = new InjectionPointInfo(required,
-                qualifiersOf(parameter, qualifiers), InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
+                qualifiers.of(builder.parameterAnnotations(idx)), InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
                 "invoker argument " + idx);
         var result = resolver.resolveInjectionPoint(lookup);
         if (result.status() == BeanResolver.ResolutionResult.Status.UNSATISFIED) {
@@ -251,20 +250,23 @@ final class ExtensionMethodValidator {
     }
 
     /**
-     * The qualifiers of {@code parameter}, or {@code @Default} when it has none, as an injection point has them: the
-     * annotations {@code @Qualifier} declares, and those an extension registered.
+     * The qualifiers among a looked-up parameter's annotations, or {@code @Default} when it has none, as an injection
+     * point has them: those whose type {@code @Qualifier} declares, and those an extension registered. The annotations are the invoker's ({@code VaubanInvokerBuilder}), which a method
+     * the bean class inherits takes from the bean class's configs (BUG-20261118-55).
      */
-    private static Set<QualifierInstance> qualifiersOf(
-            jakarta.enterprise.lang.model.declarations.ParameterInfo parameter,
-            BceProcessor.RegisteredQualifiers registered) {
-        var qualifiers = new HashSet<QualifierInstance>();
-        for (var annotation : parameter.annotations()) {
-            if (annotation.declaration().hasAnnotation(jakarta.inject.Qualifier.class)
-                    || registered.types().contains(DotName.of(annotation.name()))) {
-                qualifiers.add(QualifierInstance.from(
-                        io.vidocq.vauban.core.langmodel.LangModelAnnotations.toIndex(annotation)));
+    private record LookupQualifiers(BceProcessor.RegisteredQualifiers registered, VaubanIndex index) {
+
+        Set<QualifierInstance> of(List<io.vidocq.vauban.indexer.model.AnnotationInfo> annotations) {
+            var lookup = new io.vidocq.vauban.core.langmodel.IndexLookup(index);
+            var qualifiers = new HashSet<QualifierInstance>();
+            for (var annotation : annotations) {
+                if (new io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo(annotation, lookup).declaration()
+                        .hasAnnotation(jakarta.inject.Qualifier.class)
+                        || registered.types().contains(annotation.name())) {
+                    qualifiers.add(QualifierInstance.from(annotation));
+                }
             }
+            return qualifiers.isEmpty() ? Set.of(QualifierInstance.DEFAULT) : qualifiers;
         }
-        return qualifiers.isEmpty() ? Set.of(QualifierInstance.DEFAULT) : qualifiers;
     }
 }
