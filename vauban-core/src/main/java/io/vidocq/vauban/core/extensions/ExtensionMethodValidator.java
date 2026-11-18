@@ -20,14 +20,12 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.annotation.AnnotationTypes;
-import io.vidocq.vauban.core.annotation.AnnotationValues;
 import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.resolution.QualifierMatcher;
 import io.vidocq.vauban.core.types.AssignabilityRules;
-import io.vidocq.vauban.core.types.TypeInfoUtils;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
@@ -47,8 +45,6 @@ import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
 import jakarta.enterprise.inject.build.compatible.spi.Validation;
 
 import java.lang.reflect.Method;
-import java.lang.reflect.Parameter;
-import java.lang.reflect.TypeVariable;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -212,9 +208,8 @@ final class ExtensionMethodValidator {
         var resolver = new BeanResolver(allBeans, List.of(), new AssignabilityRules(index, classLoader),
                 new QualifierMatcher(new AnnotationTypes(index, List.of(classLoader), qualifiers.nonbindingMembers())));
         for (var builder : builders) {
-            var reflectMethod = builder.getMethod();
             for (int idx : builder.getArgumentLookups()) {
-                validateArgumentLookup(reflectMethod, idx, resolver, qualifiers, errors);
+                validateArgumentLookup(builder.getMethodInfo(), idx, resolver, qualifiers, errors);
             }
         }
     }
@@ -227,21 +222,26 @@ final class ExtensionMethodValidator {
      *
      * <p>A parameter of a type variable, {@code T}, is refused: the required type is the declared type of the
      * parameter, and a type variable is no legal one (CDI 4.1, 5.2.2). The count looked its erasure up, the bound.
+     *
+     * <p>The parameter is read from the language model, which describes a class the build compiles as one it loads:
+     * the build checks the lookups of an invoker of a bean it compiles too (BUG-20261117-48).
      */
-    private static void validateArgumentLookup(Method reflectMethod, int idx, BeanResolver resolver,
-                                               BceProcessor.RegisteredQualifiers qualifiers, List<String> errors) {
-        var parameter = reflectMethod.getParameters()[idx];
-        var where = parameter.getParameterizedType().getTypeName() + " at position " + idx
-                + " of method " + reflectMethod.getDeclaringClass().getName() + "." + reflectMethod.getName();
-        if (parameter.getParameterizedType() instanceof TypeVariable<?>) {
+    private static void validateArgumentLookup(jakarta.enterprise.lang.model.declarations.MethodInfo method, int idx,
+                                               BeanResolver resolver, BceProcessor.RegisteredQualifiers qualifiers,
+                                               List<String> errors) {
+        var parameter = method.parameters().get(idx);
+        var type = parameter.type();
+        var where = (type.isTypeVariable() ? type.asTypeVariable().name() : type) + " at position " + idx
+                + " of method " + method.declaringClass().name() + "." + method.name();
+        if (type.isTypeVariable()) {
             errors.add("Invoker argument lookup of a type variable: parameter type " + where
                     + "; a type variable is not a legal required type");
             return;
         }
-        if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.isAssignableFrom(parameter.getType()))) {
+        if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.getName().equals(InvokerTarget.erasedName(type)))) {
             return;
         }
-        var lookup = new InjectionPointInfo(TypeInfoUtils.fromReflectType(parameter.getParameterizedType()),
+        var lookup = new InjectionPointInfo(LangModelTypeMapper.toIndexType(type),
                 qualifiersOf(parameter, qualifiers), InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
                 "invoker argument " + idx);
         var result = resolver.resolveInjectionPoint(lookup);
@@ -257,14 +257,15 @@ final class ExtensionMethodValidator {
      * The qualifiers of {@code parameter}, or {@code @Default} when it has none, as an injection point has them: the
      * annotations {@code @Qualifier} declares, and those an extension registered.
      */
-    private static Set<QualifierInstance> qualifiersOf(Parameter parameter,
-                                                       BceProcessor.RegisteredQualifiers registered) {
+    private static Set<QualifierInstance> qualifiersOf(
+            jakarta.enterprise.lang.model.declarations.ParameterInfo parameter,
+            BceProcessor.RegisteredQualifiers registered) {
         var qualifiers = new HashSet<QualifierInstance>();
-        for (var annotation : parameter.getAnnotations()) {
-            var type = annotation.annotationType();
-            if (type.isAnnotationPresent(jakarta.inject.Qualifier.class)
-                    || registered.types().contains(DotName.of(type.getName()))) {
-                qualifiers.add(QualifierInstance.from(AnnotationValues.infoOf(annotation)));
+        for (var annotation : parameter.annotations()) {
+            if (annotation.declaration().hasAnnotation(jakarta.inject.Qualifier.class)
+                    || registered.types().contains(DotName.of(annotation.name()))) {
+                qualifiers.add(QualifierInstance.from(
+                        io.vidocq.vauban.core.langmodel.LangModelAnnotations.toIndex(annotation)));
             }
         }
         return qualifiers.isEmpty() ? Set.of(QualifierInstance.DEFAULT) : qualifiers;

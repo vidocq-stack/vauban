@@ -23,9 +23,9 @@ import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
 import jakarta.enterprise.invoke.InvokerBuilder;
+import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.declarations.MethodInfo;
 
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,70 +60,50 @@ public final class VaubanInvokerFactory implements InvokerFactory {
         }
 
         var beanClassName = bean.declaringClass().name();
+        if (Modifier.isPrivate(method.modifiers())) {
+            throw new IllegalStateException(
+                    "Cannot create invoker for private method: " + beanClassName + "." + method.name());
+        }
+        var target = InvokerTarget.of(beanClassName, method);
+        if (target.isObjectMethod() && !"toString".equals(method.name())) {
+            throw new IllegalStateException("Cannot create invoker for Object method: " + method.name());
+        }
+        if (!target.isObjectMethod() && !declaresOrInherits(bean.declaringClass(), target.declaringClass())) {
+            throw new IllegalStateException(
+                    "Method " + method.name() + " does not belong to bean class " + beanClassName);
+        }
+        var beanClass = loadable(beanClassName);
+        var reflectMethod = beanClass == null ? null : target.resolve(classLoader);
+        var builder = new VaubanInvokerBuilder(target, method, reflectMethod, beanClass);
+        builders.add(builder);
+        return builder;
+    }
+
+    /**
+     * Whether {@code type}, or one of its superclasses or superinterfaces, is the class named {@code declaring}: the
+     * class of a method {@code type} declares or inherits. Read on the language model, as the build reads a class it
+     * compiles, so the build and the start refuse the same invoker (BUG-20261117-48).
+     */
+    private static boolean declaresOrInherits(ClassInfo type, String declaring) {
+        if (type == null) {
+            return false;
+        }
+        if (type.name().equals(declaring) || declaresOrInherits(type.superClassDeclaration(), declaring)) {
+            return true;
+        }
+        return type.superInterfacesDeclarations().stream().anyMatch(iface -> declaresOrInherits(iface, declaring));
+    }
+
+    /**
+     * The bean class, or {@code null} when it has no class file yet: the build compiles it, and describes the
+     * invoker by names, which the start resolves (BUG-20261117-48). The start loads every class of the deployment
+     * (vauban#98).
+     */
+    private Class<?> loadable(String beanClassName) {
         try {
-            var beanClass = classLoader.loadClass(beanClassName);
-            var reflectMethod = findMethod(beanClass, method);
-
-            if (Modifier.isPrivate(reflectMethod.getModifiers())) {
-                throw new IllegalStateException(
-                        "Cannot create invoker for private method: " + beanClassName + "." + method.name());
-            }
-            if (!reflectMethod.getDeclaringClass().isAssignableFrom(beanClass)) {
-                throw new IllegalStateException(
-                        "Method " + method.name() + " does not belong to bean class " + beanClassName);
-            }
-            if (reflectMethod.getDeclaringClass() == Object.class && !"toString".equals(method.name())) {
-                throw new IllegalStateException(
-                        "Cannot create invoker for Object method: " + method.name());
-            }
-
-            var builder = new VaubanInvokerBuilder(reflectMethod, beanClass);
-            builders.add(builder);
-            return builder;
-        } catch (ClassNotFoundException e) {
-            throw new IllegalStateException("Cannot load bean class: " + beanClassName, e);
+            return Class.forName(beanClassName, false, classLoader);
+        } catch (ClassNotFoundException | LinkageError _) {
+            return null;
         }
-    }
-
-    private Method findMethod(Class<?> beanClass, MethodInfo methodInfo) {
-        var methodName = methodInfo.name();
-        var paramCount = methodInfo.parameters().size();
-
-        // Search through class hierarchy
-        for (var cls = beanClass; cls != null; cls = cls.getSuperclass()) {
-            for (var m : cls.getDeclaredMethods()) {
-                if (m.getName().equals(methodName) && m.getParameterCount() == paramCount) {
-                    return m;
-                }
-            }
-        }
-
-        // Also search interfaces
-        for (var iface : getAllInterfaces(beanClass)) {
-            for (var m : iface.getDeclaredMethods()) {
-                if (m.getName().equals(methodName) && m.getParameterCount() == paramCount) {
-                    // Find the actual implementation on the bean class
-                    try {
-                        return beanClass.getMethod(methodName, m.getParameterTypes());
-                    } catch (NoSuchMethodException _) {
-                        return m;
-                    }
-                }
-            }
-        }
-
-        throw new IllegalStateException(
-                "Method " + methodName + " not found on " + beanClass.getName());
-    }
-
-    private static java.util.Set<Class<?>> getAllInterfaces(Class<?> cls) {
-        var interfaces = new java.util.LinkedHashSet<Class<?>>();
-        for (var c = cls; c != null; c = c.getSuperclass()) {
-            for (var iface : c.getInterfaces()) {
-                interfaces.add(iface);
-                interfaces.addAll(getAllInterfaces(iface));
-            }
-        }
-        return interfaces;
     }
 }

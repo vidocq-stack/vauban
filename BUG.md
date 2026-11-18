@@ -1277,23 +1277,38 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-48 — The processor cannot build an invoker for a bean class compiled in the same build
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (`VaubanInvokerFactory.createInvoker`), run by `vauban-processor`
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`)
+- **Module**: `vauban-core` (`VaubanInvokerFactory`, `VaubanInvokerBuilder`, new `InvokerTarget`,
+  `SyntheticParamCodec`, `ExtensionMethodValidator.validateInvokerLookups`), run by `vauban-processor`
 - **Symptom**: an extension that builds, in `@Registration`, an invoker of a method of a bean the compilation
   compiles, `@Dependent public class Worker { public String work() }`, fails the compilation with
   `[Vauban BCE] Cannot load bean class: app.Worker`. CDI 4.1 lets an extension build an invoker of any method of an
   enabled managed bean (TCK audit `building_invoker`, a): a valid extension on a valid application fails the build.
-- **Repro**: `BceCompileTimeTest#anExtensionBuildsAnInvokerForABeanTheBuildCompiles` in `vauban-processor`,
-  disabled; red when enabled, on 7c639ddf, fix round 2 of BUG-20261117-27 (`vauban-b27-red.log`, "Round 3: BUG-48
-  repro, run 2"; run 1 had no repro in it).
-- **Cause**: `createInvoker` loads the bean class with the processor's class loader to find the `Method`; under
-  javac a class of the compilation has no class file yet. So the build's check of invoker lookups
-  (BUG-20261117-27) only meets the classes of libraries.
-- **Fix idea**: build the invoker from the language model, by names, and resolve the `Method` at start, as
-  `SyntheticParamCodec.readInvoker` does already.
+- **Repro**: `BceCompileTimeTest#anExtensionBuildsAnInvokerForABeanTheBuildCompiles`,
+  `#theBuildChecksTheLookupsOfAnInvokerOfABeanItCompiles` and `#theBuildRefusesAnInvokerOfAMethodAnotherClassDeclares`
+  in `vauban-processor`.
+- **Cause** (proved): `createInvoker` loaded the bean class with the processor's class loader to find the `Method`;
+  under javac a class of the compilation has no class file yet. The check of the argument lookups
+  (BUG-20261117-27) read the `Method` too, so the build only checked the lookups of the classes of libraries.
+- **Fix**: an invoker's method is described by names, from the language model (`InvokerTarget`: the bean class, the
+  declaring class, the name and the erased parameter types, as `Class.getName()` writes them). `createInvoker` checks a
+  private method, a method of `Object`, and a method the bean class neither declares nor inherits on the language model
+  (that last one was checked on a class it loads only, so the build accepted it for a class it compiles), and loads the
+  classes only when they have a class file: a class the build compiles gives an invoker described by names
+  (`InvokerTarget.Described`), which `SyntheticParamCodec` writes as the invoker of a loaded class, and which the start
+  reads back as a `VaubanInvoker` (the method found by its exact erased parameters, where `findMethod` matched the name
+  and the count). The argument lookups are checked on the language model's parameters, their types and qualifiers, so
+  the build checks those of a bean it compiles as of one it loads, and the start the same.
+- **CDI Lite TCK**: does not cover it. The runner runs the extensions at start, where every class loads; its
+  invoker tests (`org.jboss.cdi.tck.tests.invokers`) pass before and after.
+- **Verification**: red on 7e831a64 (`stack-l3b-red.log`, "BUG-20261117-48 red, on 7e831a64": `Cannot load bean
+  class: app.Worker`; "BUG-20261117-48 red, run 2": both final tests; "BUG-20261117-48 review: an invoker of another
+  class's method, on 37f4198f": the build accepted it). Green: `stack-l3b-dev.log`, runs 2 to 5
+  (`InvokerTargetTest`, `SyntheticParamCodecTest#describedInvoker`), and `stack-l3b-green.log`,
+  "BUG-20261117-48 fix: vauban-core and vauban-processor, all tests", and "BUG-20261117-48 review: the method's class
+  checked on the language model".
 - **Found by**: the review of fix round 2 of BUG-20261117-27, from its build-side test, whose beans are precompiled
   for that reason.
-
 ## BUG-20261117-47 — The container provides none of the bean metadata beans of CDI 4.1 §5.5.8
 
 - **Date**: 2026-11-17

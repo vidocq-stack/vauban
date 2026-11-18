@@ -83,7 +83,10 @@ public final class SyntheticParamCodec {
             case Enum<?> e -> "E:" + e.getDeclaringClass().getName() + ":" + e.name();
             case Annotation a -> "A:" + annotation(AnnotationValues.infoOf(a));
             case jakarta.enterprise.lang.model.AnnotationInfo a -> "A:" + annotation(LangModelAnnotations.toIndex(a));
-            case VaubanInvoker v -> "V:" + invoker(v);
+            case VaubanInvoker v -> "V:" + invoker(InvokerTarget.of(v.beanClass(), v.method()), v.instanceLookup(),
+                    v.argumentLookups());
+            case InvokerTarget.Described(var target, var instanceLookup, var argumentLookups) ->
+                    "V:" + invoker(target, instanceLookup, argumentLookups);
             default -> {
                 if (value.getClass().isArray()) {
                     yield "[:" + array(value);
@@ -119,21 +122,22 @@ public final class SyntheticParamCodec {
                 + "[] cannot be recorded at build time");
     }
 
-    private static String invoker(VaubanInvoker invoker) {
-        var method = invoker.method();
+    /**
+     * An invoker by names: what the start needs to find its method, which the build can describe of a class it
+     * compiles as of a class it loads (BUG-20261117-48).
+     */
+    private static String invoker(InvokerTarget target, boolean instanceLookup, java.util.Set<Integer> lookups) {
         var out = new StringBuilder()
-                .append(frame(invoker.beanClass().getName()))
-                .append(frame(method.getDeclaringClass().getName()))
-                .append(frame(method.getName()))
-                .append(frame(String.valueOf(invoker.instanceLookup())));
-        var lookups = new StringBuilder();
-        for (var position : new java.util.TreeSet<>(invoker.argumentLookups())) {
-            lookups.append(frame(String.valueOf(position)));
+                .append(frame(target.beanClass()))
+                .append(frame(target.declaringClass()))
+                .append(frame(target.name()))
+                .append(frame(String.valueOf(instanceLookup)));
+        var positions = new StringBuilder();
+        for (var position : new java.util.TreeSet<>(lookups)) {
+            positions.append(frame(String.valueOf(position)));
         }
-        out.append(frame(lookups.toString()));
-        for (var parameter : method.getParameterTypes()) {
-            out.append(frame(parameter.getName()));
-        }
+        out.append(frame(positions.toString()));
+        target.parameterTypes().forEach(parameter -> out.append(frame(parameter)));
         return out.toString();
     }
 
@@ -290,8 +294,8 @@ public final class SyntheticParamCodec {
     }
 
     private static VaubanInvoker readInvoker(Frames frames, ClassLoader loader) {
-        var beanClass = load(frames.next(), loader);
-        var declaringClass = load(frames.next(), loader);
+        var beanClass = frames.next();
+        var declaringClass = frames.next();
         var name = frames.next();
         var instanceLookup = Boolean.parseBoolean(frames.next());
         var argumentLookups = new HashSet<Integer>();
@@ -299,17 +303,12 @@ public final class SyntheticParamCodec {
         while (lookups.hasNext()) {
             argumentLookups.add(Integer.parseInt(lookups.next()));
         }
-        var parameters = new ArrayList<Class<?>>();
+        var parameters = new ArrayList<String>();
         while (frames.hasNext()) {
-            parameters.add(load(frames.next(), loader));
+            parameters.add(frames.next());
         }
-        try {
-            var method = declaringClass.getDeclaredMethod(name, parameters.toArray(Class<?>[]::new));
-            return new VaubanInvoker(method, beanClass, instanceLookup, argumentLookups);
-        } catch (NoSuchMethodException e) {
-            throw new IllegalArgumentException("the invoked method " + declaringClass.getName() + "." + name
-                    + parameters + " no longer exists", e);
-        }
+        var target = new InvokerTarget(beanClass, declaringClass, name, parameters);
+        return new VaubanInvoker(target.resolve(loader), load(beanClass, loader), instanceLookup, argumentLookups);
     }
 
     private static AnnotationInfo readAnnotation(Frames frames) {
@@ -355,7 +354,7 @@ public final class SyntheticParamCodec {
             "boolean", boolean.class, "byte", byte.class, "char", char.class, "short", short.class,
             "int", int.class, "long", long.class, "float", float.class, "double", double.class);
 
-    private static Class<?> load(String name, ClassLoader loader) {
+    static Class<?> load(String name, ClassLoader loader) {
         var primitive = PRIMITIVES.get(name);
         if (primitive != null) {
             return primitive;

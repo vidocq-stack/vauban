@@ -24,7 +24,6 @@ import io.vidocq.vauban.processor.VaubanProcessor;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.inject.build.compatible.spi.*;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1202,16 +1201,52 @@ class BceCompileTimeTest {
         assertEquals(List.of("GearUser.useGear"), built, "the invoker the build checked");
     }
 
-    /** Builds an invoker of each {@code work} method, as CDI 4.1 lets an extension do for any managed bean. */
+    /**
+     * Builds an invoker of each {@code work} method, as CDI 4.1 lets an extension do for any managed bean, and hands
+     * the last one to a synthetic bean, as an extension passes an invoker to the code that calls it.
+     */
     public static class SameBuildInvokerBce implements BuildCompatibleExtension {
         static final List<String> BUILT = new java.util.concurrent.CopyOnWriteArrayList<>();
+        static jakarta.enterprise.inject.build.compatible.spi.InvokerInfo invoker;
 
         @Registration(types = Object.class)
         public void register(BeanInfo bean, InvokerFactory invokers) {
             for (var method : bean.declaringClass().methods()) {
                 if (method.name().equals("work")) {
-                    invokers.createInvoker(bean, method).build();
+                    invoker = invokers.createInvoker(bean, method).withInstanceLookup().build();
                     BUILT.add(bean.declaringClass().simpleName() + "." + method.name());
+                }
+            }
+        }
+
+        @Synthesis
+        public void synthesis(SyntheticComponents components) {
+            components.addBean(String.class).type(String.class).createWith(TestStringCreator.class)
+                    .withParam("invoker", invoker);
+        }
+    }
+
+    /** Builds an invoker of the bean of {@code Worker} for the method {@code other} of its parameter's class. */
+    public static class ForeignMethodInvokerBce implements BuildCompatibleExtension {
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean, InvokerFactory invokers) {
+            for (var method : bean.declaringClass().methods()) {
+                if (method.name().equals("work")) {
+                    var foreign = method.parameters().getFirst().type().asClass().declaration().methods().stream()
+                            .filter(candidate -> candidate.name().equals("other")).findFirst().orElseThrow();
+                    invokers.createInvoker(bean, foreign).build();
+                }
+            }
+        }
+    }
+
+    /** Builds an invoker of each {@code work} method that looks its first argument up. */
+    public static class SameBuildLookupBce implements BuildCompatibleExtension {
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean, InvokerFactory invokers) {
+            for (var method : bean.declaringClass().methods()) {
+                if (method.name().equals("work")) {
+                    invokers.createInvoker(bean, method).withArgumentLookup(0).build();
                 }
             }
         }
@@ -1223,7 +1258,6 @@ class BceCompileTimeTest {
      * the compilation: {@code Cannot load bean class: app.Worker} (BUG-20261117-48).
      */
     @Test
-    @Disabled("BUG-20261117-48")
     @DisplayName("an extension builds an invoker of a bean the build compiles (BUG-20261117-48)")
     void anExtensionBuildsAnInvokerForABeanTheBuildCompiles() throws Exception {
         SameBuildInvokerBce.BUILT.clear();
@@ -1243,6 +1277,84 @@ class BceCompileTimeTest {
         assertTrue(result.success(), "the build refused the invoker: " + result.messages());
         var built = List.copyOf(SameBuildInvokerBce.BUILT);
         assertEquals(List.of("Worker.work"), built, "the invoker the extension built");
+
+        Map<String, String> written;
+        try (var in = Files.newInputStream(result.outputDir().resolve(SyntheticMetadataSerializer.METADATA_PATH))) {
+            written = SyntheticMetadataSerializer.readBeans(in).getFirst().params();
+        }
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var read = io.vidocq.vauban.core.extensions.SyntheticParamCodec.decode(written.get("invoker"), loader);
+            var invoker = assertInstanceOf(io.vidocq.vauban.core.extensions.VaubanInvoker.class, read,
+                    "what the start reads");
+            assertEquals(loader.loadClass("app.Worker").getMethod("work"), invoker.method(), "the invoked method");
+            assertTrue(invoker.instanceLookup(), "the instance lookup the extension asked for");
+        }
+    }
+
+    /**
+     * The build refuses an invoker of a bean for a method its class neither declares nor inherits, as the start does
+     * (CDI 4.1, "Building an invoker"; TCK {@code invokers.invalid.method.MethodFromDifferentClassInvokerTest}). It
+     * checked so a class it loads only, and accepted the invoker of a bean it compiles (BUG-20261117-48).
+     */
+    @Test
+    @DisplayName("the build refuses an invoker of a method another class declares (BUG-20261117-48)")
+    void theBuildRefusesAnInvokerOfAMethodAnotherClassDeclares() throws Exception {
+        var result = compileWithBce(List.of(ForeignMethodInvokerBce.class), """
+                package app;
+
+                public class Other {
+                    public String other() {
+                        return "other";
+                    }
+                }
+                """, """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+
+                @Dependent
+                public class Worker {
+                    public String work(Other other) {
+                        return "work";
+                    }
+                }
+                """);
+
+        assertFalse(result.success(), "the build accepted the invoker");
+        assertTrue(result.messages().stream().anyMatch(message -> message.contains(
+                "Method other does not belong to bean class app.Worker")), () -> String.join("\n", result.messages()));
+    }
+
+    /**
+     * The build checks the argument lookups of an invoker of a bean it compiles, as of one it loads: no bean of
+     * {@code Tool}, the lookup is unsatisfied (CDI 4.1, "Configuring lookups"; BUG-20261117-48).
+     */
+    @Test
+    @DisplayName("the build checks the lookups of an invoker of a bean it compiles (BUG-20261117-48)")
+    void theBuildChecksTheLookupsOfAnInvokerOfABeanItCompiles() throws Exception {
+        var result = compileWithBce(List.of(SameBuildLookupBce.class), """
+                package app;
+
+                public interface Tool {
+                }
+                """, """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+
+                @Dependent
+                public class Worker {
+                    public String work(Tool tool) {
+                        return "work";
+                    }
+                }
+                """);
+
+        assertFalse(result.success(), "the build accepted an unsatisfied lookup");
+        assertTrue(result.messages().stream().anyMatch(message -> message.contains(
+                "Invoker argument lookup unsatisfied: no bean found for parameter type app.Tool at position 0 "
+                        + "of method app.Worker.work")), () -> String.join("\n", result.messages()));
     }
 
     /**

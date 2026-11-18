@@ -153,6 +153,24 @@ class SyntheticParamCodecTest {
         assertEquals(method, ((VaubanInvoker) array[0]).method());
     }
 
+    /**
+     * An invoker the build describes by names, of a class it compiles, is written as one of a class it loads, and the
+     * start reads a {@code VaubanInvoker} back (BUG-20261117-48).
+     */
+    @Test
+    @DisplayName("an invoker described by names is read back as the invoker of its method")
+    void describedInvoker() throws Exception {
+        var method = Greeter.class.getMethod("greet", String.class, int.class);
+        var described = new InvokerTarget.Described(new InvokerTarget(Greeter.class.getName(),
+                Greeter.class.getName(), "greet", java.util.List.of("java.lang.String", "int")), false, Set.of(0));
+
+        assertEquals(SyntheticParamCodec.encode(new VaubanInvoker(method, Greeter.class, false, Set.of(0))),
+                SyntheticParamCodec.encode(described), "what the build writes");
+        var read = (VaubanInvoker) roundTrip(described);
+        assertEquals(method, read.method());
+        assertEquals(Set.of(0), read.argumentLookups());
+    }
+
     @Test
     @DisplayName("a value of no supported type is refused, never dropped")
     void unsupported() {
