@@ -25,6 +25,30 @@ suspected cause, status. Updated on every investigation.
   `stack-l4-43-dev.log`, "Dev run 1" (vauban-core, vauban-processor, vauban-maven-plugin).
 - **Found by**: the L4 review.
 
+## BUG-20261118-42 — `@Registration` does not see the annotations `@Enhancement` added to members
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, lane L4)
+- **Module**: `vauban-core` (`BceProcessor.process`, `withEnhancements`; `VaubanContainerBuilder`)
+- **Symptom**: an extension that adds `@Deprecated` in `@Enhancement` to a field, a method, a parameter and a producer
+  method (`FieldConfig`, `MethodConfig`, `ParameterConfig`) does not find it on the fields, methods, parameters and
+  `producerMethod()` of the `BeanInfo` its `@Registration` method gets, in the processor, at start and frozen. Weld
+  applies them on `ProcessAnnotatedType`, so every later view sees them.
+- **Repro**: `VetoedInterceptorCompileTimeTest#registrationSeesTheMemberAnnotationsEnhancementAddedFromTheProcessorAtStartAndFrozen`.
+- **Cause** (proved): `BceProcessor.withEnhancements` (BUG-20261117-10) and the start's `enrichIndex` add the
+  annotations an `@Enhancement` added to a class only; at start, `process` read the index `enrichIndex` gave it, and
+  did not know the modifications of the container's own `@Enhancement` pass.
+- **Fix**: the phases after `@Enhancement` read an index with every addition, class and members
+  (`EnhancedClasses.withAdditions`, keyed as `EnhancementPatchSerializer.additions` names them, an annotation the
+  target holds not added twice). The container hands `process` what its pass, the replay and the frozen record added
+  (`BceProcessor.Enhanced`, which also carries the extensions of BUG-20261117-08). The index bean discovery reads keeps
+  the class additions only: `EnhancementApplier` applies the member ones to the descriptors, and applying them twice
+  would double them.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-42-red.log`, "Red run 1" (`false` for the four in the three places). Green,
+  `stack-l4-42-dev.log`, "Dev run 1" (vauban-core, vauban-processor, vauban-maven-plugin).
+- **Found by**: the L4 review.
+
 ## BUG-20261118-41 — An `ObserverInfo` gives two overloads that observe one event type the same method
 
 - **Date**: 2026-11-18

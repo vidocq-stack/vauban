@@ -1062,15 +1062,10 @@ public final class VaubanContainerBuilder {
             // The classes the extensions that run enhance: those of the sources no processor saw, and those their
             // @Discovery added. Their @Enhancement methods run here once, on the instances @Discovery ran on, and not
             // again with the other phases (BUG-20261117-08).
-            var toEnhance = new ArrayList<>(unprocessedArchiveClasses);
-            if (!bceClasses.isEmpty()) {
-                extensionAddedClasses.stream().filter(added -> !toEnhance.contains(added)).forEach(toEnhance::add);
-            }
-            var enhancedAtStart = toEnhance.isEmpty() || fullBceClasses.isEmpty()
-                    ? Set.<Class<?>>of() : Set.<Class<?>>copyOf(fullBceClasses);
-            var combinedEnhMods = collectEnhancements(new Enhancing(toEnhance, fullBceClasses,
-                    discoveryResult == null ? Map.of() : discoveryResult.bceInstances()),
-                    effectiveReplayPairs, enhancementPatch, index, bceClassLoader);
+            var enhancing = Enhancing.atStart(unprocessedArchiveClasses, extensionAddedClasses, fullBceClasses,
+                    discoveryResult);
+            var combinedEnhMods = collectEnhancements(enhancing, effectiveReplayPairs, enhancementPatch, index,
+                    bceClassLoader);
             // VAU-BCE-002: signatures of every synthetic bean registered during this boot,
             // shared between the runtime BCE path and the APT metadata path so identical
             // registrations (duplicated BCE discovery, wrapper subclasses) collapse to one.
@@ -1108,7 +1103,7 @@ public final class VaubanContainerBuilder {
                                 discovery.getCustomNonbindingMembers()),
                         // A start checks the invokers' lookups once it registered every synthetic bean, below
                         capture == null,
-                        enhancedAtStart);
+                        new BceProcessor.Enhanced(enhancing.running(), combinedEnhMods));
                 failOnExtensionErrors(bceResult);
                 registerExtensionResults(bceResult, descriptors, observers, syntheticDisposers,
                         seenSyntheticSignatures, combinedEnhMods);
@@ -1430,6 +1425,25 @@ public final class VaubanContainerBuilder {
      * their {@code @Discovery} ran on.
      */
     private record Enhancing(List<Class<?>> classes, Set<Class<?>> extensions, Map<Class<?>, Object> instances) {
+
+        /**
+         * What the start enhances: the classes of the sources no processor saw and, when extensions run, those their
+         * {@code @Discovery} added, with the instances it ran on; {@code discovery} is {@code null} when none runs.
+         */
+        static Enhancing atStart(List<Class<?>> unprocessed, List<Class<?>> added, Set<Class<?>> extensions,
+                                 BceProcessor.DiscoveryResult discovery) {
+            var classes = new ArrayList<>(unprocessed);
+            if (discovery == null) {
+                return new Enhancing(classes, extensions, Map.of());
+            }
+            added.stream().filter(type -> !classes.contains(type)).forEach(classes::add);
+            return new Enhancing(classes, extensions, discovery.bceInstances());
+        }
+
+        /** The extensions whose {@code @Enhancement} methods run here: none when there is no class to enhance. */
+        Set<Class<?>> running() {
+            return classes.isEmpty() ? Set.of() : Set.copyOf(extensions);
+        }
     }
 
     /**

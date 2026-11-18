@@ -332,15 +332,34 @@ public final class BceProcessor {
                                  RegisteredQualifiers qualifiers,
                                  boolean deferLookups) {
         return process(bceClasses, beans, observers, interceptors, index, classLoader, bceInstances,
-                allArchiveClasses, managedBean, qualifiers, deferLookups, Set.of());
+                allArchiveClasses, managedBean, qualifiers, deferLookups, Enhanced.NONE);
+    }
+
+    /**
+     * What the container's {@code @Enhancement} pass did before it discovered the beans: the extensions it ran, and
+     * the modifications it collected, those of the frozen extensions included.
+     *
+     * @param extensions    the extensions whose {@code @Enhancement} methods ran: {@code process} does not call them
+     *                      again (BUG-20261117-08)
+     * @param modifications what that pass, the replay and the frozen record added: the phases after
+     *                      {@code @Enhancement} read the classes with them, members included (BUG-20261118-42)
+     */
+    public record Enhanced(Set<Class<?>> extensions, Map<DotName, List<VaubanClassConfig>> modifications) {
+
+        public static final Enhanced NONE = new Enhanced(Set.of(), Map.of());
+
+        public Enhanced {
+            extensions = Set.copyOf(extensions);
+            modifications = Map.copyOf(modifications);
+        }
     }
 
     /**
      * {@link #process(List, List, List, List, VaubanIndex, ClassLoader, Map, List, java.util.function.Function,
-     * RegisteredQualifiers, boolean)}, with no {@code @Enhancement} call for the extensions of {@code enhanced}: the
-     * container ran their {@code @Enhancement} methods already, over the classes of the deployment, before it
-     * discovered the beans, and CDI 4.1 calls each once for each type it matches. It called them a second time here
-     * (BUG-20261117-08).
+     * RegisteredQualifiers, boolean)}, after the container's own {@code @Enhancement} pass, {@code enhanced}: it calls
+     * no {@code @Enhancement} method of the extensions that pass ran, as CDI 4.1 calls each once for each type it
+     * matches, where it called them a second time (BUG-20261117-08); and its later phases read the classes with what
+     * that pass added.
      */
     @SuppressWarnings("java:S107") // CDI BCE processing requires multiple contextual parameters
     public static Result process(List<Class<?>> bceClasses,
@@ -354,7 +373,7 @@ public final class BceProcessor {
                                  java.util.function.Function<DotName, BeanDescriptor> managedBean,
                                  RegisteredQualifiers qualifiers,
                                  boolean deferLookups,
-                                 Set<Class<?>> enhanced) {
+                                 Enhanced enhanced) {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
@@ -385,7 +404,7 @@ public final class BceProcessor {
 
         // Phase: @Enhancement — iterates over beans, fallback to archive classes if none match
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
-            if (!enhanced.contains(bceClass)) {
+            if (!enhanced.extensions().contains(bceClass)) {
                 processEnhancement(bce, bceClass, beans, archiveTypes, lookup, classLoader, deploymentErrors,
                         deploymentErrorCauses, allEnhancementMods);
             }
@@ -393,8 +412,9 @@ public final class BceProcessor {
 
         // The later phases read the classes as @Enhancement left them: the processor's language model did not show
         // the annotations it added, which the container's did through the index it enriched (BUG-20261117-10)
-        var enhancedLookup = allEnhancementMods.isEmpty() ? lookup
-                : new IndexLookup(withEnhancements(index, allEnhancementMods));
+        var phaseModifications = merged(enhanced.modifications(), allEnhancementMods);
+        var enhancedLookup = phaseModifications.isEmpty() ? lookup
+                : new IndexLookup(withEnhancements(index, phaseModifications));
         var types = new VaubanTypes(enhancedLookup);
 
         // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
@@ -434,18 +454,16 @@ public final class BceProcessor {
      * it discovers the beans of.
      */
     static VaubanIndex withEnhancements(VaubanIndex index, Map<DotName, List<VaubanClassConfig>> modifications) {
-        var builder = new io.vidocq.vauban.indexer.IndexBuilder();
-        for (var classInfo : index.getKnownClasses()) {
-            var configs = modifications.get(classInfo.name());
-            if (configs == null) {
-                builder.add(classInfo);
-            } else {
-                var annotations = new ArrayList<>(classInfo.annotations());
-                configs.forEach(config -> annotations.addAll(config.getAddedAnnotationsIndexed()));
-                builder.add(classInfo.withAnnotations(annotations));
-            }
-        }
-        return builder.build();
+        return EnhancedClasses.withAdditions(index, EnhancementPatchSerializer.additions(modifications));
+    }
+
+    /** The modifications of {@code first}, then those of {@code second}, by class. */
+    private static Map<DotName, List<VaubanClassConfig>> merged(Map<DotName, List<VaubanClassConfig>> first,
+                                                               Map<DotName, List<VaubanClassConfig>> second) {
+        var merged = new HashMap<DotName, List<VaubanClassConfig>>();
+        first.forEach((name, configs) -> merged.computeIfAbsent(name, _ -> new ArrayList<>()).addAll(configs));
+        second.forEach((name, configs) -> merged.computeIfAbsent(name, _ -> new ArrayList<>()).addAll(configs));
+        return merged;
     }
 
     /** One phase of every extension still taking part, in their order. */

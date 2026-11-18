@@ -585,6 +585,77 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(List.of("vi.Impl @Deprecated x1", "vi.Other @Deprecated x1"));
     }
 
+    /**
+     * Adds {@code @Deprecated} to a field, a method, a parameter and a producer method of {@code vi.Members}, and reads
+     * them back through the {@code BeanInfo} of its beans.
+     */
+    public static class MemberDeprecatingExtension implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = Object.class, withSubtypes = true)
+        public void deprecate(ClassConfig clazz) {
+            if (!clazz.info().name().equals("vi.Members")) {
+                return;
+            }
+            clazz.fields().forEach(field -> field.addAnnotation(Deprecated.class));
+            clazz.methods().forEach(method -> {
+                method.addAnnotation(Deprecated.class);
+                method.parameters().forEach(parameter -> parameter.addAnnotation(Deprecated.class));
+            });
+        }
+
+        @Registration(types = Object.class)
+        public void read(BeanInfo bean) {
+            if (!bean.declaringClass().name().equals("vi.Members")) {
+                return;
+            }
+            if (bean.isProducerMethod()) {
+                SEEN.add("producer " + bean.producerMethod().name() + " " + deprecated(bean.producerMethod()));
+                return;
+            }
+            bean.declaringClass().fields()
+                    .forEach(field -> SEEN.add("field " + field.name() + " " + deprecated(field)));
+            bean.declaringClass().methods().stream().filter(method -> method.name().equals("act"))
+                    .forEach(method -> SEEN.add("method act " + deprecated(method) + ", parameter "
+                            + deprecated(method.parameters().getFirst())));
+        }
+
+        private static boolean deprecated(jakarta.enterprise.lang.model.AnnotationTarget target) {
+            return target.hasAnnotation(Deprecated.class);
+        }
+    }
+
+    /**
+     * CDI 4.1 runs {@code @Registration} on the classes as {@code @Enhancement} left them, members included: the
+     * annotations a {@code FieldConfig}, a {@code MethodConfig} or a {@code ParameterConfig} added are on the
+     * fields, methods and parameters the {@code BeanInfo} gives. The phases after {@code @Enhancement} read the
+     * annotations it added to a class only, in the three places (BUG-20261118-42).
+     */
+    @Test
+    @DisplayName("@Registration sees the annotations @Enhancement added to members, everywhere")
+    void registrationSeesTheMemberAnnotationsEnhancementAddedFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Members.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Members {
+                    String text;
+                    void act(String value) {
+                        // a plain method
+                    }
+                    @jakarta.enterprise.inject.Produces
+                    Integer number() {
+                        return 1;
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, MemberDeprecatingExtension.class, MemberDeprecatingExtension.SEEN);
+
+        seen.assertEachIs(List.of("field text true", "method act true, parameter true", "producer number true"));
+    }
+
     /** Records the {@code @Dependent} classes {@code @Enhancement} gives it as subtypes of {@code java.util.EventListener}. */
     public static class ListenerEnhancer implements BuildCompatibleExtension {
 
