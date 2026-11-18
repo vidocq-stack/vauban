@@ -47,17 +47,22 @@ public final class VaubanClassConfig implements ClassConfig {
     // For meta-annotation use (Discovery phase - qualifiers, interceptor bindings, stereotypes)
     private final Class<? extends Annotation> annotationType;
 
+    /**
+     * The configuration of an annotation type a {@code MetaAnnotations} call registers. Its {@link #info()} is never
+     * {@code null}: the index's class, or the class file described as the language model describes a class outside
+     * the index (BUG-20261117-31), so that its members agree with the indexed path (BUG-20261118-03). A type nothing
+     * describes gets a {@link IndexLookup#stub stub}: its {@code info().methods()} is empty, while {@link #methods()}
+     * lists the members read by reflection.
+     */
     public VaubanClassConfig(Class<? extends Annotation> annotationType, IndexLookup lookup) {
         this.annotationType = annotationType;
-
-        var indexClass = lookup.getClass(
-                io.vidocq.vauban.indexer.model.DotName.of(annotationType.getName())).orElse(null);
-
-        this.classInfo = indexClass != null ? new VaubanClassInfo(indexClass, lookup) : null;
+        var name = io.vidocq.vauban.indexer.model.DotName.of(annotationType.getName());
+        var described = lookup.find(name);
+        this.classInfo = new VaubanClassInfo(described.orElseGet(() -> IndexLookup.stub(name)), lookup);
 
         this.methodConfigs = new ArrayList<>();
         this.fieldConfigs = new ArrayList<>();
-        if (classInfo != null) {
+        if (described.isPresent()) {
             for (var m : classInfo.methods()) {
                 methodConfigs.add(new VaubanMethodConfig(m));
             }

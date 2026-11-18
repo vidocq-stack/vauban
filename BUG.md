@@ -8,20 +8,21 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-03 — `ClassConfig.info()` is `null` for an annotation type outside the index
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
+- **Status**: FIXED on `fix/vauban-bug-stack`
 - **Module**: `vauban-core` (`extensions.VaubanClassConfig`)
 - **Symptom**: in `@Discovery`, `MetaAnnotations.addQualifier(Graded.class).info()` is `null` when the index does not
   hold `Graded`: an extension that reads `info().methods()` records nothing, and the start goes on without a word.
   The language model never gives a `null` `ClassInfo`; for an indexed annotation type, `info()` describes it.
-- **Repro**: `AnnotationMembersOutsideTheIndexTest#theMembersOfAnAnnotationOutsideTheIndex` in `vauban-core`,
-  `@Disabled` with this id. Red with it enabled, on the BUG-20261118-02 fix (`stack-l1-r1.log`, "R1 BUG-20261118-02
-  with the fix; ClassInfo path (BUG-20261118-03 repro) still enabled, expected red": `but was: <[]>`).
+- **Repro**: `AnnotationMembersOutsideTheIndexTest#theMembersOfAnAnnotationOutsideTheIndex` in `vauban-core`.
+  Red without the fix (`stack-l1-r2-1803.log`, "BUG-18-03 red: test enabled, no fix": `but was: <[]>`).
 - **Cause**: the meta-annotation constructor of `VaubanClassConfig` looks the type up in the index alone
   (`lookup.getClass`) and keeps `null` when it is missing; its method configs fall back to reflection
-  (`ReflectionMethodInfo`, BUG-20261118-02). Why the extension's `NullPointerException` is not reported is not
-  investigated.
-- **Fix idea**: describe the type with `IndexLookup.find`, as BUG-20261117-31 does for a class outside the index, and
-  keep the reflective member fallback for a type nothing describes.
+  (`ReflectionMethodInfo`, BUG-20261118-02). The extension's `NullPointerException` was not reported because
+  `BceProcessor` swallowed every `@Discovery` exception: BUG-20261118-04.
+- **Fix**: `info()` is `VaubanClassInfo.of(name, lookup)`, the index's class or the class file described as
+  BUG-20261117-31 describes a class outside the index; the member configs are its `methods()`, which agree with the
+  indexed path. `ReflectionMethodInfo` stays for a type nothing describes (its stub has no member), such as an
+  annotation type read outside the extension phases. The processor runs the same `BceProcessor.processDiscovery`.
 - **Found by**: the test of BUG-20261118-02.
 
 ## BUG-20261118-02 — The members of an annotation type outside the index have no return type

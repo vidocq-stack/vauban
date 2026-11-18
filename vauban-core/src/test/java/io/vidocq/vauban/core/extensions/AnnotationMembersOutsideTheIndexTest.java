@@ -26,7 +26,6 @@ import jakarta.enterprise.inject.build.compatible.spi.MetaAnnotations;
 import jakarta.enterprise.lang.model.declarations.MethodInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.util.Nonbinding;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -136,7 +135,6 @@ class AnnotationMembersOutsideTheIndexTest {
      * the index, and the extension records nothing (BUG-20261118-03).
      */
     @Test
-    @Disabled("BUG-20261118-03: ClassConfig.info() is null for an annotation type outside the index")
     @DisplayName("ClassInfo.methods() of an annotation type outside the index answers as for an indexed one")
     void theMembersOfAnAnnotationOutsideTheIndex() {
         assertEquals(EXPECTED, seen(QualifierExtension.class, QualifierExtension.SEEN, true), "indexed");

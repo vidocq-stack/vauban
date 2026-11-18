@@ -54,7 +54,6 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -216,12 +215,12 @@ class EnhancementApplierConfigsTest {
     }
 
     @Test
-    void anAddedNamedWithoutValueOnAConfigWithoutClassNamesNothing() {
+    void anAddedNamedWithoutValueOnAConfigOutsideTheIndexNamesItsClass() {
         var config = new VaubanClassConfig(Red.class, new IndexLookup(new IndexBuilder().build()));
         config.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of(""));
 
-        assertNull(config.info());
-        assertNull(enhanced(config).name());
+        assertEquals(Red.class.getName(), config.info().name(), "BUG-20261118-03: info() is never null");
+        assertEquals("red", enhanced(config).name());
     }
 
     @Test
