@@ -101,4 +101,50 @@ class VaubanObserverMethodObservedTypeTest {
                 observed(new TypeInfo.ArrayType(new TypeInfo.TypeVariable("T", List.of()), 1)));
         assertInstanceOf(TypeVariable.class, generic.getGenericComponentType());
     }
+
+    /** A generic class and its inner class, whose JDK types the observed types are compared with. */
+    @SuppressWarnings("java:S2326") // the type parameters are what the tests compare
+    static class Outer<O> {
+        class Inner<I> {
+        }
+    }
+
+    /** The JDK's own types of these fields are what the observed types must equal. */
+    @SuppressWarnings("unused")
+    static java.util.Map.Entry<String, Integer> entry;
+    @SuppressWarnings("unused")
+    static Outer<String>.Inner<Integer> inner;
+
+    private static Type jdkType(String field) throws NoSuchFieldException {
+        return VaubanObserverMethodObservedTypeTest.class.getDeclaredField(field).getGenericType();
+    }
+
+    /**
+     * BUG-20261118-46: the owner of a member type is the JDK's, the declaring class {@code Map} for
+     * {@code Map.Entry<String, Integer>}, so the observed type equals the JDK's and hashes alike; it was {@code null}.
+     */
+    @Test
+    void aStaticMemberTypeHasItsDeclaringClassAsOwner() throws NoSuchFieldException {
+        var string = new TypeInfo.ClassType(DotName.of("java.lang.String"));
+        var integer = new TypeInfo.ClassType(DotName.of("java.lang.Integer"));
+        var type = observed(new TypeInfo.ParameterizedType(DotName.of("java.util.Map$Entry"), List.of(string, integer)));
+
+        assertEquals(jdkType("entry"), type);
+        assertEquals(type, jdkType("entry"));
+        assertEquals(jdkType("entry").hashCode(), type.hashCode());
+    }
+
+    /** BUG-20261117-21: the owner of an inner class of a generic class is its parameterized enclosing type. */
+    @Test
+    void anInnerClassOfAGenericClassHasItsEnclosingTypeAsOwner() throws NoSuchFieldException {
+        var string = new TypeInfo.ClassType(DotName.of("java.lang.String"));
+        var integer = new TypeInfo.ClassType(DotName.of("java.lang.Integer"));
+        var owner = new TypeInfo.ParameterizedType(DotName.of(Outer.class.getName()), List.of(string));
+        var type = observed(new TypeInfo.ParameterizedType(DotName.of(Outer.Inner.class.getName()), List.of(integer),
+                owner));
+
+        assertEquals(jdkType("inner"), type);
+        assertEquals(type, jdkType("inner"));
+        assertEquals(jdkType("inner").hashCode(), type.hashCode());
+    }
 }

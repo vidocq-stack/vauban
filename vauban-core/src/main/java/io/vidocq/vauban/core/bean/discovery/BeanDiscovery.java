@@ -1151,9 +1151,10 @@ public final class BeanDiscovery {
             throws ClassNotFoundException {
         var typeArguments = type.typeArguments();
         Class<?> clazz = DeploymentClasses.load(type.rawType().value());
-        // The enclosing type, whose arguments the classes above an inner class may name (BUG-20261117-21)
+        // The enclosing type, whose arguments the classes above an inner class may name (BUG-20261117-21), else the
+        // declaring class, as the JDK gives the owner of a member type (BUG-20261118-46)
         java.lang.reflect.Type owner = type.owner() instanceof TypeInfo.ParameterizedType parameterizedOwner
-                ? parameterizedReflectType(parameterizedOwner) : null;
+                ? parameterizedReflectType(parameterizedOwner) : clazz.getDeclaringClass();
         var args = new java.lang.reflect.Type[typeArguments.size()];
         for (int i = 0; i < typeArguments.size(); i++) {
             args[i] = typeArguments.get(i) instanceof TypeInfo.ClassType(var argName)

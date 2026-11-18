@@ -159,6 +159,27 @@ class SyntheticObserverEventShapesTest {
         assertEquals("java.util.List<java.lang.String>", array.getGenericComponentType().getTypeName());
     }
 
+    /** The JDK's own {@code Map.Entry<String, Integer>}, which the reflective form must equal. */
+    @SuppressWarnings("unused")
+    static java.util.Map.Entry<String, Integer> entry;
+
+    /**
+     * The reflective form of a static member type has the declaring class as owner, as the JDK's has, so it equals
+     * the JDK's type and hashes alike (BUG-20261118-46); its owner was {@code null}.
+     */
+    @Test
+    @DisplayName("the reflective form of a member type equals the JDK's")
+    void theReflectiveFormOfAMemberTypeEqualsTheJdks() throws NoSuchFieldException {
+        var types = new VaubanTypes(null);
+        var eventType = new VaubanSyntheticObserverBuilder<>(
+                types.parameterized(java.util.Map.Entry.class, String.class, Integer.class)).getEventType();
+        var jdk = SyntheticObserverEventShapesTest.class.getDeclaredField("entry").getGenericType();
+
+        assertEquals(jdk, eventType);
+        assertEquals(eventType, jdk);
+        assertEquals(jdk.hashCode(), eventType.hashCode());
+    }
+
     private static WildcardType wildcardArgument(jakarta.enterprise.lang.model.types.Type parameterized) {
         var eventType = (ParameterizedType) new VaubanSyntheticObserverBuilder<>(parameterized).getEventType();
         return (WildcardType) eventType.getActualTypeArguments()[0];

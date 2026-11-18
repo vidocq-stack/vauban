@@ -514,8 +514,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
                     var type = loadClassOrNull(name.value());
                     if (type != null) types.add(type);
                 }
-                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var typeArguments, _) -> {
-                    var type = parameterizedTypeOrNull(rawType.value(), typeArguments);
+                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType parameterized -> {
+                    var type = parameterizedTypeOrNull(parameterized);
                     if (type != null) types.add(type);
                 }
                 case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
@@ -545,16 +545,9 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
      * parameterized type arguments (e.g. {@code ClaimValue<Set<String>>}) are preserved; {@code null} when a class
      * cannot be found.
      */
-    private Type parameterizedTypeOrNull(String rawName,
-            java.util.List<io.vidocq.vauban.indexer.model.TypeInfo> typeArguments) {
+    private Type parameterizedTypeOrNull(io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType type) {
         try {
-            var rawClass = Class.forName(rawName, true, classLoader);
-            java.lang.reflect.Type[] args = resolveTypeArguments(typeArguments, classLoader);
-            return new java.lang.reflect.ParameterizedType() {
-                @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args; }
-                @Override public java.lang.reflect.Type getRawType() { return rawClass; }
-                @Override public java.lang.reflect.Type getOwnerType() { return null; }
-            };
+            return reflectParameterized(type, classLoader);
         } catch (ClassNotFoundException _) {
             return null;
         }
@@ -772,6 +765,18 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
     }
 
     /**
+     * {@code type} as reflection gives it, equal to the JDK's own: its owner the parameterized type that encloses it, or
+     * else its declaring class, {@code Map} for {@code Map.Entry<K, V>}; it was {@code null} (BUG-20261118-46).
+     */
+    private static Type reflectParameterized(io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType type,
+            ClassLoader classLoader) throws ClassNotFoundException {
+        var rawClass = Class.forName(type.rawType().value(), true, classLoader);
+        var owner = type.owner() instanceof io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType parameterized
+                ? reflectParameterized(parameterized, classLoader) : rawClass.getDeclaringClass();
+        return new ResolvedParameterizedType(rawClass, resolveTypeArguments(type.typeArguments(), classLoader), owner);
+    }
+
+    /**
      * Recursively converts a list of {@code TypeInfo} type arguments to {@code java.lang.reflect.Type[]}.
      * Handles nested parameterized types (e.g. {@code Set<String>} inside {@code ClaimValue<Set<String>>}).
      */
@@ -791,15 +796,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         return switch (argInfo) {
             case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) ->
                     Class.forName(name.value(), true, classLoader);
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var typeArguments, _) -> {
-                var rawClass = Class.forName(rawType.value(), true, classLoader);
-                var nestedArgs = resolveTypeArguments(typeArguments, classLoader);
-                yield new java.lang.reflect.ParameterizedType() {
-                    @Override public java.lang.reflect.Type[] getActualTypeArguments() { return nestedArgs; }
-                    @Override public java.lang.reflect.Type getRawType() { return rawClass; }
-                    @Override public java.lang.reflect.Type getOwnerType() { return null; }
-                };
-            }
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType parameterized ->
+                    reflectParameterized(parameterized, classLoader);
             case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType at -> {
                 var arrayClass = resolveArrayClass(at, classLoader);
                 yield arrayClass != null ? arrayClass : Object.class;

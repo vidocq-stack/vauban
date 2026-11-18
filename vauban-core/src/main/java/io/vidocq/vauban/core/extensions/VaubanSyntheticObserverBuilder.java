@@ -222,15 +222,21 @@ public final class VaubanSyntheticObserverBuilder<T> implements SyntheticObserve
     ) implements java.lang.reflect.ParameterizedType {
         @Override public java.lang.reflect.Type[] getActualTypeArguments() { return typeArguments; }
         @Override public java.lang.reflect.Type getRawType() { return rawType; }
-        @Override public java.lang.reflect.Type getOwnerType() { return null; }
+        /**
+         * The declaring class, as the JDK gives the owner of a member type whose enclosing type is not parameterized:
+         * the language model this type comes from has no parameterized enclosing type (BUG-20261118-46).
+         */
+        @Override public java.lang.reflect.Type getOwnerType() { return rawType.getDeclaringClass(); }
         @Override public boolean equals(Object o) {
             if (!(o instanceof java.lang.reflect.ParameterizedType other)) return false;
             return java.util.Objects.equals(rawType, other.getRawType())
                     && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
-                    && other.getOwnerType() == null;
+                    && java.util.Objects.equals(getOwnerType(), other.getOwnerType());
         }
         @Override public int hashCode() {
-            return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(rawType);
+            // The JDK's ParameterizedTypeImpl formula, so that a type equal to the JDK's hashes alike
+            return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(getOwnerType())
+                    ^ java.util.Objects.hashCode(rawType);
         }
         @Override public String toString() {
             if (typeArguments.length == 0) return rawType.getTypeName();

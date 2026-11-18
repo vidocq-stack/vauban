@@ -88,13 +88,16 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
                     yield Object.class;
                 }
             }
-            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments, _) -> {
+            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments, var owner) -> {
                 try {
                     var rawClass = Class.forName(rawName, true, classLoader);
                     var typeArgs = typeArguments.stream()
                             .map(type -> reflectTypeOf(type, classLoader))
                             .toArray(Type[]::new);
-                    yield new ResolvedParameterizedType(rawClass, typeArgs);
+                    // The owner as the JDK gives it: the parameterized enclosing type, else the declaring class
+                    // (BUG-20261118-46)
+                    yield new ResolvedParameterizedType(rawClass, typeArgs,
+                            owner != null ? reflectTypeOf(owner, classLoader) : rawClass.getDeclaringClass());
                 } catch (ClassNotFoundException _) {
                     yield Object.class;
                 }
@@ -127,21 +130,25 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
     private static final class ResolvedParameterizedType implements java.lang.reflect.ParameterizedType {
         private final Class<?> rawType;
         private final Type[] typeArguments;
-        ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments) {
+        private final Type ownerType;
+        ResolvedParameterizedType(Class<?> rawType, Type[] typeArguments, Type ownerType) {
             this.rawType = rawType;
             this.typeArguments = typeArguments;
+            this.ownerType = ownerType;
         }
         @Override public Type[] getActualTypeArguments() { return typeArguments.clone(); }
         @Override public Type getRawType() { return rawType; }
-        @Override public Type getOwnerType() { return null; }
+        @Override public Type getOwnerType() { return ownerType; }
         @Override public boolean equals(Object o) {
             return o instanceof java.lang.reflect.ParameterizedType other
                     && rawType.equals(other.getRawType())
                     && java.util.Arrays.equals(typeArguments, other.getActualTypeArguments())
-                    && java.util.Objects.equals(null, other.getOwnerType());
+                    && java.util.Objects.equals(ownerType, other.getOwnerType());
         }
         @Override public int hashCode() {
-            return java.util.Arrays.hashCode(typeArguments) ^ rawType.hashCode();
+            // The JDK's ParameterizedTypeImpl formula, so that a type equal to the JDK's hashes alike
+            return java.util.Arrays.hashCode(typeArguments) ^ java.util.Objects.hashCode(ownerType)
+                    ^ rawType.hashCode();
         }
         @Override public String toString() {
             var sb = new StringBuilder(rawType.getName());

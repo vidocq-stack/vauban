@@ -31,6 +31,36 @@ suspected cause, status. Updated on every investigation.
   `stack-l4-51-dev.log`, "Green run 1".
 - **Found by**: the L4 review, round 5.
 
+## BUG-20261118-46 — A reflective member type Vauban builds has no owner, where the JDK gives its declaring class
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-core` (`VaubanObserverMethod`, `VaubanSyntheticObserverBuilder`, `ManagedBean`,
+  `BeanDiscovery`)
+- **Symptom**: the observed type of an observer of `Map.Entry<String, Integer>`, from its descriptor or from a
+  synthetic observer, and a bean type `ManagedBean` rebuilds from the descriptor, were not equal to the JDK's
+  `Map.Entry<String, Integer>`: their `getOwnerType()` was `null`, where the JDK gives `Map.class`, and the JDK's
+  `equals` compares owners. An inner class of a generic class lost its parameterized owner too.
+- **Repro**: `VaubanObserverMethodObservedTypeTest#aStaticMemberTypeHasItsDeclaringClassAsOwner` and
+  `#anInnerClassOfAGenericClassHasItsEnclosingTypeAsOwner`, `SyntheticObserverEventShapesTest
+  #theReflectiveFormOfAMemberTypeEqualsTheJdks`.
+- **Cause, proved**: red on dc80d927 (`stack-l2d-red.log`, "RED round 1 on dc80d927 (new tests, main of
+  dc80d927)"): `expected: ParameterizedTypeImpl<java.util.Map$Entry<...>> but was: ResolvedParameterizedType`, and
+  `Outer<java.lang.String>$Inner<java.lang.Integer>` against `Outer$Inner<java.lang.Integer>`. Each hard-coded
+  `getOwnerType()` to `null` and hashed without it.
+- **Fix**: each gives the owner as the JDK does, the parameterized enclosing type the index records, else
+  `getDeclaringClass()` (`null` for a top-level class), and hashes with the JDK's formula, as
+  `TypeHierarchyResolver` and `ManagedBean.ResolvedParameterizedType` already did. `ManagedBean`'s descriptor
+  fallback builds a `ResolvedParameterizedType`, which has `equals`, where it built an anonymous class.
+- **What stays**: a type from the language model has no owner, so for `Outer<String>.Inner<Integer>` the fallback
+  gives the raw `Outer.class`, the declaring class, where the JDK gives `Outer<String>`. Resolution is not affected:
+  `AssignabilityRules` lets a side without an owner agree with any owner (BUG-20261117-21).
+- **Verification**: the three tests green (`stack-l2d-r1.log`, "Round 1 (2)"); module tests and the full build in
+  `stack-l2d-r1.log`.
+- **Found by**: the review of BUG-20261117-21, round 1 of batch D, lane L2.
+
+---
+
 ## BUG-20261118-45 — The phases after `@Enhancement` still see the annotations it removed
 
 - **Date**: 2026-11-18
