@@ -50,11 +50,26 @@ public final class VaubanBceBeanInfo implements BeanInfo {
     private static final String DISPOSES_NAME = jakarta.enterprise.inject.Disposes.class.getName();
 
     private final BeanDescriptor descriptor;
+    /** Whether the bean is a built-in bean of the container, whose class no index holds. */
+    private final boolean builtIn;
     private final IndexLookup lookup;
 
     public VaubanBceBeanInfo(BeanDescriptor descriptor, IndexLookup lookup) {
+        this(descriptor, lookup, false);
+    }
+
+    private VaubanBceBeanInfo(BeanDescriptor descriptor, IndexLookup lookup, boolean builtIn) {
         this.descriptor = descriptor;
         this.lookup = lookup;
+        this.builtIn = builtIn;
+    }
+
+    /**
+     * The {@code BeanInfo} of a built-in bean ({@link BuiltInBeans}): its declaring class is its interface, described
+     * from the class file the deployment's loader finds, as no index holds it.
+     */
+    static VaubanBceBeanInfo builtIn(BeanDescriptor descriptor, IndexLookup lookup) {
+        return new VaubanBceBeanInfo(descriptor, lookup, true);
     }
 
     @Override
@@ -82,7 +97,7 @@ public final class VaubanBceBeanInfo implements BeanInfo {
         if (indexClass != null) {
             return new VaubanClassInfo(indexClass, lookup);
         }
-        return null;
+        return builtIn ? VaubanClassInfo.of(descriptor.beanClass(), lookup) : null;
     }
 
     @Override

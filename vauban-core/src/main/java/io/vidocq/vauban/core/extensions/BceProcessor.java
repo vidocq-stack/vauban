@@ -423,7 +423,7 @@ public final class BceProcessor {
         var invokers = new ArrayList<VaubanInvokerFactory>();
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
                 processRegistration(bce, bceClass, enhancedBeans, observers, interceptorsAsBeans(interceptors,
-                        managedBean), enhancedLookup, classLoader, types, deploymentErrors, archiveTypes, invokers));
+                        managedBean), enhancedLookup, classLoader, types, deploymentErrors, invokers));
 
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
@@ -835,21 +835,16 @@ public final class BceProcessor {
     }
 
     /**
-     * The line a {@code @Registration} method's failure adds: an {@code IllegalStateException} it throws, the invoker
-     * factory's own, reads as its message alone; any other failure as {@link #phaseError} writes it.
+     * The line a {@code @Registration} method's failure adds: a {@code DeploymentException} it throws, the invoker
+     * factory's own (BUG-20261117-06), or an {@code IllegalStateException}, reads as its message alone; any other
+     * failure as {@link #phaseError} writes it.
      */
     private static String registrationError(Method method, Exception e) {
         var thrown = unwrapped(e);
-        return e instanceof java.lang.reflect.InvocationTargetException && thrown instanceof IllegalStateException
-                && thrown.getMessage() != null ? thrown.getMessage() : phaseError("@Registration", method, thrown);
-    }
-
-    /** Check if a Registration method uses InvokerFactory parameter. */
-    private static boolean usesInvokerFactory(Method method) {
-        for (var param : method.getParameterTypes()) {
-            if (InvokerFactory.class.isAssignableFrom(param)) return true;
-        }
-        return false;
+        return e instanceof java.lang.reflect.InvocationTargetException && thrown.getMessage() != null
+                && (thrown instanceof IllegalStateException
+                        || thrown instanceof jakarta.enterprise.inject.spi.DeploymentException)
+                ? thrown.getMessage() : phaseError("@Registration", method, thrown);
     }
 
     @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
@@ -881,7 +876,6 @@ public final class BceProcessor {
                                             IndexLookup lookup, ClassLoader classLoader,
                                             VaubanTypes types,
                                             List<String> errors,
-                                            List<Class<?>> allArchiveClasses,
                                             List<VaubanInvokerFactory> invokers) {
         for (var method : getDeclaredMethodsSafe(bceClass)) {
             var registration = method.getAnnotation(Registration.class);
@@ -901,7 +895,7 @@ public final class BceProcessor {
             }
 
             for (var target : registrationTargets(method, registration.types(), beans, interceptors, lookup,
-                    classLoader, allArchiveClasses)) {
+                    classLoader)) {
                 invokers.add(invokeRegistrationMethod(method, bce, target, classLoader, types, errors));
             }
         }
@@ -909,15 +903,14 @@ public final class BceProcessor {
 
     /**
      * What a {@code @Registration} method with a {@code BeanInfo} or an {@code InterceptorInfo} parameter is called
-     * for, in order: the beans whose bean types hold an expected type, the interceptors whose bean types do, and, when
-     * none does and the method takes no {@code InvokerFactory}, the classes of the archive that have one, beans or not.
-     * CDI 4.1 calls it for beans only, and the processor, whose archive classes hold none the compilation compiles,
-     * makes no such call (BUG-20261117-06, open). An {@code InterceptorInfo} parameter takes the interceptors only, as
+     * for, in order: the beans whose bean types hold an expected type, the built-in beans that do
+     * ({@link BuiltInBeans}), then the interceptors whose bean types do, and nothing else, as CDI 4.1 says. When no
+     * bean had an expected type, the container gave the classes of the archive that had one, beans or not, and the
+     * processor nothing (BUG-20261117-06). An {@code InterceptorInfo} parameter takes the interceptors only, as
      * CDI 4.1 says: handed a bean, it failed the deployment with "argument type mismatch" (BUG-20261117-02).
      */
     private static List<BeanInfo> registrationTargets(Method method, Class<?>[] expected, List<BeanDescriptor> beans,
-            List<InterceptorBean> interceptors, IndexLookup lookup, ClassLoader classLoader,
-            List<Class<?>> archiveClasses) {
+            List<InterceptorBean> interceptors, IndexLookup lookup, ClassLoader classLoader) {
         var interceptorsOnly = hasInterceptorInfoParam(method);
         var interceptorClasses = interceptors.stream()
                 .map(interceptor -> interceptor.interceptor().interceptorClass())
@@ -931,26 +924,12 @@ public final class BceProcessor {
                     targets.add(new VaubanBceBeanInfo(bean, lookup));
                 }
             }
+            BuiltInBeans.ALL.stream().filter(builtIn -> BceTypeMatcher.matchesRegistrationTypes(expected, builtIn))
+                    .forEach(builtIn -> targets.add(VaubanBceBeanInfo.builtIn(builtIn, lookup)));
         }
         for (var interceptor : interceptors) {
             if (BceTypeMatcher.matchesInterceptorTypes(expected, interceptor.interceptor(), lookup, classLoader)) {
                 targets.add(new VaubanBceInterceptorInfo(interceptor.interceptor(), interceptor.bean(), lookup));
-            }
-        }
-        if (targets.isEmpty() && !interceptorsOnly && archiveClasses != null && !usesInvokerFactory(method)) {
-            targets.addAll(archiveTargets(expected, archiveClasses, lookup));
-        }
-        return targets;
-    }
-
-    /** The indexed classes of the archive that are subtypes of an expected type, each as a minimal bean. */
-    private static List<BeanInfo> archiveTargets(Class<?>[] expected, List<Class<?>> archiveClasses,
-                                                 IndexLookup lookup) {
-        var targets = new ArrayList<BeanInfo>();
-        for (var archiveClass : archiveClasses) {
-            var className = DotName.of(archiveClass.getName());
-            if (BceTypeMatcher.matchesClass(expected, true, archiveClass) && lookup.getClass(className).isPresent()) {
-                targets.add(new VaubanBceBeanInfo(BeanDescriptor.minimal(className), lookup));
             }
         }
         return targets;

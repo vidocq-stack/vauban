@@ -31,7 +31,6 @@ import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.inject.Inject;
 import jakarta.interceptor.InvocationContext;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -146,17 +145,14 @@ class BceRegistrationInterceptorInfoTest {
     }
 
     /**
-     * Pins what the container does today when no bean has an expected type: it gives a {@code BeanInfo} parameter the
-     * classes of the deployment that have it, beans or not, here the abstract {@code MarkedPart}. CDI 4.1 calls it for
-     * beans only, and the processor, which cannot load the classes the compilation compiles, does not make the call:
-     * BUG-20261117-06 tracks it ({@link #aBeanInfoParameterIsGivenNoClassThatIsNoBean}). An {@code InterceptorInfo}
-     * parameter takes no such class: it was given one, and the deployment failed with "argument type mismatch"
-     * (BUG-20261117-02).
+     * An {@code InterceptorInfo} parameter takes no class of the deployment that is no interceptor, here the abstract
+     * {@code MarkedPart}: it was given one, and the deployment failed with "argument type mismatch" (BUG-20261117-02).
+     * The {@code BeanInfo} parameter of the same extension is given no such class either (BUG-20261117-06).
      */
     @Test
     @DisplayName("an InterceptorInfo parameter is given no class of the deployment that is no interceptor")
     void anInterceptorInfoParameterIsGivenNoClassOfTheDeploymentThatIsNoInterceptor() {
-        assertEquals(List.of("bean " + MarkedPart.class.getName()), markedAtStart());
+        assertEquals(List.of(), markedAtStart().stream().filter(seen -> seen.startsWith("interceptor ")).toList());
     }
 
     /**
@@ -164,7 +160,6 @@ class BceRegistrationInterceptorInfoTest {
      * abstract {@code MarkedPart} is no bean (BUG-20261117-06).
      */
     @Test
-    @Disabled("BUG-20261117-06: with no bean of an expected type, a BeanInfo parameter is given classes that are no beans")
     @DisplayName("a BeanInfo parameter is given no class of the deployment that is no bean")
     void aBeanInfoParameterIsGivenNoClassThatIsNoBean() {
         assertEquals(List.of(), markedAtStart());

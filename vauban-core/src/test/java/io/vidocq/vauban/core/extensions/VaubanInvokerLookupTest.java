@@ -931,7 +931,7 @@ class VaubanInvokerLookupTest {
             try {
                 invokers.createInvoker(bean, constructor);
                 REFUSAL.set("accepted " + constructor.name());
-            } catch (IllegalStateException refused) {
+            } catch (DeploymentException refused) {
                 REFUSAL.set(refused.getMessage());
             }
         }

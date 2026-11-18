@@ -3463,7 +3463,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-06 — At start, a `@Registration` method with a `BeanInfo` parameter gets classes that are no beans
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-core` (`BceProcessor.registrationTargets`, `archiveTargets`), `vauban-processor`
   (`VaubanProcessor.loadArchiveClasses`)
 - **Symptom**: when no bean and no interceptor has one of a `@Registration` method's `types`, the container calls
@@ -3502,6 +3502,32 @@ suspected cause, status. Updated on every investigation.
   that `@Registration` is given, in the processor, at start and frozen alike, then drop the fallback; the CDI Lite TCK
   `PriorityTest` is the check.
 - **Found by**: the review of BUG-20261117-02.
+- **Cause** (proved): `BceProcessor.registrationTargets` gave a `BeanInfo` parameter the beans and interceptors the
+  container discovered, and, when none matched and the method took no `InvokerFactory`, the classes of the archive
+  that were subtypes of an expected type (`archiveTargets`), each as `BeanDescriptor.minimal`. Vauban had no
+  description of its built-in beans: the fallback was what fed `PriorityTest` its call. The processor passes no
+  loadable class of the compilation, so it made neither call.
+- **Fix**: the built-in beans are described as beans (`BuiltInBeans`: `BeanManager`, `Instance`, `Event`,
+  `InjectionPoint`, `Bean`, `Interceptor`, `RequestContextController` and the `@Intercepted Bean`, `@Dependent`, their interfaces and `Object` as
+  bean types, `@Default` and `@Any`, `@Intercepted` for the last) and `@Registration` gets those that match, in the
+  processor, at start and frozen; their `declaringClass()` is their interface, described from the class file. The
+  archive fallback is gone, with `archiveTargets`, `usesInvokerFactory` and the archive classes of
+  `processRegistration`. Two processor tests that record every bean of `@Registration(types = Object.class)` now
+  leave the built-in beans out. Round 4 of the review: `RequestContextController` joins the list (CDI 4.1, 6.5.8;
+  Vauban provides it as `VaubanRequestContextController`), and `InvokerFactory.createInvoker` throws a
+  `DeploymentException` for a bean that is no managed bean, as Weld does: it accepted a built-in bean, such as the
+  `BeanManager`. The producer check it replaces threw an `IllegalStateException`. Round 5: every other refusal of
+  `createInvoker` (interceptor, constructor, private method, `Object` method, method of another class) throws a
+  `DeploymentException` too, as Weld does (`InvokerFactoryImpl`); red `stack-l4-06d-red.log`, green
+  `stack-l4-06d-dev.log`. Red, `stack-l4-06b-red.log` and
+  `stack-l4-06c-red.log`; green, `stack-l4-06b-dev.log` and `stack-l4-06c-dev.log`
+  (`VetoedInterceptorCompileTimeTest#theInvokerFactoryRefusesABeanThatIsNoManagedBeanFromTheProcessorAtStartAndFrozen`).
+- **TCK**: `PriorityTest` (one `@Registration(types = Object.class)` call with no bean of the deployment) and
+  `RegistrationTest` pass: `stack-l4-06-dev.log`, "Dev run 5".
+- **Verification**: red, `stack-l4-06-red.log`, "Red run 3" (`BceRegistrationInterceptorInfoTest#aBeanInfoParameterIsGivenNoClassThatIsNoBean`
+  gives `MarkedPart`; `VetoedInterceptorCompileTimeTest#registrationGetsTheBuiltInBeansFromTheProcessorAtStartAndFrozen`
+  gets no built-in bean in the three places). Green, `stack-l4-06-dev.log`: "Dev run 2" and "Dev run 3"
+  (vauban-core, vauban-processor, vauban-maven-plugin), "Dev run 5" (the TCK tests).
 
 ## BUG-20261117-05 — `@Registration` over observers matches the class that declares them, not the observed event type
 

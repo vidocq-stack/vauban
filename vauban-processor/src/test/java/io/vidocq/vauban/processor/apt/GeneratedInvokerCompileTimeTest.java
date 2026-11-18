@@ -32,6 +32,7 @@ import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
 import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.invoke.Invoker;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.declarations.MethodInfo;
@@ -123,7 +124,7 @@ class GeneratedInvokerCompileTimeTest {
                         builder.withArgumentLookup(0).withArgumentLookup(1);
                     }
                     BUILT.put(method.name(), builder.build());
-                } catch (IllegalStateException _) {
+                } catch (DeploymentException _) {
                     REFUSED.add(method.name());
                 }
             }

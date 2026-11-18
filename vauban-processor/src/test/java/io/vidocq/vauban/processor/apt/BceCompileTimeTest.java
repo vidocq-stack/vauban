@@ -1050,7 +1050,10 @@ class BceCompileTimeTest {
 
         @Registration(types = Object.class)
         public void registration(BeanInfo bean) {
-            SEEN.add(bean.declaringClass().name() + "@" + bean.scope().name());
+            // The built-in beans of the container are left out (BUG-20261117-06)
+            if (!bean.declaringClass().name().startsWith("jakarta.")) {
+                SEEN.add(bean.declaringClass().name() + "@" + bean.scope().name());
+            }
         }
     }
 

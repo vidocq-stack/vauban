@@ -22,6 +22,7 @@ package io.vidocq.vauban.core.extensions;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
 import jakarta.enterprise.inject.build.compatible.spi.InvokerInfo;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.invoke.InvokerBuilder;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.declarations.MethodInfo;
@@ -44,32 +45,42 @@ public final class VaubanInvokerFactory implements InvokerFactory {
         return builders;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A bean that is no managed bean, a producer, a synthetic or a built-in bean, has no invoker: CDI 4.1 builds
+     * one of a method of a managed bean only. It accepted a built-in bean, such as the {@code BeanManager}
+     * (BUG-20261117-06). Every invoker that may not be built, of an interceptor, a constructor, a private method, a
+     * method of {@code Object} or of another class, makes the factory throw a {@code DeploymentException}, as Weld
+     * does; it threw an {@code IllegalStateException}.
+     */
     @Override
     public InvokerBuilder<InvokerInfo> createInvoker(BeanInfo bean, MethodInfo method) {
-        if (bean.isProducerMethod() || bean.isProducerField()) {
-            throw new IllegalStateException(
-                    "Cannot create invoker for producer bean: " + bean.declaringClass().name());
+        if (!bean.isClassBean()) {
+            var declaring = bean.declaringClass();
+            throw new DeploymentException("Cannot build invoker for a bean which is not a managed bean: "
+                    + (declaring == null ? bean.types() : declaring.name()));
         }
         if (bean.isInterceptor()) {
-            throw new IllegalStateException(
+            throw new DeploymentException(
                     "Cannot create invoker for interceptor bean: " + bean.declaringClass().name());
         }
         if (method.isConstructor()) {
-            throw new IllegalStateException(
+            throw new DeploymentException(
                     "Cannot create invoker for constructor of: " + bean.declaringClass().name());
         }
 
         var beanClassName = bean.declaringClass().name();
         if (Modifier.isPrivate(method.modifiers())) {
-            throw new IllegalStateException(
+            throw new DeploymentException(
                     "Cannot create invoker for private method: " + beanClassName + "." + method.name());
         }
         var target = InvokerTarget.of(beanClassName, method);
         if (target.isObjectMethod() && !"toString".equals(method.name())) {
-            throw new IllegalStateException("Cannot create invoker for Object method: " + method.name());
+            throw new DeploymentException("Cannot create invoker for Object method: " + method.name());
         }
         if (!target.isObjectMethod() && !declaresOrInherits(bean.declaringClass(), target.declaringClass())) {
-            throw new IllegalStateException(
+            throw new DeploymentException(
                     "Method " + method.name() + " does not belong to bean class " + beanClassName);
         }
         var beanClass = loadable(beanClassName);

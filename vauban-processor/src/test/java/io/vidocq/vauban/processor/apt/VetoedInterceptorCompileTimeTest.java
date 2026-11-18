@@ -36,6 +36,7 @@ import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
+import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
 import jakarta.enterprise.inject.build.compatible.spi.Messages;
 import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
@@ -49,6 +50,7 @@ import jakarta.enterprise.inject.spi.PassivationCapable;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.AnnotationMember;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
+import jakarta.enterprise.lang.model.declarations.MethodInfo;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.WildcardType;
 import org.junit.jupiter.api.Disabled;
@@ -61,6 +63,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
@@ -243,14 +246,19 @@ class VetoedInterceptorCompileTimeTest {
         }
     }
 
-    /** Records the beans and interceptors {@code @Registration} gives it while the processor runs. */
+    /**
+     * Records the beans and interceptors {@code @Registration} gives it while the processor runs, the built-in beans of
+     * the container left out (BUG-20261117-06).
+     */
     public static class RegistrationRecorder implements BuildCompatibleExtension {
 
         static final List<String> SEEN = new CopyOnWriteArrayList<>();
 
         @Registration(types = Object.class)
         public void registration(BeanInfo bean) {
-            SEEN.add(bean.declaringClass().name());
+            if (!bean.declaringClass().name().startsWith("jakarta.")) {
+                SEEN.add(bean.declaringClass().name());
+            }
         }
     }
 
@@ -2458,6 +2466,101 @@ class VetoedInterceptorCompileTimeTest {
         var seen = seenThreeWays(sources, ListenerRecorder.class, ListenerRecorder.SEEN);
 
         seen.assertEachIs(List.of("vi.Wide"));
+    }
+
+    /** Records the bean types and the qualifiers of each bean {@code @Registration} gives it that is no class of vi. */
+    public static class BuiltInRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void beans(BeanInfo bean) {
+            var types = bean.types().stream().map(ObserverRecorder::nameOf)
+                    .filter(name -> !name.equals(Object.class.getName())).sorted().toList();
+            if (types.stream().anyMatch(name -> name.startsWith("vi."))) {
+                return;
+            }
+            SEEN.add(String.join(", ", types) + bean.qualifiers().stream().map(AnnotationInfo::name)
+                    .filter(name -> !name.equals("jakarta.enterprise.inject.Default")
+                            && !name.equals("jakarta.enterprise.inject.Any"))
+                    .map(name -> " @" + name.substring(name.lastIndexOf('.') + 1)).collect(Collectors.joining()));
+        }
+    }
+
+    /**
+     * CDI 4.1 calls a {@code @Registration} method for each bean of the deployment, the built-in beans included: a
+     * deployment with no bean of its own gives a {@code @Registration(types = Object.class)} method the container's
+     * {@code BeanManager}, {@code Instance}, {@code Event}, {@code InjectionPoint}, {@code RequestContextController}
+     * and bean metadata beans. The container had no description of them: the processor gave none, and the start and
+     * the build that freezes the extensions gave the classes of the deployment instead, beans or not
+     * (BUG-20261117-06). The CDI Lite TCK's {@code PriorityTest} counts on one call.
+     */
+    @Test
+    @DisplayName("@Registration gets the built-in beans, everywhere")
+    void registrationGetsTheBuiltInBeansFromTheProcessorAtStartAndFrozen() throws Exception {
+        var seen = seenThreeWays(withASerializableInterceptor(), BuiltInRecorder.class, BuiltInRecorder.SEEN);
+
+        seen.assertEachIs(List.of("jakarta.enterprise.context.control.RequestContextController",
+                "jakarta.enterprise.event.Event",
+                "jakarta.enterprise.inject.Instance, jakarta.inject.Provider, java.lang.Iterable",
+                "jakarta.enterprise.inject.spi.Bean",
+                "jakarta.enterprise.inject.spi.Bean @Intercepted",
+                "jakarta.enterprise.inject.spi.BeanContainer, jakarta.enterprise.inject.spi.BeanManager",
+                "jakarta.enterprise.inject.spi.InjectionPoint",
+                "jakarta.enterprise.inject.spi.Interceptor"));
+    }
+
+    /**
+     * Asks an invoker of the first method of each bean {@code @Registration} gives it, and records whether the
+     * factory gave one or what it threw.
+     */
+    public static class InvokerOnEveryBean implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void invokers(BeanInfo bean, InvokerFactory invokers) {
+            var label = bean.declaringClass().name() + bean.qualifiers().stream().map(AnnotationInfo::name)
+                    .filter(name -> name.endsWith(".Intercepted")).map(_ -> " @Intercepted")
+                    .collect(Collectors.joining());
+            var method = bean.declaringClass().methods().stream()
+                    .filter(candidate -> !candidate.isStatic() && !Modifier.isPrivate(candidate.modifiers()))
+                    .min(java.util.Comparator.comparing(MethodInfo::name)).orElse(null);
+            if (method == null) {
+                SEEN.add(label + " has no method");
+                return;
+            }
+            try {
+                invokers.createInvoker(bean, method);
+                SEEN.add(label + " accepted");
+            } catch (RuntimeException refused) {
+                SEEN.add(label + " refused, " + refused.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /**
+     * CDI 4.1 gives an invoker of a method of a managed bean only; the {@code InvokerFactory} throws for any other
+     * bean, and Weld throws a {@code DeploymentException}, for an interceptor too. The factory accepted a built-in
+     * bean, such as the {@code BeanManager}, once {@code @Registration} got the built-in beans, and refused an
+     * interceptor with an {@code IllegalStateException} (BUG-20261117-06).
+     */
+    @Test
+    @DisplayName("the invoker factory refuses a bean that is no managed bean, everywhere")
+    void theInvokerFactoryRefusesABeanThatIsNoManagedBeanFromTheProcessorAtStartAndFrozen() throws Exception {
+        var seen = seenThreeWays(withASerializableInterceptor(), InvokerOnEveryBean.class, InvokerOnEveryBean.SEEN);
+
+        seen.assertEachIs(List.of(
+                "jakarta.enterprise.context.control.RequestContextController refused, DeploymentException",
+                "jakarta.enterprise.event.Event refused, DeploymentException",
+                "jakarta.enterprise.inject.Instance refused, DeploymentException",
+                "jakarta.enterprise.inject.spi.Bean @Intercepted refused, DeploymentException",
+                "jakarta.enterprise.inject.spi.Bean refused, DeploymentException",
+                "jakarta.enterprise.inject.spi.BeanManager refused, DeploymentException",
+                "jakarta.enterprise.inject.spi.InjectionPoint refused, DeploymentException",
+                "jakarta.enterprise.inject.spi.Interceptor refused, DeploymentException",
+                "vi.LoggedService accepted",
+                "vi.Logger refused, DeploymentException"));
     }
 
     /** Records the method, the event parameter, the bean and the qualifiers of each observer of {@code vi.Hearer}. */
