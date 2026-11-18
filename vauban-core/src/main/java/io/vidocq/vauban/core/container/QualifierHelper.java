@@ -53,20 +53,7 @@ final class QualifierHelper {
                 methodName, index, MethodType.methodType(void.class, member.getParameterTypes()).descriptorString());
         var legacy = InjectionPointInfo.parameterDescription(declaringSimpleName,
                 methodName, index);
-        InjectionPointInfo exact = null;
-        InjectionPointInfo found = null;
-        for (var point : points) {
-            if (point.kind() == InjectionPointInfo.InjectionKind.FIELD) continue;
-            if (point.description().equals(wanted)) exact = point;
-            else if (point.description().equals(legacy)) {
-                // Old descriptors name a parameter by member name and position only. A unique legacy
-                // match is safe, but overloaded members stay unresolved rather than receive the
-                // qualifiers of another member.
-                if (found != null) return null;
-                found = point;
-            }
-        }
-        if (exact != null) found = exact;
+        var found = parameterPoint(points, member.getDeclaringClass(), wanted, legacy);
         if (found == null) {
             return null;
         }
@@ -74,6 +61,30 @@ final class QualifierHelper {
         return qualifiers.isEmpty()
                 ? new Annotation[] {jakarta.enterprise.inject.Default.Literal.INSTANCE}
                 : qualifiers.toArray(new Annotation[0]);
+    }
+
+    /**
+     * The point of {@code points} that describes the parameter: the one of description {@code wanted}, one that names
+     * {@code declaring} preferred, or else the only one of description {@code legacy}; {@code null} for none, or for
+     * two legacy ones.
+     */
+    private static InjectionPointInfo parameterPoint(List<InjectionPointInfo> points, Class<?> declaring,
+            String wanted, String legacy) {
+        InjectionPointInfo exact = null;
+        InjectionPointInfo found = null;
+        for (var point : points) {
+            if (point.kind() == InjectionPointInfo.InjectionKind.FIELD || !mayDeclare(point, declaring)) continue;
+            if (point.description().equals(wanted)) {
+                exact = preferred(exact, point);
+            } else if (point.description().equals(legacy)) {
+                // Old descriptors name a parameter by member name and position only. A unique legacy
+                // match is safe, but overloaded members stay unresolved rather than receive the
+                // qualifiers of another member.
+                if (found != null) return null;
+                found = point;
+            }
+        }
+        return exact != null ? exact : found;
     }
 
     /**
@@ -116,13 +127,29 @@ final class QualifierHelper {
         // The declaring class is part of it: a subclass field may shadow a superclass field's name.
         var wanted = InjectionPointInfo.fieldDescription(
                 simpleName(field.getDeclaringClass()), field.getName());
+        InjectionPointInfo found = null;
         for (var point : points) {
             if (point.kind() == InjectionPointInfo.InjectionKind.FIELD
-                    && point.description().equals(wanted)) {
-                return point;
+                    && point.description().equals(wanted) && mayDeclare(point, field.getDeclaringClass())) {
+                found = preferred(found, point);
             }
         }
-        return null;
+        return found;
+    }
+
+    /**
+     * Whether {@code point} may be that of a member {@code declaring} declares: it names that class, or none, as a
+     * point read back without it. The description names the class by its simple name only, which a superclass of
+     * another package may share: a point that names its class is preferred (BUG-20261118-50, review round 5).
+     */
+    private static boolean mayDeclare(InjectionPointInfo point, Class<?> declaring) {
+        return point.declaringClass() == null || point.declaringClass().value().equals(declaring.getName());
+    }
+
+    /** {@code candidate} over {@code found} when there is none yet, or when it names its class and the other not. */
+    private static InjectionPointInfo preferred(InjectionPointInfo found, InjectionPointInfo candidate) {
+        return found == null || found.declaringClass() == null && candidate.declaringClass() != null
+                ? candidate : found;
     }
 
     /**

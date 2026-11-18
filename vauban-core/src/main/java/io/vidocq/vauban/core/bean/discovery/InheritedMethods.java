@@ -50,8 +50,8 @@ final class InheritedMethods {
     record Superclass(ClassInfo type, Map<String, TypeInfo> given) {
     }
 
-    /** A method a superclass declares that the bean class inherits, and what the bean class gives its variables. */
-    record Inherited(MethodInfo method, Map<String, TypeInfo> given) {
+    /** A method {@code declaring} declares and the bean class inherits, and what the bean class gives its variables. */
+    record Inherited(ClassInfo declaring, MethodInfo method, Map<String, TypeInfo> given) {
     }
 
     /**
@@ -91,7 +91,7 @@ final class InheritedMethods {
             for (var method : superclass.type().methods()) {
                 if (!method.isPrivate() && !method.isStatic() && !method.isConstructor()
                         && signatures.add(signature(method, superclass.given()))) {
-                    inherited.add(new Inherited(method, superclass.given()));
+                    inherited.add(new Inherited(superclass.type(), method, superclass.given()));
                 }
             }
         }

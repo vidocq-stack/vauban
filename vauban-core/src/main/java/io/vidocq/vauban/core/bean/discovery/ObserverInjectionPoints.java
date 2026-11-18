@@ -68,20 +68,21 @@ final class ObserverInjectionPoints {
         for (var inherited : InheritedMethods.methods(beanClass,
                 name -> host.index.getClassByName(name).or(() -> outside.apply(name)))) {
             if (isObserver(inherited.method())) {
-                addParameters(beanClass, inherited.method(), inherited.given(), points);
+                // Described by the class that declares the observer, as every injection point (BUG-20261118-50)
+                addParameters(inherited.declaring(), inherited.method(), inherited.given(), points);
             }
         }
         return points;
     }
 
-    private void addParameters(ClassInfo beanClass, MethodInfo method, Map<String, TypeInfo> given,
+    private void addParameters(ClassInfo declaring, MethodInfo method, Map<String, TypeInfo> given,
             List<InjectionPointInfo> points) {
         var parameters = method.parameters();
         for (int i = 0; i < parameters.size(); i++) {
             var type = InheritedMethods.given(parameters.get(i).type(), given);
             if (!BeanDiscovery.hasObserverAnnotation(parameters.get(i).annotations()) && !hasTypeVariable(type)
                     && !(type instanceof TypeInfo.ClassType(var name) && name.equals(EVENT_METADATA))) {
-                points.add(host.parameterInjectionPoint(beanClass, method, method.name(), i, type,
+                points.add(host.parameterInjectionPoint(declaring, method, method.name(), i, type,
                         InjectionPointInfo.InjectionKind.METHOD_PARAMETER));
             }
         }

@@ -420,9 +420,11 @@ public final class BceProcessor {
         // Phase: @Registration — on the beans as Enhancement left them, the classes it made beans included
         // (BUG-20261008-03)
         var enhancedBeans = beansAfterEnhancement(beans, allEnhancementMods, managedBean);
+        var registered = withInheritedInjectionPoints(enhancedBeans, enhancedLookup.index(), phaseModifications,
+                qualifiers);
         var invokers = new ArrayList<VaubanInvokerFactory>();
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
-                processRegistration(bce, bceClass, enhancedBeans, observers, interceptorsAsBeans(interceptors,
+                processRegistration(bce, bceClass, registered, observers, interceptorsAsBeans(interceptors,
                         managedBean), enhancedLookup, classLoader, types, deploymentErrors, invokers));
 
         // Phase: @Synthesis
@@ -499,6 +501,75 @@ public final class BceProcessor {
     @FunctionalInterface
     private interface PhaseAction {
         void run() throws ReflectiveOperationException;
+    }
+
+    /**
+     * The beans as {@code @Registration} sees them: a managed bean with the injection points its class inherits too,
+     * which its descriptor leaves out, each as the {@code @Enhancement} configs of that class left it. A member a
+     * superclass declares, configured through a subclass, changes that subclass's bean only (BUG-20261118-48): its
+     * shared declaration in the index does not carry the change, the descriptor of the subclass's bean does, as the
+     * container injects it. {@code BeanInfo.injectionPoints()} gave the declared injection points only
+     * (BUG-20261118-50). The configs apply to the inherited points too: one of them may make an initializer of an
+     * inherited method that declares no {@code @Inject}, which the container calls (review round 3). A point is told
+     * from another by its description and the class that declares its member ({@code declaringClass}), which the
+     * description names by its simple name only (review round 5); a point read back without that class is one of the
+     * bean class, or of the nearest superclass that declares a member it describes.
+     */
+    static List<BeanDescriptor> withInheritedInjectionPoints(List<BeanDescriptor> beans, VaubanIndex index,
+            Map<DotName, List<VaubanClassConfig>> modifications, RegisteredQualifiers qualifiers) {
+        var discovery = new io.vidocq.vauban.core.bean.discovery.BeanDiscovery(index);
+        discovery.setCustomQualifiers(qualifiers.types());
+        var lookup = new IndexLookup(index);
+        var result = new ArrayList<BeanDescriptor>(beans.size());
+        for (var bean : beans) {
+            var beanClass = bean.kind() == BeanDescriptor.BeanKind.MANAGED
+                    ? lookup.describe(bean.beanClass()).orElse(null) : null;
+            if (beanClass == null) {
+                result.add(bean);
+                continue;
+            }
+            var keyed = new java.util.LinkedHashMap<String, io.vidocq.vauban.core.bean.model.InjectionPointInfo>();
+            bean.injectionPoints().forEach(point -> keyed.putIfAbsent(key(point, beanClass), point));
+            discovery.inheritedInjectionPoints(beanClass).stream()
+                    .filter(point -> !keyed.containsKey(" " + point.description()))
+                    .forEach(point -> keyed.putIfAbsent(key(point, beanClass), point));
+            var points = List.copyOf(keyed.values());
+            var configs = modifications.get(bean.beanClass());
+            if (configs != null) {
+                points = applyEnhancements(List.of(withInjectionPoints(bean, points)),
+                        Map.of(bean.beanClass(), configs)).stream().findFirst()
+                        .map(BeanDescriptor::injectionPoints).orElse(points);
+            }
+            result.add(points.equals(bean.injectionPoints()) ? bean : withInjectionPoints(bean, points));
+        }
+        return result;
+    }
+
+    /**
+     * What tells {@code point} of a bean of class {@code beanClass} from another: its description, and the class
+     * that declares its member. Read back without that class, a point the description names the bean class of is
+     * the bean class's, and another one is keyed by its description alone, which an inherited point of that
+     * description then matches.
+     */
+    private static String key(io.vidocq.vauban.core.bean.model.InjectionPointInfo point,
+            io.vidocq.vauban.indexer.model.ClassInfo beanClass) {
+        var declaring = point.declaringClass();
+        var simpleName = beanClass.name().simpleName();
+        var description = point.description();
+        if (declaring == null && (description.startsWith("field " + simpleName + ".")
+                || description.contains(" of " + simpleName + ".")
+                || description.contains(" of " + simpleName + "("))) {
+            declaring = beanClass.name();
+        }
+        return (declaring == null ? "" : declaring.value()) + " " + description;
+    }
+
+    private static BeanDescriptor withInjectionPoints(BeanDescriptor bean,
+            List<io.vidocq.vauban.core.bean.model.InjectionPointInfo> points) {
+        return new BeanDescriptor(bean.id(), bean.beanClass(), bean.kind(), bean.types(), bean.qualifiers(),
+                bean.scope(), bean.isAlternative(), bean.priority(), bean.priorityDeclared(), points, bean.name(),
+                bean.interceptorBindings(), bean.constructorBindings(), bean.interceptorBindingAnnotations(),
+                bean.enhancedInjectionMethods());
     }
 
     /**

@@ -1451,6 +1451,57 @@ public final class BeanDiscovery {
         return new ObserverInjectionPoints(this, outside).of(beanClass);
     }
 
+    /**
+     * The injection points {@code beanClass} inherits from its superclasses: their {@code @Inject} fields, and the
+     * parameters of their initializer methods no class below overrides, a private one included, which none can
+     * override. Each is described, as the start injects it, with the class that declares it, and typed as the bean
+     * class gives that class's type variables. A bean's injection points hold the ones its class declares only; CDI
+     * 4.1 gives {@code BeanInfo.injectionPoints()} all of them (BUG-20261118-50). A superclass outside the index, of
+     * a library jar, is described as the language model describes it ({@code IndexLookup.find}): from the
+     * compilation in the processor, from its class file at start and in {@code vauban:generate}, where the index alone
+     * stopped the walk (review round 2). Each names the class that declares it ({@code declaringClass}): a
+     * description names that class by its simple name, which a class of another package may share (review round 5).
+     */
+    public List<InjectionPointInfo> inheritedInjectionPoints(ClassInfo beanClass) {
+        var points = new ArrayList<InjectionPointInfo>();
+        for (var superclass : InheritedMethods.superclasses(beanClass, lookup::find)) {
+            var type = superclass.type();
+            for (var field : type.fields()) {
+                if (!field.isStatic() && hasAnnotation(field.annotations(), INJECT)) {
+                    points.add(new InjectionPointInfo(asReflected(InheritedMethods.given(field.type(),
+                            superclass.given())),
+                            qualifierResolver.resolveNamedDefault(computeInjectionPointQualifiers(field.annotations()),
+                                    field.name()),
+                            qualifierResolver.resolveNamedDefault(declaredInjectionPointQualifiers(field.annotations()),
+                                    field.name()),
+                            InjectionPointInfo.InjectionKind.FIELD,
+                            InjectionPointInfo.fieldDescription(type.name().simpleName(), field.name()),
+                            type.name()));
+                }
+            }
+            for (var method : type.methods()) {
+                if (method.isPrivate() && !method.isStatic() && hasAnnotation(method.annotations(), INJECT)) {
+                    addInheritedInitializer(type, method, superclass.given(), points);
+                }
+            }
+        }
+        for (var inherited : InheritedMethods.methods(beanClass, lookup::find)) {
+            if (hasAnnotation(inherited.method().annotations(), INJECT)) {
+                addInheritedInitializer(inherited.declaring(), inherited.method(), inherited.given(), points);
+            }
+        }
+        return points;
+    }
+
+    private void addInheritedInitializer(ClassInfo declaring, MethodInfo method, Map<String, TypeInfo> given,
+            List<InjectionPointInfo> points) {
+        for (int i = 0; i < method.parameters().size(); i++) {
+            points.add(parameterInjectionPoint(declaring, method, method.name(), i,
+                    asReflected(InheritedMethods.given(method.parameters().get(i).type(), given)),
+                    InjectionPointInfo.InjectionKind.METHOD_PARAMETER));
+        }
+    }
+
     List<InjectionPointInfo> discoverInjectionPoints(ClassInfo classInfo) {
         var points = new ArrayList<InjectionPointInfo>();
         addConstructorInjectionPoints(classInfo, points);
@@ -1505,7 +1556,8 @@ public final class BeanDiscovery {
                 points.add(new InjectionPointInfo(
                         resolvedType, qualifiers, declared,
                         InjectionPointInfo.InjectionKind.FIELD,
-                        InjectionPointInfo.fieldDescription(classInfo.name().simpleName(), field.name())
+                        InjectionPointInfo.fieldDescription(classInfo.name().simpleName(), field.name()),
+                        classInfo.name()
                 ));
             }
         }
@@ -1585,7 +1637,8 @@ public final class BeanDiscovery {
                 declaredInjectionPointQualifiers(annotations),
                 kind,
                 InjectionPointInfo.parameterDescription(classInfo.name().simpleName(), methodName, index,
-                        method.parameters().stream().map(ParameterInfo::type).toList()));
+                        method.parameters().stream().map(ParameterInfo::type).toList()),
+                classInfo.name());
     }
 
     static boolean hasObserverAnnotation(List<AnnotationInfo> annotations) {

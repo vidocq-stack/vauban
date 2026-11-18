@@ -480,7 +480,9 @@ final class EnhancementApplier {
                                                List<InjectionPointInfo> injectionPoints) {
         String description = InjectionPointInfo.fieldDescription(
                 indexedSimpleName(fieldConfig.info().declaringClass().name()), fieldConfig.info().name());
-        int existingIndex = findPoint(injectionPoints, InjectionPointInfo.InjectionKind.FIELD, description);
+        var declaringClass = DotName.of(fieldConfig.info().declaringClass().name());
+        int existingIndex = findPoint(injectionPoints, InjectionPointInfo.InjectionKind.FIELD, description,
+                declaringClass);
         var sourceInject = fieldConfig.info().annotation(jakarta.inject.Inject.class);
         boolean removedInject = fieldConfig.isAllAnnotationsRemoved()
                 || (sourceInject != null && fieldConfig.getRemovePredicates().stream().anyMatch(p -> p.test(sourceInject)));
@@ -506,7 +508,7 @@ final class EnhancementApplier {
                 ? LangModelTypeMapper.toIndexType(fieldConfig.info().type())
                 : existing.requiredType();
         var point = new InjectionPointInfo(requiredType, resolved, declared,
-                InjectionPointInfo.InjectionKind.FIELD, description);
+                InjectionPointInfo.InjectionKind.FIELD, description, declaringClass);
         if (existingIndex >= 0) injectionPoints.set(existingIndex, point);
         else injectionPoints.add(point);
     }
@@ -562,7 +564,8 @@ final class EnhancementApplier {
                 method.isConstructor() ? null : method.name(), index,
                 method.parameters().stream()
                         .map(parameter -> LangModelTypeMapper.toIndexType(parameter.type())).toList());
-        int existingIndex = findPoint(injectionPoints, kind, description);
+        var declaringClass = DotName.of(method.declaringClass().name());
+        int existingIndex = findPoint(injectionPoints, kind, description, declaringClass);
         if (existingIndex < 0 && !injected) return;
 
         var existing = existingIndex >= 0 ? injectionPoints.get(existingIndex) : null;
@@ -579,16 +582,24 @@ final class EnhancementApplier {
         var requiredType = existing == null
                 ? LangModelTypeMapper.toIndexType(parameterConfig.info().type())
                 : existing.requiredType();
-        var point = new InjectionPointInfo(requiredType, resolved, declared, kind, description);
+        var point = new InjectionPointInfo(requiredType, resolved, declared, kind, description, declaringClass);
         if (existingIndex >= 0) injectionPoints.set(existingIndex, point);
         else injectionPoints.add(point);
     }
 
+    /**
+     * The point of the member a config targets: its description, which names the declaring class by its simple name,
+     * and that class when the point knows it. A config of an inherited {@code q.X.dep} replaced the point of the bean
+     * class's own {@code p.X.dep} (BUG-20261118-50, review round 5).
+     */
     private static int findPoint(List<InjectionPointInfo> points,
-            InjectionPointInfo.InjectionKind kind, String description) {
+            InjectionPointInfo.InjectionKind kind, String description, DotName declaringClass) {
         for (int i = 0; i < points.size(); i++) {
             var point = points.get(i);
-            if (point.kind() == kind && point.description().equals(description)) return i;
+            if (point.kind() == kind && point.description().equals(description)
+                    && (point.declaringClass() == null || point.declaringClass().equals(declaringClass))) {
+                return i;
+            }
         }
         return -1;
     }

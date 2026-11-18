@@ -1466,6 +1466,8 @@ class VetoedInterceptorCompileTimeTest {
      * {@code on(@Observes Pung, Holder<Pung>)}, and the only holder is a {@code Holder<String>}: a type no bean of this
      * compilation declares, it leaves the start to decide with a warning, as for a declared observer. The parameters
      * the container provides, and one of a superclass's type variable the bean class gives {@code String}, are none.
+     * A message names the parameter by the class that declares the observer, {@code ToolListenerBase.on}, as every
+     * injection point (BUG-20261118-50, review round 6).
      */
     @Test
     @DisplayName("an inherited or static observer's unresolvable parameter fails the build and the start")
@@ -1511,11 +1513,11 @@ class VetoedInterceptorCompileTimeTest {
         var reported = built.messages().stream().filter(m -> m.contains("[Vauban]")).sorted().toList();
         assertAll(() -> assertEquals(3, reported.size(), () -> String.join("\n", reported)),
                 () -> assertTrue(reported.get(0).startsWith("ERROR: [Vauban] Ambiguous dependency: parameter 1 of"
-                        + " InheritedToolListener.on("), reported.get(0)),
+                        + " StaticToolListener.on("), reported.get(0)),
                 () -> assertTrue(reported.get(1).startsWith("ERROR: [Vauban] Ambiguous dependency: parameter 1 of"
-                        + " StaticToolListener.on("), reported.get(1)),
+                        + " ToolListenerBase.on("), reported.get(1)),
                 () -> assertTrue(reported.get(2).startsWith("WARNING: [Vauban] Unsatisfied dependency: parameter 1 of"
-                        + " InheritedPungHolderListener.on("), reported.get(2)));
+                        + " PungHolderListenerBase.on("), reported.get(2)));
         for (var refusal : startRefusalsRunAndFrozen(sources)) {
             assertTrue(refusal.contains("dependency for parameter arg1 of type vi.types."), refusal);
         }
@@ -4028,7 +4030,10 @@ class VetoedInterceptorCompileTimeTest {
      * extension adds, through {@code vi.types.Configured}, to the field and to the initializer parameter it inherits
      * from {@code vi.types.Base} changes {@code Configured} only: {@code Base} and its other subclass
      * {@code vi.types.Sibling} keep the default {@code Dep}, from the processor, at start and frozen. The config of a
-     * class held only its declared members (BUG-20261118-48).
+     * class held only its declared members (BUG-20261118-48). {@code @Registration} sees the injection points the
+     * two subclasses inherit, each with the qualifiers its own config left, and the declaration {@code Base} declares,
+     * with its own annotations: it gave none of them, but in the processor the two the config changed, with the class
+     * as their declaration (BUG-20261118-50).
      */
     @Test
     @DisplayName("ClassConfig configures the inherited members for that subclass only, three ways")
@@ -4081,11 +4086,303 @@ class VetoedInterceptorCompileTimeTest {
         }
 
         var expected = "[Configured SpecialDep/SpecialDep, Sibling PlainDep/PlainDep, Base PlainDep/PlainDep]";
-        assertAll(() -> seen.distinct().assertEachIs(List.of("field field of vi.types.Base",
-                        "field viaMethod of vi.types.Base", "method get of vi.types.Base",
-                        "method set of vi.types.Base")),
+        assertAll(() -> seen.distinct().assertEachIs(List.of(
+                        "Configured field field qualifiers [Any, Named(special)] declared [Inject]",
+                        "Configured parameter of set qualifiers [Any, Named(special)] declared []",
+                        "Sibling field field qualifiers [Any, Default] declared [Inject]",
+                        "Sibling parameter of set qualifiers [Any, Default] declared []",
+                        "field field of vi.types.Base", "field viaMethod of vi.types.Base",
+                        "method get of vi.types.Base", "method set of vi.types.Base")),
                 () -> assertEquals(List.of(expected, expected, expected), got,
                         "what each bean got, at start, frozen, and from the processor"));
+    }
+
+    /**
+     * {@code @Enhancement} makes {@code Base.other(Dep)}, which declares no {@code @Inject}, an initializer of
+     * {@code Configured} through that class's config: the container calls it on a {@code Configured} and not on a
+     * {@code Sibling}, and {@code @Registration} lists its parameter among {@code Configured}'s injection points only,
+     * in the processor, at start and frozen (BUG-20261118-50, review round 3).
+     */
+    @Test
+    @DisplayName("an initializer a subclass's config makes of an inherited method is an injection point, three ways")
+    void anInheritedMethodASubclassConfigInjectsIsAnInjectionPoint() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Dep", "public interface Dep {\n}");
+        putType(sources, "PlainDep", DEPENDENT + "public class PlainDep implements Dep {\n}");
+        putType(sources, "Base", DEPENDENT + """
+                public class Base implements java.util.function.Supplier<Object> {
+                    Dep viaOther;
+
+                    void other(Dep dep) {
+                        viaOther = dep;
+                    }
+
+                    @Override
+                    public Object get() {
+                        return viaOther == null ? "none" : viaOther.getClass().getSimpleName();
+                    }
+                }""");
+        for (var subclass : List.of("Configured", "Sibling")) {
+            putType(sources, subclass, DEPENDENT + "@jakarta.enterprise.inject.Typed(" + subclass + ".class)\n"
+                    + "public class " + subclass + " extends Base {\n}");
+        }
+        var got = new ArrayList<String>();
+        StartedCheck injected = (container, loader) -> got.add(Stream.of("Configured", "Sibling")
+                .map(name -> name + " " + hello(container, loadType(loader, name))).toList().toString());
+
+        var seen = seenThreeWays(sources, InjectAddingConfigurer.class, InjectAddingConfigurer.SEEN, injected);
+
+        var expected = "[Configured PlainDep, Sibling none]";
+        assertAll(() -> seen.distinct().assertEachIs(List.of(
+                        "Configured parameter of other qualifiers [Any, Default]")),
+                () -> assertEquals(List.of(expected, expected), got, "what each bean got, at start and frozen"));
+    }
+
+    /**
+     * {@code vi.types.Twin} extends {@code vi.other.Twin}, and both declare an {@code @Inject} field {@code dep}: the
+     * bean has two injection points, its own and the inherited one, which descriptions alone, naming the class by its
+     * simple name, would not tell apart (BUG-20261118-50, review round 3); the declaration of each is the field of the
+     * class that declares it (review round 4).
+     */
+    @Test
+    @DisplayName("a field a superclass of the same simple name declares is an injection point of its own, three ways")
+    void aSuperclassOfTheSameSimpleNameKeepsItsInjectionPoint() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Dep", "public interface Dep {\n}");
+        putType(sources, "PlainDep", DEPENDENT + "public class PlainDep implements Dep {\n}");
+        sources.put("vi/other/Twin.java", """
+                package vi.other;
+
+                public abstract class Twin {
+                    @jakarta.inject.Inject
+                    protected vi.types.Dep dep;
+                }
+                """);
+        putType(sources, "Twin", DEPENDENT + """
+                public class Twin extends vi.other.Twin {
+                    @jakarta.inject.Inject
+                    Dep dep;
+                }""");
+        var seen = seenThreeWays(sources, InjectAddingConfigurer.class, InjectAddingConfigurer.SEEN);
+        seen.distinct().assertEachIs(List.of("Twin field dep of vi.other.Twin",
+                "Twin field dep of vi.types.Twin", "Twin points 2"));
+    }
+
+    /**
+     * The same {@code vi.types.Twin} as {@link #aSuperclassOfTheSameSimpleNameKeepsItsInjectionPoint}, which observes
+     * {@code Pung}: the bean an {@code ObserverInfo} gives has the two points, each declared by its own class
+     * (review round 5).
+     */
+    @Test
+    @DisplayName("the bean of an observer tells the field of a superclass of the same simple name, three ways")
+    void theBeanOfAnObserverTellsASuperclassOfTheSameSimpleName() throws Exception {
+        var seen = seenThreeWays(withTwins(), TwinObserverRecorder.class, TwinObserverRecorder.SEEN);
+        seen.distinct().assertEachIs(List.of("observer bean field dep of vi.other.Twin",
+                "observer bean field dep of vi.types.Twin"));
+    }
+
+    /**
+     * {@code vi.types.Twin}'s config qualifies {@code @Named("special")} the field {@code dep} it inherits from
+     * {@code vi.other.Twin}: that field gets the {@code SpecialDep}, the field {@code dep} of {@code vi.types.Twin}
+     * keeps the default {@code PlainDep}, and {@code @Registration} sees each with its qualifiers, three ways. The
+     * config replaced the point of the first field of that description, the bean class's (review round 5).
+     */
+    @Test
+    @DisplayName("a config of a field a superclass of the same simple name declares leaves the bean's own, three ways")
+    void aConfigOfTheInheritedFieldLeavesTheOwnFieldOfTheSameName() throws Exception {
+        var got = new ArrayList<String>();
+        StartedCheck injected = (container, loader) -> got.add(String.valueOf(hello(container, loadType(loader,
+                "Twin"))));
+        var seen = seenThreeWays(withTwins(), TwinConfigurer.class, TwinConfigurer.SEEN, injected);
+        assertAll(() -> seen.distinct().assertEachIs(List.of(
+                        "field dep of vi.other.Twin qualifiers [Any, Named(special)]",
+                        "field dep of vi.types.Twin qualifiers [Any, Default]")),
+                () -> assertEquals(List.of("PlainDep/SpecialDep", "PlainDep/SpecialDep"), got,
+                        "what Twin got, its own field then the inherited one, at start and frozen"));
+    }
+
+    /**
+     * {@code vi.types.Twin extends vi.other.Twin}, each with an {@code @Inject Dep dep}; {@code Twin} observes
+     * {@code Pung}, and a {@code SpecialDep} qualified {@code @Special @Named("special")} is there beside the
+     * {@code PlainDep}.
+     */
+    private static Map<String, String> withTwins() {
+        var sources = withAVetoedPackage();
+        putType(sources, "Special", """
+                @jakarta.inject.Qualifier
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface Special {
+                }""");
+        putType(sources, "Dep", "public interface Dep {\n}");
+        putType(sources, "PlainDep", DEPENDENT + "public class PlainDep implements Dep {\n}");
+        putType(sources, "SpecialDep", DEPENDENT + """
+                @Special
+                @jakarta.inject.Named("special")
+                public class SpecialDep implements Dep {
+                }""");
+        putType(sources, "Pung", "public class Pung {\n}");
+        sources.put("vi/other/Twin.java", """
+                package vi.other;
+
+                public abstract class Twin {
+                    @jakarta.inject.Inject
+                    protected vi.types.Dep dep;
+                }
+                """);
+        putType(sources, "Twin", DEPENDENT + """
+                public class Twin extends vi.other.Twin implements java.util.function.Supplier<Object> {
+                    @jakarta.inject.Inject
+                    Dep dep;
+
+                    void on(@jakarta.enterprise.event.Observes Pung pung) {
+                    }
+
+                    @Override
+                    public Object get() {
+                        return dep.getClass().getSimpleName() + "/" + super.dep.getClass().getSimpleName();
+                    }
+                }""");
+        return sources;
+    }
+
+    /** Records the class that declares each injection point of the bean of {@code Twin}'s observer. */
+    public static class TwinObserverRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void observers(ObserverInfo observer) {
+            if (observer.bean() != null && observer.bean().declaringClass().name().equals(TYPES + "Twin")) {
+                observer.bean().injectionPoints().forEach(point -> SEEN.add("observer bean field dep of "
+                        + point.declaration().asField().declaringClass().name()));
+            }
+        }
+    }
+
+    /**
+     * Qualifies {@code vi.other.Twin.dep} through {@code vi.types.Twin}'s config, and records {@code Twin}'s points.
+     */
+    public static class TwinConfigurer implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = Supplier.class, withSubtypes = true)
+        public void configure(ClassConfig type) {
+            if (type.info().name().equals(TYPES + "Twin")) {
+                type.fields().stream().filter(field -> field.info().declaringClass().name().equals("vi.other.Twin"))
+                        .forEach(field -> field.addAnnotation(jakarta.enterprise.inject.literal.NamedLiteral.of(
+                                "special")));
+            }
+        }
+
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean) {
+            if (bean.isClassBean() && bean.declaringClass().name().equals(TYPES + "Twin")) {
+                bean.injectionPoints().forEach(point -> SEEN.add("field dep of "
+                        + point.declaration().asField().declaringClass().name() + " qualifiers "
+                        + InheritedMemberConfigurer.named(point.qualifiers())));
+            }
+        }
+    }
+
+    /**
+     * Adds {@code @Inject} to {@code Base.other} through the config of {@code Configured}, and records the points of
+     * {@code Configured} and {@code Sibling}, and how many {@code Twin} has.
+     */
+    public static class InjectAddingConfigurer implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = Supplier.class, withSubtypes = true)
+        public void configure(ClassConfig type) {
+            if (type.info().name().equals(TYPES + "Configured")) {
+                type.methods().stream().filter(method -> method.info().name().equals("other"))
+                        .forEach(method -> method.addAnnotation(jakarta.inject.Inject.class));
+            }
+        }
+
+        /** The injection points of {@code Configured} and {@code Sibling}, with their qualifiers. */
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean) {
+            if (bean.isClassBean() && bean.declaringClass().name().equals(TYPES + "Twin")) {
+                SEEN.add("Twin points " + bean.injectionPoints().size());
+                bean.injectionPoints().forEach(point -> SEEN.add("Twin field dep of "
+                        + point.declaration().asField().declaringClass().name()));
+            }
+            if (!bean.isClassBean() || !List.of(TYPES + "Configured", TYPES + "Sibling")
+                    .contains(bean.declaringClass().name())) {
+                return;
+            }
+            for (var point : bean.injectionPoints()) {
+                var declaration = point.declaration();
+                var where = declaration.kind() == jakarta.enterprise.lang.model.declarations.DeclarationInfo.Kind
+                        .PARAMETER ? "parameter of " + declaration.asParameter().declaringMethod().name()
+                        : declaration.kind() + " " + declaration;
+                SEEN.add(bean.declaringClass().simpleName() + " " + where + " qualifiers "
+                        + InheritedMemberConfigurer.named(point.qualifiers()));
+            }
+        }
+    }
+
+    /**
+     * A bean whose superclass the index does not hold, an abstract class no annotation brings into it, as one of a
+     * library jar: {@code @Registration} sees the injection point and the observer the bean inherits from it, the same
+     * in the processor, at start and frozen. The processor described the superclass from the compilation, and the
+     * start and the freeze from the index alone, which does not hold it (BUG-20261118-50, review round 2).
+     */
+    @Test
+    @DisplayName("a bean inherits the injection point and the observer of a superclass outside the index, three ways")
+    void aBeanInheritsFromASuperclassOutsideTheIndex() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Dep", "public interface Dep {\n}");
+        putType(sources, "PlainDep", DEPENDENT + "public class PlainDep implements Dep {\n}");
+        putType(sources, "Pung", "public class Pung {\n}");
+        putType(sources, "LibraryBase", """
+                public abstract class LibraryBase {
+                    @jakarta.inject.Inject
+                    Dep dep;
+
+                    void on(@jakarta.enterprise.event.Observes Pung pung) {
+                    }
+                }""");
+        putType(sources, "LibraryUser", DEPENDENT + "public class LibraryUser extends LibraryBase {\n}");
+
+        var seen = seenThreeWays(sources, OutsideInheritanceRecorder.class, OutsideInheritanceRecorder.SEEN);
+
+        seen.distinct().assertEachIs(List.of("LibraryUser field dep of vi.types.LibraryBase",
+                "observer on of vi.types.LibraryBase for vi.types.LibraryUser"));
+    }
+
+    /**
+     * Records the injection points of the bean {@code vi.types.LibraryUser}, with the class that declares each, and
+     * the observers of {@code Pung} with the bean they belong to.
+     */
+    public static class OutsideInheritanceRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void points(BeanInfo bean) {
+            if (bean.isClassBean() && bean.declaringClass().name().equals(TYPES + "LibraryUser")) {
+                for (var point : bean.injectionPoints()) {
+                    var declaration = point.declaration();
+                    SEEN.add(bean.declaringClass().simpleName() + " " + switch (declaration.kind()) {
+                        case FIELD -> "field " + declaration.asField().name() + " of "
+                                + declaration.asField().declaringClass().name();
+                        default -> declaration.kind() + " " + declaration;
+                    });
+                }
+            }
+        }
+
+        @Registration(types = Object.class)
+        public void observers(ObserverInfo observer) {
+            if (observer.eventType().toString().endsWith("Pung")) {
+                SEEN.add("observer " + observer.observerMethod().name() + " of "
+                        + observer.observerMethod().declaringClass().name() + " for "
+                        + (observer.bean() == null ? null : observer.bean().declaringClass().name()));
+            }
+        }
     }
 
     private static Class<?> loadType(ClassLoader loader, String name) {
@@ -4124,6 +4421,37 @@ class VetoedInterceptorCompileTimeTest {
                             jakarta.enterprise.inject.literal.NamedLiteral.of("special"));
                 }
             }
+        }
+
+        /**
+         * What {@code @Registration} sees of the injection points of {@code Configured} and {@code Sibling}: the
+         * qualifiers of each, and the annotations of its declaration (BUG-20261118-50).
+         */
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean) {
+            if (!bean.isClassBean() || !List.of(TYPES + "Configured", TYPES + "Sibling")
+                    .contains(bean.declaringClass().name())) {
+                return;
+            }
+            for (var point : bean.injectionPoints()) {
+                var declaration = point.declaration();
+                var where = switch (declaration.kind()) {
+                    case FIELD -> "field " + declaration.asField().name();
+                    case PARAMETER -> "parameter of " + declaration.asParameter().declaringMethod().name();
+                    default -> declaration.kind() + " " + declaration;
+                };
+                SEEN.add(bean.declaringClass().simpleName() + " " + where + " qualifiers "
+                        + named(point.qualifiers()) + " declared " + named(declaration.annotations()));
+            }
+        }
+
+        /** The simple names of {@code annotations}, {@code @Named} with its value, sorted. */
+        static List<String> named(
+                java.util.Collection<jakarta.enterprise.lang.model.AnnotationInfo> annotations) {
+            return annotations.stream().map(annotation -> annotation.name().substring(
+                    annotation.name().lastIndexOf('.') + 1) + (annotation.name().equals(
+                    jakarta.inject.Named.class.getName()) ? "(" + annotation.value().asString() + ")" : ""))
+                    .sorted().toList();
         }
     }
 

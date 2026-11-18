@@ -25,6 +25,8 @@ import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanFieldInfo;
+import io.vidocq.vauban.core.langmodel.declarations.VaubanMethodInfo;
+import io.vidocq.vauban.core.langmodel.declarations.VaubanParameterInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
 import io.vidocq.vauban.indexer.model.DotName;
 import jakarta.enterprise.lang.model.AnnotationInfo;
@@ -32,6 +34,7 @@ import jakarta.enterprise.lang.model.declarations.DeclarationInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
 import java.util.Collection;
+import java.util.regex.Pattern;
 
 /**
  * Adapts Vauban's internal {@link InjectionPointInfo} (model) to the BCE
@@ -46,6 +49,17 @@ import java.util.Collection;
  */
 public final class VaubanBceInjectionPointInfo
         implements jakarta.enterprise.inject.build.compatible.spi.InjectionPointInfo {
+
+    /** {@code field <declaring simple name>.<field>}, as {@code InjectionPointInfo.fieldDescription} writes it. */
+    private static final Pattern FIELD = Pattern.compile("field ([^.]+)\\.(.+)");
+    /**
+     * {@code parameter <position> of <declaring simple name>[.<method>]() (<descriptor>)V}, as
+     * {@code InjectionPointInfo.parameterDescription} writes it.
+     */
+    private static final Pattern PARAMETER =
+            Pattern.compile("parameter (\\d+) of ([^.(]+)(?:\\.([^(]+))?\\(\\) (\\(.*\\)V)");
+    /** A bound on the superclasses walked, against a cycle the class files of a broken deployment could make. */
+    private static final int MAX_DEPTH = 64;
 
     private final InjectionPointInfo ip;
     private final DotName declaringClassName;
@@ -71,30 +85,80 @@ public final class VaubanBceInjectionPointInfo
                 .toList();
     }
 
+    /**
+     * The field or the parameter the injection point is, found by its description in the bean class or the superclass
+     * that declares it: a bean has the injection points its superclasses declare too (BUG-20261118-50). The
+     * declaration is the member the superclass declares, with its own annotations: what an {@code @Enhancement}
+     * config of a subclass changes on it shows in {@link #qualifiers()} only (BUG-20261118-48). An inherited field
+     * or any parameter gave the bean class; the class stays the answer for a point it cannot find.
+     */
     @Override
     public DeclarationInfo declaration() {
         var indexClass = lookup.getClass(declaringClassName).orElse(null);
         if (indexClass == null) return null;
-        var classInfo = new VaubanClassInfo(indexClass, lookup);
+        DeclarationInfo found = ip.kind() == InjectionPointInfo.InjectionKind.FIELD
+                ? field(indexClass) : parameter(indexClass);
+        return found != null ? found : new VaubanClassInfo(indexClass, lookup);
+    }
 
-        // Best-effort: locate the FieldInfo for FIELD-kind injection points by
-        // parsing the description ("field <simpleName>.<fieldName>"). For
-        // method/constructor parameters we do not yet expose ParameterInfo —
-        // fallback to the declaring ClassInfo, which still satisfies the
-        // contract (DeclarationInfo is the supertype).
-        if (ip.kind() == InjectionPointInfo.InjectionKind.FIELD) {
-            var desc = ip.description();
-            int dotIdx = desc.lastIndexOf('.');
-            if (dotIdx > 0 && desc.startsWith("field ")) {
-                var fieldName = desc.substring(dotIdx + 1);
-                for (var field : indexClass.fields()) {
-                    if (field.name().equals(fieldName)) {
-                        return new VaubanFieldInfo(field, classInfo, lookup);
-                    }
+    /** The field the description names, in {@code beanClass} or a superclass, or {@code null}. */
+    private DeclarationInfo field(io.vidocq.vauban.indexer.model.ClassInfo beanClass) {
+        var field = FIELD.matcher(ip.description());
+        if (!field.matches()) return null;
+        for (var type : declaringFirst(beanClass, field.group(1))) {
+            for (var member : type.fields()) {
+                if (member.name().equals(field.group(2))) {
+                    return new VaubanFieldInfo(member, new VaubanClassInfo(type, lookup), lookup);
                 }
             }
         }
-        return classInfo;
+        return null;
+    }
+
+    /** The parameter the description names, of a method of {@code beanClass} or a superclass, or {@code null}. */
+    private DeclarationInfo parameter(io.vidocq.vauban.indexer.model.ClassInfo beanClass) {
+        var parameter = PARAMETER.matcher(ip.description());
+        if (!parameter.matches()) return null;
+        var position = Integer.parseInt(parameter.group(1));
+        for (var type : declaringFirst(beanClass, parameter.group(2))) {
+            for (var method : type.methods()) {
+                if (declares(method, parameter.group(3), parameter.group(4))) {
+                    return new VaubanParameterInfo(method.parameters().get(position), position,
+                            new VaubanMethodInfo(method, new VaubanClassInfo(type, lookup), lookup), lookup);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code beanClass} and its superclasses, from the one of simple name {@code declaring} up: the class a
+     * description names. A parameter of an observer a bean inherits names the bean class, and is found above it. When
+     * the point names the class that declares its member, the chain starts at that class, not at the first of that
+     * simple name (BUG-20261118-50, review round 5).
+     */
+    private java.util.List<io.vidocq.vauban.indexer.model.ClassInfo> declaringFirst(
+            io.vidocq.vauban.indexer.model.ClassInfo beanClass, String declaring) {
+        var chain = new java.util.ArrayList<io.vidocq.vauban.indexer.model.ClassInfo>();
+        for (var type = beanClass; type != null && chain.size() < MAX_DEPTH;
+                type = type.superName() == null ? null : lookup.find(type.superName()).orElse(null)) {
+            chain.add(type);
+        }
+        for (int i = 0; i < chain.size(); i++) {
+            if (ip.declaringClass() != null ? chain.get(i).name().equals(ip.declaringClass())
+                    : chain.get(i).name().simpleName().equals(declaring)) {
+                return chain.subList(i, chain.size());
+            }
+        }
+        return chain;
+    }
+
+    /** Whether {@code method} is the method {@code name}, or the constructor for none, of {@code descriptor}. */
+    private static boolean declares(io.vidocq.vauban.indexer.model.MethodInfo method, String name,
+            String descriptor) {
+        return (name == null ? method.isConstructor() : !method.isConstructor() && method.name().equals(name))
+                && InjectionPointInfo.methodDescriptor(method.parameters().stream()
+                        .map(io.vidocq.vauban.indexer.model.ParameterInfo::type).toList()).equals(descriptor);
     }
 
     private AnnotationInfo toAnnotationInfo(QualifierInstance q) {

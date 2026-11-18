@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.bean.model;
 
+import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.Set;
@@ -35,13 +36,18 @@ import java.util.Set;
  * @param description        for error messages, and to find the point again from the member it
  *                           describes — build it with {@link #parameterDescription} or
  *                           {@link #fieldDescription}, never by hand
+ * @param declaringClass     the class that declares the field or the parameter's method, which the description names
+ *                           by its simple name only, or {@code null} when the point was read back without it: a
+ *                           superclass of another package may share that simple name (BUG-20261118-50, review round
+ *                           5); a point found by its description falls back to the first class of that simple name
  */
 public record InjectionPointInfo(
         TypeInfo requiredType,
         Set<QualifierInstance> qualifiers,
         Set<QualifierInstance> declaredQualifiers,
         InjectionKind kind,
-        String description
+        String description,
+        DotName declaringClass
 ) {
 
     public enum InjectionKind {
@@ -51,6 +57,12 @@ public record InjectionPointInfo(
     public InjectionPointInfo {
         qualifiers = Set.copyOf(qualifiers);
         declaredQualifiers = Set.copyOf(declaredQualifiers);
+    }
+
+    /** A point whose declaring class is unknown: one read back, or a synthetic one. */
+    public InjectionPointInfo(TypeInfo requiredType, Set<QualifierInstance> qualifiers,
+            Set<QualifierInstance> declaredQualifiers, InjectionKind kind, String description) {
+        this(requiredType, qualifiers, declaredQualifiers, kind, description, null);
     }
 
     /** For a caller that knows only one set — an extension that replaced it, or a synthetic point. */

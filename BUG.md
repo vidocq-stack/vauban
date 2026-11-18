@@ -5,6 +5,66 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-50 — `@Registration` does not see the injection points a bean inherits
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes)
+- **Module**: `vauban-core` (`BceProcessor`, `BeanDiscovery`, `VaubanBceInjectionPointInfo`)
+- **Symptom**: `vi.types.Base` declares `@Inject Dep field` and `@Inject void set(Dep)`; `Configured` and `Sibling`
+  extend it, and an `@Enhancement` adds `@Named("special")` to the field and the parameter through `Configured`'s
+  `ClassConfig` (BUG-20261118-48). The container injects `SpecialDep` into `Configured` and `PlainDep` into `Sibling`.
+  `BeanInfo.injectionPoints()` in `@Registration`: at start and frozen, none for either bean; in the processor, none
+  for `Sibling`, and two for `Configured` whose `declaration()` is the class `Configured`.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aClassConfigConfiguresTheInheritedMembersForThatSubclassOnly`.
+- **Cause** (proved): a bean descriptor holds the injection points its class declares: the index's `ClassInfo` has
+  the declared members only. `BeanInfo.injectionPoints()` reads that descriptor. In the processor the applier added
+  the points a config changed (`EnhancementApplier.applyFieldEnhancement`), named after `Base`, and
+  `VaubanBceInjectionPointInfo.declaration()` looked a field up in the bean class only, and a parameter not at all.
+  The review's reading, that the edited index (`EnhancedClasses.edited`) misses the `#Declaring` keys, is right and
+  stays so on purpose: those edits belong to the subclass's bean, not to the member the superclasses share.
+- **Fix**: `BeanDiscovery.inheritedInjectionPoints` gives the `@Inject` fields and the initializer parameters of the
+  superclasses (walked with `InheritedMethods`), and `BceProcessor.withInheritedInjectionPoints` adds them to the beans
+  `@Registration` sees, run through the applier with that class's configs. The descriptors the container injects
+  and validates with do not change. `declaration()` finds the field or the parameter by its description, in the
+  class it names. Review round 2: the walk reads a superclass outside the index as the language model does
+  (`IndexLookup.find`: from the compilation in the processor, from its class file at start and in
+  `vauban:generate`), where `describe` stopped at the index at start and frozen; and the points of the bean class's
+  own members are told from the inherited ones by the members the bean class declares, not by a description alone.
+  The observers a bean inherits from such a superclass already agreed: the start reads them by reflection. Review
+  round 3: an `@Inject` a subclass's config adds to an inherited method that declares none made an initializer the
+  container calls, which the view left out at start and frozen (the descriptor there holds the points of the index,
+  which keeps an inherited member unedited, BUG-20261118-48): the configs now apply to the inherited points too, and
+  a point is keyed by the class that declares its member plus its description, as a class of another package may
+  share the simple name the description uses. Review round 4: the view keeps that class for each point
+  (`BceProcessor.RegisteredBeans`), and `declaration()` finds the member in it; it took the first class of that
+  simple name, the bean class's field for the inherited `vi.other.Twin.dep`. Review round 5: that class is now a
+  component of the injection point itself (`InjectionPointInfo.declaringClass`, `null` for a point read back
+  without it, which falls back to the simple name): discovery sets it, the `@Enhancement` applier keeps it and
+  matches a point by it as well as by its description, and so does the container when it reads a member's
+  qualifiers (`QualifierHelper`). A config of the inherited `vi.other.Twin.dep` replaced the point of the bean
+  class's own `vi.types.Twin.dep`, which then got the `SpecialDep`, and the bean an `ObserverInfo` gave resolved
+  both fields to the bean class's. Review round 6: the parameters of an observer a bean inherits are described and
+  labelled by the class that declares the observer, as every other point; a validation message now names
+  `ToolListenerBase.on()`, not `InheritedToolListener.on()`.
+- **What stays**: `qualifiers()` holds `@Any`, as for every injection point Vauban gives. The arguments an invoker
+  looks up (`ExtensionMethodValidator`, `InvokerShape`) take their qualifiers from the language model's parameter,
+  `Base`'s, not from the config of `Configured`: the same in the three places, read from the code, not tested.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l2d-ff-50.log`, "BUG-50 red: final test on the code without the fix". Green, same
+  log, "BUG-50 green: core and processor suites" (core 1787, processor 479). Round 2: red, `stack-l2d-r2-50.log`,
+  "Round 2 red: superclass outside the index"
+  (`VetoedInterceptorCompileTimeTest#aBeanInheritsFromASuperclassOutsideTheIndex`: the field point missing at start
+  and frozen); green, same log, "Round 2 green: declaration with find". Round 3: red, `stack-l2d-r3-50.log`, "Round 3 red on
+  59a0397d" (`#anInheritedMethodASubclassConfigInjectsIsAnInjectionPoint`: the point missing at start and frozen;
+  `#aSuperclassOfTheSameSimpleNameKeepsItsInjectionPoint` passed, kept as a guard); green, same log, "Round 3 green:
+  configs apply to inherited points, keyed by declaring class". Round 4: red, `stack-l2d-r4-50.log`, "Round 4 red on 1a227955"
+  (`#aSuperclassOfTheSameSimpleNameKeepsItsInjectionPoint`: no point declared by `vi.other.Twin`, in the three
+  places); green, same log, "Round 4 green: declaration in the declaring class, sorted". Round 5: red, `stack-l2d-r5-50.log`, "Round 5 red on
+  dd8e00d4" (`#theBeanOfAnObserverTellsASuperclassOfTheSameSimpleName`: only `vi.types.Twin`, three places;
+  `#aConfigOfTheInheritedFieldLeavesTheOwnFieldOfTheSameName`: the qualifier on the bean class's own field, and
+  `SpecialDep/SpecialDep` injected); green, same log, "Round 5 green: the container matches by declaring class".
+- **Found by**: the final whole-branch review of the stack.
+
 ## BUG-20261118-53 — The build walks the inherited observers twice, each walk with its own rules
 
 - **Date**: 2026-11-18
