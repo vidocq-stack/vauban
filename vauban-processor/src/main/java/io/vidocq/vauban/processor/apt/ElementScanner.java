@@ -86,6 +86,14 @@ public final class ElementScanner {
     }
 
     /**
+     * Says, in a note, that this compiler gives no source to read a constructor's annotations that apply to a type use
+     * only from, when it gives none: the processor calls it once (BUG-20261118-06).
+     */
+    public static void noteWhenConstructorTypeUsesAreUnread(ProcessingEnvironment environment) {
+        ConstructorTypeUses.noteWhenUnavailable(environment);
+    }
+
+    /**
      * Creates a scanner of the compiler of {@code environment}, which reads, where the compiler gives the source, the
      * annotations on a constructor that apply to a type use only, as the bytecode scan reads them (BUG-20261118-06).
      */

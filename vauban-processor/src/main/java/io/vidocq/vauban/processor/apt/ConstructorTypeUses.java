@@ -46,6 +46,7 @@ import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
+import javax.tools.Diagnostic;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -67,6 +68,21 @@ final class ConstructorTypeUses {
 
     private ConstructorTypeUses(Trees trees) {
         this.trees = trees;
+    }
+
+    /** What the processor says once when the compiler has no trees to read. */
+    static final String UNREAD = "[Vauban] This compiler gives no com.sun.source trees: an annotation that targets"
+            + " TYPE_USE only, written on a constructor, is not read at build, where the start reads it on the"
+            + " constructor's return type (BUG-20261118-06).";
+
+    /**
+     * Says, in a note, that the annotations a constructor's source alone gives are not read, when the compiler of
+     * {@code environment} has no trees: ECJ, say (BUG-20261118-06).
+     */
+    static void noteWhenUnavailable(ProcessingEnvironment environment) {
+        if (of(environment).isEmpty()) {
+            environment.getMessager().printMessage(Diagnostic.Kind.NOTE, UNREAD);
+        }
     }
 
     /** The reader of the compiler of {@code environment}, when it has trees. */

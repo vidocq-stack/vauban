@@ -975,6 +975,9 @@ suspected cause, status. Updated on every investigation.
   it) and `EnhancementFailureGenerationTest` in `vauban-maven-plugin`. Red without the fix
   (`stack-l1-r3-1805.log`, "BUG-18-05 red: core start paths (unprocessed isolated, no service file)" and
   "BUG-18-05 red: vauban:generate": nothing was thrown).
+- **Round 1**: a compiler without trees, ECJ say, gets a `NOTE` once, from `VaubanProcessor.init`, that says those
+  annotations are not read (`ConstructorTypeUsesNoteTest`, green in `stack-l2d-r1.log`, "Round 1 (3)"); javac gets
+  none. No red: the note is new.
 - **Cause**: both methods filled error lists, `processEnhancement`'s and the `EnhancementSink`'s, and never read
   them; their own `catch (Exception _)` dropped a constructor that failed.
 - **Fix**: both throw the `DeploymentException` of their errors, the first exception as its cause, through

@@ -25,7 +25,6 @@ import io.vidocq.vauban.indexer.model.MethodInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.scanner.ClassFileScanner;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

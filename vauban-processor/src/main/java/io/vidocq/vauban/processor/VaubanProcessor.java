@@ -240,6 +240,7 @@ public class VaubanProcessor extends AbstractProcessor {
         // The packages vauban-core exports to the processor alone, which a qualified export does not give it when its
         // layer is above vauban-core's, as javac's --processor-module-path makes it (BUG-20261117-23)
         ProcessorAccess.grantTo(VaubanProcessor.class.getModule());
+        ElementScanner.noteWhenConstructorTypeUsesAreUnread(processingEnv);
         // The artefacts share one output: the classes one emits as bytecode, the providers instantiate through
         // their lookup (BUG-20261004-09).
         output = new GeneratedOutput(processingEnv);
