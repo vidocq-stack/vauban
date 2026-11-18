@@ -391,7 +391,8 @@ public final class ClientProxyShapeFromElements {
     }
 
     /**
-     * The shape of the proxy of {@code bean} when its class has a final method: the proxy extends the class above it
+     * The shape of the proxy of {@code bean} when its class is final or has a final method: the proxy extends the class
+     * above it
      * that {@link ForwardedMethods#proxySuperclass} picks, as the run-time generator's does, and implements the
      * interfaces of {@code bean}, every method of which it forwards through its interface (BUG-20261118-20). Empty when
      * the proxy extends {@code bean}. Such a shape is emitted as bytecode, named after {@code bean}.

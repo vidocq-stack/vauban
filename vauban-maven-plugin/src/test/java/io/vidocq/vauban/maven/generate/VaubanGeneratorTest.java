@@ -170,6 +170,41 @@ class VaubanGeneratorTest {
     public static class FinalStateBean extends FinalStateBase implements Stated {
     }
 
+    @jakarta.enterprise.context.ApplicationScoped
+    public static final class FinalClassBean implements Stated {
+        @Override
+        public String state() {
+            return "final";
+        }
+    }
+
+    @Test
+    @DisplayName("the proxy of a final bean class extends Object and forwards its interfaces (BUG-20261118-21)")
+    void proxyOfAFinalClass() throws Exception {
+        var name = FinalClassBean.class.getName();
+        var jarPath = tempDir.resolve("final-class.jar");
+        try (var jos = new JarOutputStream(new FileOutputStream(jarPath.toFile()));
+             var in = FinalClassBean.class.getResourceAsStream("/" + name.replace('.', '/') + ".class")) {
+            jos.putNextEntry(new JarEntry(name.replace('.', '/') + ".class"));
+            jos.write(in.readAllBytes());
+            jos.closeEntry();
+        }
+        var outputDir = tempDir.resolve("output");
+        var result = VaubanGenerator.generate(new VaubanGenerator.Config(List.of(jarPath), null, outputDir,
+                getClass().getClassLoader()));
+
+        assertEquals(List.of(name + "_ClientProxy"), result.generatedProxies(), String.valueOf(result));
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {outputDir.toUri().toURL()},
+                getClass().getClassLoader())) {
+            var proxyClass = loader.loadClass(name + "_ClientProxy");
+            assertEquals(Object.class, proxyClass.getSuperclass());
+            var instance = new FinalClassBean();
+            var proxy = (Stated) proxyClass.getDeclaredConstructor(java.util.function.Supplier.class)
+                    .newInstance((java.util.function.Supplier<Object>) () -> instance);
+            assertEquals("final", proxy.state());
+        }
+    }
+
     @Test
     @DisplayName("the proxy of a bean whose class has a final method extends Object and forwards its interfaces")
     void proxyBeyondAFinalMethod() throws Exception {

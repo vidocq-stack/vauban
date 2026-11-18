@@ -123,16 +123,17 @@ public final class ForwardedMethods {
     }
 
     /**
-     * The class a client proxy of {@code target} extends: {@code target} itself, unless it has a final method
-     * ({@link #firstFinalMethod}), which no subclass can forward. Then the nearest superclass that has none and that a
-     * proxy can extend: in the proxy's package ({@code proxyInTargetPackage} and the same package as {@code target}),
-     * or fit to be extended from another one ({@link ProducerProxyEligibility}); at the end, {@code java.lang.Object}.
-     * The proxy implements the interfaces of {@code target} besides, so a call typed by one of them, a final method
-     * implementing it included, reaches the contextual instance; a class below the one it extends is unproxyable as a
-     * requested type, as CDI 4.1 §3.10 says (BUG-20261118-20). Weld picks the same superclass for the requested type.
+     * The class a client proxy of {@code target} extends: {@code target} itself, unless it is final (BUG-20261118-21)
+     * or has a final method ({@link #firstFinalMethod}), which no subclass can forward. Then the nearest superclass
+     * that has none and that a proxy can extend: in the proxy's package ({@code proxyInTargetPackage} and the same
+     * package as {@code target}), or fit to be extended from another one ({@link ProducerProxyEligibility}); at the
+     * end, {@code java.lang.Object}. The proxy implements the interfaces of {@code target} besides, so a call typed by
+     * one of them, a final method implementing it included, reaches the contextual instance; a class below the one it
+     * extends is unproxyable as a requested type, as CDI 4.1 §3.10 says (BUG-20261118-20). Weld picks the same
+     * superclass for the requested type.
      */
     public static TypeView proxySuperclass(TypeView target, boolean proxyInTargetPackage) {
-        if (firstFinalMethod(target).isEmpty()) {
+        if (!target.is(Flag.FINAL) && firstFinalMethod(target).isEmpty()) {
             return target;
         }
         TypeView c = target.superclass();

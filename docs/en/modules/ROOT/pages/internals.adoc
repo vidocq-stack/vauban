@@ -240,8 +240,8 @@ proxy is generated, and whether it costs an `opens`, depends entirely on **who o
 proxied type**. Vauban resolves this in the order below; the first strategy that applies
 wins.
 
-The proxy extends the bean class, unless that class has a `final` method, neither `private` nor `static`, of its own
-or of a superclass: no subclass can forward it. The proxy then extends the nearest
+The proxy extends the bean class, unless that class is `final` (BUG-20261118-21) or has a `final` method, neither
+`private` nor `static`, of its own or of a superclass: no subclass can forward it. The proxy then extends the nearest
 class above that method that has none and that a proxy can extend, often `Object`, and implements the interfaces of
 the bean class a proxy in its package can name, forwarding each of their methods through its interface; such a bean
 is proxyable only as those interfaces or a class above the method (CDI 4.1 §3.10), and a lookup as any other type

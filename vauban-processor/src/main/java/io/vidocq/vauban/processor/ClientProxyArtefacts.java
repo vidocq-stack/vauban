@@ -84,12 +84,13 @@ final class ClientProxyArtefacts {
                 : ClientProxyShapeFromElements.beyondFinalMethod(proxyTypeElement, processingEnv.getElementUtils(),
                         processingEnv.getTypeUtils(), omitted -> output.warnOmitted(omitted, proxyTypeElement));
         if (beyondFinal.isPresent()) {
-            // The bean's class has a final method no subclass can forward: the proxy extends a class above it, which
-            // Java source could not name the proxy after, and implements the bean's interfaces (BUG-20261118-20).
+            // The bean's class is final, or has a final method no subclass can forward: the proxy extends a class above
+            // it, which Java source could not name the proxy after, and implements the bean's interfaces
+            // (BUG-20261118-20, BUG-20261118-21).
             var proxyName = proxyBeanFqn + CLIENT_PROXY_SUFFIX;
             output.generateClass(new GeneratedClass(proxyName,
                     ClientProxyEmitter.emitAt(beyondFinal.get(), proxyName)));
-            output.noteBytecode(proxyName, "the bean's class has a final method, so the proxy extends "
+            output.noteBytecode(proxyName, "the bean's class is final or has a final method, so the proxy extends "
                     + beyondFinal.get().beanBinaryName() + " and implements the bean's interfaces (BUG-20261118-20)",
                     proxyTypeElement);
             generation.clientProxyFqns.add(proxyName);

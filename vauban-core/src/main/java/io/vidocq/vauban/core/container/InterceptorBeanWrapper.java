@@ -299,15 +299,15 @@ final class InterceptorBeanWrapper {
         if (!(raw instanceof Class<?> type)) {
             return getOrCreateProxy(bean);
         }
-        var finalMethod = type.isInterface() ? java.util.Optional.<Method>empty() : FINAL_METHODS.get(type);
-        if (finalMethod.isPresent()) {
+        var unproxyable = type.isInterface() ? java.util.Optional.<String>empty() : UNPROXYABLE.get(type);
+        if (unproxyable.isPresent()) {
             throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean "
-                    + bean.getBeanClass().getName() + " is looked up as " + type.getName()
-                    + ", which has final method " + finalMethod.get().getName());
+                    + bean.getBeanClass().getName() + " is looked up as " + type.getName() + ", which "
+                    + unproxyable.get());
         }
         T proxy = getOrCreateProxy(bean);
         if (!type.isInstance(proxy)) {
-            // The proxy of a bean whose class has a final method extends the nearest class above it that
+            // The proxy of a bean whose class is final or has a final method extends the nearest class above it that
             // a proxy can extend, and implements the interfaces a proxy in its package can name (BUG-20261118-20): a
             // class in between, or an interface it cannot name, is not one it stands for.
             throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean "
@@ -318,13 +318,17 @@ final class InterceptorBeanWrapper {
     }
 
     /**
-     * The first final method, neither private nor static, of a class or of its superclasses: the walk of
-     * {@link #getOrCreateProxy(ManagedBean, java.lang.reflect.Type)}, once per requested class.
+     * Why a class is no type a client proxy can stand for, as the end of a sentence: it is final (BUG-20261118-21), or
+     * it or a superclass has a final method, neither private nor static. Computed once per requested class by
+     * {@link #getOrCreateProxy(ManagedBean, java.lang.reflect.Type)}.
      */
-    private static final ClassValue<java.util.Optional<Method>> FINAL_METHODS = new ClassValue<>() {
+    private static final ClassValue<java.util.Optional<String>> UNPROXYABLE = new ClassValue<>() {
         @Override
-        protected java.util.Optional<Method> computeValue(Class<?> type) {
-            return java.util.Optional.ofNullable(firstFinalMethod(type));
+        protected java.util.Optional<String> computeValue(Class<?> type) {
+            if (java.lang.reflect.Modifier.isFinal(type.getModifiers())) {
+                return java.util.Optional.of("is final");
+            }
+            return java.util.Optional.ofNullable(firstFinalMethod(type)).map(m -> "has final method " + m.getName());
         }
     };
 
@@ -452,13 +456,10 @@ final class InterceptorBeanWrapper {
         }
     }
 
-    /** A normal-scoped bean's class must be proxyable: not final, not only a private no-arg constructor. */
+    /** A normal-scoped bean's class must be proxyable: not only a private no-arg constructor. */
     private static void checkNormalScopedProxyable(Class<?> beanClass) {
-        if (java.lang.reflect.Modifier.isFinal(beanClass.getModifiers())) {
-            throw new jakarta.enterprise.inject.UnproxyableResolutionException("Normal scoped bean " + beanClass.getName() + " is final");
-        }
-        // A final method is the requested type's to judge (getOrCreateProxy(bean, type), BUG-20261118-19): a bean
-        // whose class has one is still proxied when it is looked up or injected as an interface.
+        // A final class or a final method is the requested type's to judge (getOrCreateProxy(bean, type),
+        // BUG-20261118-19, BUG-20261118-21): such a bean is still proxied as an interface it implements.
         // CDI 4.1: no-arg constructor is NOT required — proxy calls super with default values.
         // However, a bean with ONLY a private no-arg constructor is still unproxyable.
         boolean hasPrivateNoArgCtor = false;

@@ -235,6 +235,13 @@ class UnnameableMemberBytecodeEmissionTest {
                     public class StatefulService extends lib.StatefulBase implements lib.Stateful {
                     }
                     """,
+            "app/FinalService.java", """
+                    package app;
+                    @jakarta.enterprise.context.ApplicationScoped
+                    public final class FinalService implements lib.Stateful {
+                        public String state() { return "final"; }
+                    }
+                    """,
             "app/BelowTopService.java", """
                     package app;
                     @jakarta.enterprise.context.ApplicationScoped
@@ -263,6 +270,9 @@ class UnnameableMemberBytecodeEmissionTest {
                 "app.BelowTopService", "lib.Top", "callTop"));
         assertEquals("below", forwarded(result, "app.BelowTopService_ClientProxy",
                 "app.BelowTopService", "lib.Stateful", "callState"));
+        // BUG-20261118-21: a final bean class gets the same proxy, of Object and its interfaces.
+        assertEquals("final", forwarded(result, "app.FinalService_ClientProxy", "app.FinalService", "lib.Stateful",
+                "callState"));
     }
 
     @Test

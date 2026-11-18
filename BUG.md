@@ -58,6 +58,35 @@ suspected cause, status. Updated on every investigation.
   `deploymentErrors`, a `DeploymentException` in the processor, at start and frozen).
 - **Found by**: the review of BUG-20261118-04.
 
+## BUG-20261118-21 — A final normal-scoped bean class is refused even when requested as an interface
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/client-proxy-bridge`
+- **Module**: `vauban-core` (`proxy.ForwardedMethods`, `container.InterceptorBeanWrapper`), `vauban-processor`
+  (`ClientProxyArtefacts`)
+- **Symptom**: `@ApplicationScoped public final class FinalSvc implements Stateful`. Looked up or injected as
+  `Stateful`, the container threw `UnproxyableResolutionException` ("is final") when it made the client proxy; the
+  processor wrote a source proxy that extends the final class, and the build failed ("cannot inherit from final");
+  `vauban:generate` wrote a class file the JVM refuses (`IncompatibleClassChangeError`). CDI 4.1 §3.10 makes a final
+  class unproxyable as the requested type only: as an interface it implements, the bean is legal, and Weld proxies
+  it, extending `Object` with the interfaces.
+- **Repro**: `InheritedFinalMethodTest.finalClassAsItsInterface`, `finalClassInjectedAsItself` and
+  `finalClassLookedUpAsItself` in `vauban-core`; `UnproxyableBeanValidationTest.finalBeanClass` and
+  `UnnameableMemberBytecodeEmissionTest.finalMethodProxy` (`FinalService`) in `vauban-processor`;
+  `VaubanGeneratorTest.proxyOfAFinalClass` in `vauban-maven-plugin`.
+- **Cause** (proved by the red runs): the container checked the bean class's finality when it made the proxy, and
+  every path made the proxy a subclass of a final class: `ForwardedMethods.proxySuperclass` (BUG-20261118-20) walked
+  up past a final method only.
+- **Fix**: `ForwardedMethods.proxySuperclass` walks up past a final class too, so the three paths give its proxy the
+  shape of BUG-20261118-20: `Object`, or the nearest class above with no final method, and the bean's interfaces. The
+  container's check moved to the requested type: a lookup as a final class throws `UnproxyableResolutionException`
+  ("is final"), cached per class with the final-method walk; the validator already judged the injection point's type
+  ("cannot be a final class"). The processor emits that proxy as bytecode.
+- **Verification**: red, `stack-bug21-red.log`, "Red run 1" (on 88c3630a: the container refused the interface lookup,
+  the processor's source proxy did not compile, `vauban:generate`'s proxy was refused by the JVM) and "Red run 2" (the
+  processor test). Green, `stack-bug21-dev.log`, "Dev run 1" and "Dev run 2".
+- **Found by**: BUG-20261117-49 lane, review of BUG-20261118-20.
+
 ## BUG-20261118-20 — A proxy looked up as an interface runs a final method that implements it on itself
 
 - **Date**: 2026-11-18

@@ -190,6 +190,48 @@ class UnproxyableBeanValidationTest {
     }
 
     @Test
+    @DisplayName("a final bean class compiles injected as an interface, and fails the build injected as itself")
+    void finalBeanClass() throws IOException {
+        var issuer = """
+                package io.repro.app;
+
+                public interface Issuer {
+                    String name();
+                }
+                """;
+        var finalOidc = """
+                package io.repro.app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+
+                @ApplicationScoped
+                public final class Oidc implements Issuer {
+                    public String name() { return "oidc"; }
+                }
+                """;
+        var asInterface = compile(CONFIG, issuer, finalOidc, """
+                package io.repro.app;
+
+                import jakarta.enterprise.context.ApplicationScoped;
+                import jakarta.inject.Inject;
+
+                @ApplicationScoped
+                public class Consumer {
+                    @Inject
+                    Issuer issuer;
+
+                    public String hello() { return issuer.name(); }
+                }
+                """);
+        assertTrue(asInterface.success(), "CDI 4.1 §3.10 judges the requested type (BUG-20261118-21): "
+                + asInterface.messages());
+
+        var asItself = compile(CONFIG, CONSUMER, issuer, finalOidc);
+        assertFalse(asItself.success(), "an injection point of a final class type is unproxyable");
+        assertTrue(hasVaubanError(asItself, "final class"), String.valueOf(asItself.messages()));
+    }
+
+    @Test
     @DisplayName("a bean whose class inherits a final method compiles when it is injected as an interface")
     void inheritedFinalMethodBeanInjectedAsAnInterfaceCompiles() throws IOException {
         var result = compile(CONFIG, """

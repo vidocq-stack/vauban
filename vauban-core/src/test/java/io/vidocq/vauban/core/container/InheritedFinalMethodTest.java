@@ -190,6 +190,21 @@ class InheritedFinalMethodTest {
         Stateful stateful;
     }
 
+    /** A final bean class: unproxyable as itself, proxyable as its interface (CDI 4.1 §3.10, BUG-20261118-21). */
+    @ApplicationScoped
+    public static final class FinalSvc implements Stateful {
+        @Override
+        public String state() {
+            return "final " + getClass().getSimpleName();
+        }
+    }
+
+    @Dependent
+    public static class FinalSvcConsumer {
+        @Inject
+        FinalSvc svc;
+    }
+
     /** A superclass with no final method, above the one that declares it: a bean type a proxy can extend. */
     public static class Top {
         public String top() {
@@ -399,6 +414,35 @@ class InheritedFinalMethodTest {
             var failure = assertThrows(UnproxyableResolutionException.class,
                     () -> container.select(FinalBelowTop.class));
             assertTrue(messages(failure).contains("final method sealedOff"), messages(failure));
+        }
+    }
+
+    @Test
+    @DisplayName("a final bean class, injected and looked up as its interface, works")
+    void finalClassAsItsInterface() {
+        try (var container = VaubanContainer.builder().addBeanClass(FinalSvc.class)
+                .addBeanClass(StatefulConsumer.class).build()) {
+            assertEquals("final FinalSvc", container.select(Stateful.class).state());
+            assertEquals("final FinalSvc", container.select(StatefulConsumer.class).stateful.state());
+            assertEquals(Optional.of(FinalSvc.class),
+                    ClientProxyClass.beanClassOf(container.select(Stateful.class).getClass()), "states its bean class");
+        }
+    }
+
+    @Test
+    @DisplayName("a final bean class, injected as itself, fails the deployment")
+    void finalClassInjectedAsItself() {
+        var builder = VaubanContainer.builder().addBeanClass(FinalSvc.class).addBeanClass(FinalSvcConsumer.class);
+        var failure = assertThrows(DeploymentException.class, builder::build);
+        assertTrue(messages(failure).contains("final class"), messages(failure));
+    }
+
+    @Test
+    @DisplayName("a final bean class, looked up as itself, is not resolved")
+    void finalClassLookedUpAsItself() {
+        try (var container = VaubanContainer.builder().addBeanClass(FinalSvc.class).build()) {
+            var failure = assertThrows(UnproxyableResolutionException.class, () -> container.select(FinalSvc.class));
+            assertTrue(messages(failure).contains("is final"), messages(failure));
         }
     }
 
