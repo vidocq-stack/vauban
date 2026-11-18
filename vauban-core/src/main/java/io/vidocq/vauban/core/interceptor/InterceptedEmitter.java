@@ -207,7 +207,39 @@ public final class InterceptedEmitter {
                 generateInterceptedMethod(clb, subclassCD, beanCD, method, i, tiNames.get(i));
                 generateTargetInvokerGlue(clb, subclassCD, method, tiNames.get(i));
             }
+            for (var bridge : shape.bridges()) {
+                generateBridge(clb, beanCD, bridge);
+            }
         });
+    }
+
+    /**
+     * A bridge as javac writes one ({@link InterceptedShape.Bridge}): loads its arguments, casts each to the
+     * intercepted method's parameter type, and calls that method virtually, which reaches this subclass's override.
+     */
+    private static void generateBridge(java.lang.classfile.ClassBuilder clb, ClassDesc beanCD,
+            InterceptedShape.Bridge bridge) {
+        ClassDesc returnCD = bridge.returnType().classDesc();
+        var methodType = MethodTypeDesc.of(returnCD,
+                bridge.params().stream().map(TypeRef::classDesc).toArray(ClassDesc[]::new));
+        var targetType = MethodTypeDesc.of(bridge.targetReturnType().classDesc(),
+                bridge.targetParams().stream().map(TypeRef::classDesc).toArray(ClassDesc[]::new));
+        clb.withMethodBody(bridge.name(), methodType,
+                ClassFile.ACC_PUBLIC | ClassFile.ACC_SYNTHETIC | ClassFile.ACC_BRIDGE,
+                cob -> {
+                    cob.aload(0);
+                    int s = 1;
+                    for (int i = 0; i < bridge.params().size(); i++) {
+                        ClassDesc param = bridge.params().get(i).classDesc();
+                        s = loadParam(cob, param, s);
+                        ClassDesc target = bridge.targetParams().get(i).classDesc();
+                        if (!target.equals(param)) {
+                            cob.checkcast(target);
+                        }
+                    }
+                    cob.invokevirtual(beanCD, bridge.name(), targetType);
+                    emitReturn(cob, returnCD);
+                });
     }
 
     /**

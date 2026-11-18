@@ -32,7 +32,6 @@ import jakarta.interceptor.AroundInvoke;
 import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.interceptor.InvocationContext;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -237,7 +236,7 @@ class BridgeMethodClientProxyTest {
         }
     }
 
-    /** The same, intercepted: the bridge bypasses the run-time intercepted subclass too (BUG-20261118-18). */
+    /** The same, intercepted: the subclass needs a bridge of its own, as javac gives a source one (BUG-20261118-18). */
     @Traced
     @ApplicationScoped
     public static class TracedTaggedBySuperclass extends PlainTagBase implements Tagged<String> {
@@ -317,8 +316,6 @@ class BridgeMethodClientProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    @Disabled("BUG-20261118-18: the run-time intercepted subclass declares no bridge tag(Object), and the inherited one"
-            + " calls PlainTagBase.tag(String) by invokespecial, past the interceptor")
     @DisplayName("tag(String) of a superclass, through a bridge of an intercepted bean, reaches the interceptor")
     void tagThroughABridgeReachesTheInterceptor() {
         try (var container = start(TracedTaggedBySuperclass.class)) {

@@ -149,6 +149,27 @@ class InterceptedShapeFromElementsTest {
     public static class InheritingThroughAMiddle extends VisibleMiddle {
     }
 
+    @Test
+    @DisplayName("a bridge to a superclass method of another erasure gets a bridge of the subclass's own")
+    void aBridgeToASuperclassMethodGetsABridgeOfItsOwn() throws Exception {
+        // PlainLabelBase.label(String) implements GenericLabel<String>.label(T): javac's bridge label(Object) in the
+        // bean calls it by invokespecial, past the subclass's override, which needs a bridge that calls it virtually.
+        // (BUG-20261118-18)
+        var expected = Set.of("label[java.lang.Object]java.lang.String -> label[java.lang.String]");
+        assertEquals(expected, bridges(InterceptorSubclassGenerator.fromClass(LabelledBySuperclass.class)),
+                "fromClass");
+        assertEquals(expected, computeFromElements(LabelledBySuperclass.class,
+                InterceptedShapeFromElementsTest::bridges), "fromElements");
+        assertEquals(Set.of(), bridges(InterceptorSubclassGenerator.fromClass(OverridingRelabel.class)),
+                "an override bridge of the bean's own needs none");
+    }
+
+    private static Set<String> bridges(InterceptedShape shape) {
+        return shape.bridges().stream()
+                .map(b -> b.name() + b.params() + b.returnType() + " -> " + b.name() + b.targetParams())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
     /** Not public, with a method that takes a parameter. */
     static class HiddenPutBase {
         public String put(String value) { return value; }

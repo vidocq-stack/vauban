@@ -133,6 +133,70 @@ class UnnameableMemberBytecodeEmissionTest {
                     }
                     """);
 
+    /**
+     * An intercepted bean whose inherited {@code take(HiddenArg)} makes its subclass a class file, and whose
+     * {@code tag(String)}, a superclass method, implements {@code Tagged<String>.tag(T)} through javac's bridge.
+     */
+    private static final Map<String, String> TAGGED_SOURCES = Map.of(
+            "lib/HiddenArg.java", SOURCES.get("lib/HiddenArg.java"),
+            "lib/TagTaker.java", """
+                    package lib;
+                    public class TagTaker {
+                        public String tag(String value) { return "tag " + value; }
+                        public String take(HiddenArg argument) { return "took " + argument; }
+                    }
+                    """,
+            "lib/Tagged.java", """
+                    package lib;
+                    public interface Tagged<T> {
+                        String tag(T value);
+                    }
+                    """,
+            "app/Traced.java", """
+                    package app;
+                    @jakarta.interceptor.InterceptorBinding
+                    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                    @java.lang.annotation.Target({java.lang.annotation.ElementType.TYPE,
+                            java.lang.annotation.ElementType.METHOD})
+                    public @interface Traced {}
+                    """,
+            "app/TracedInterceptor.java", """
+                    package app;
+                    @Traced
+                    @jakarta.interceptor.Interceptor
+                    @jakarta.annotation.Priority(1)
+                    public class TracedInterceptor {
+                        @jakarta.interceptor.AroundInvoke
+                        Object around(jakarta.interceptor.InvocationContext context) throws Exception {
+                            return context.proceed();
+                        }
+                    }
+                    """,
+            "app/TaggedTaker.java", """
+                    package app;
+                    @Traced
+                    @jakarta.enterprise.context.Dependent
+                    public class TaggedTaker extends lib.TagTaker implements lib.Tagged<String> {
+                    }
+                    """);
+
+    @Test
+    @DisplayName("an intercepted subclass emitted as a class file declares the bridge javac gives a source one")
+    void interceptedSubclassBridge() throws Exception {
+        // BUG-20261118-18: the bean's bridge tag(Object) calls TagTaker.tag(String) by invokespecial, past the
+        // subclass's override; the subclass needs a bridge tag(Object) of its own, which calls tag(String) virtually.
+        var result = compile(TAGGED_SOURCES);
+        assertTrue(result.success(), "compilation should succeed. Messages: " + result.messages());
+        var subclass = "app/TaggedTaker$$Intercepted";
+        assertFalse(Files.exists(result.genDir().resolve(subclass + ".java")), "no source subclass");
+        assertTrue(Files.exists(result.outputDir().resolve(subclass + ".class")), "a class-file subclass");
+        try (var loader = new URLClassLoader(new URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var bridge = loader.loadClass(subclass.replace('/', '.')).getDeclaredMethod("tag", Object.class);
+            assertTrue(bridge.isBridge(), bridge + " is a bridge");
+        }
+    }
+
     @Test
     @DisplayName("a producer's proxy over take(HiddenArg) is a class file the provider reaches by name")
     void producerProxy() throws Exception {
@@ -223,10 +287,14 @@ class UnnameableMemberBytecodeEmissionTest {
     // ---- in-process compilation through the processor ----
 
     private CompilationResult compile() throws IOException {
+        return compile(SOURCES);
+    }
+
+    private CompilationResult compile(Map<String, String> sources) throws IOException {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
         var files = new ArrayList<Path>();
-        for (var entry : SOURCES.entrySet()) {
+        for (var entry : sources.entrySet()) {
             var file = tempDir.resolve("src").resolve(entry.getKey());
             Files.createDirectories(file.getParent());
             Files.writeString(file, entry.getValue());

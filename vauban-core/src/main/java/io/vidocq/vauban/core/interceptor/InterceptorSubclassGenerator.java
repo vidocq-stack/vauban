@@ -125,7 +125,43 @@ public final class InterceptorSubclassGenerator {
         // business methods too, and intercepted by the processor's subclass (BUG-20261004-03).
         addInheritedNonPublicMethods(beanClass, methods, seen);
 
-        return new InterceptedShape(beanBinaryName, ctors, methods);
+        return new InterceptedShape(beanBinaryName, ctors, methods, bridgesOf(beanClass, methods));
+    }
+
+    /**
+     * The bridges the subclass declares ({@link InterceptedShape.Bridge}): one per bridge of the bean that calls an
+     * intercepted superclass method of another descriptor by {@code invokespecial} ({@link BridgeCalls}), which the
+     * override of that method would not catch (BUG-20261118-18). The processor's source subclass gets the same from
+     * javac.
+     */
+    private static List<InterceptedShape.Bridge> bridgesOf(Class<?> beanClass, List<MethodShape> methods) {
+        var intercepted = new java.util.HashSet<String>();
+        for (var m : methods) {
+            if (m.defaultOwner() == null) intercepted.add(m.name() + m.params() + m.returnType());
+        }
+        var bridges = new ArrayList<InterceptedShape.Bridge>();
+        var declared = new java.util.HashSet<String>();
+        for (var method : BeanMembers.inStableOrder(beanClass.getMethods())) {
+            if (method.isBridge() && !method.getDeclaringClass().isInterface()) {
+                var call = BridgeCalls.of(method);
+                var target = call.target();
+                if (call.kind() == BridgeCalls.Kind.SUPER_CALL && target != null
+                        && intercepted.contains(target.getName() + typeRefs(target.getParameterTypes())
+                                + TypeRef.fromClass(target.getReturnType()))
+                        && declared.add(BridgeCalls.descriptorOf(method) + method.getName())) {
+                    bridges.add(new InterceptedShape.Bridge(method.getName(),
+                            TypeRef.fromClass(method.getReturnType()), typeRefs(method.getParameterTypes()),
+                            TypeRef.fromClass(target.getReturnType()), typeRefs(target.getParameterTypes())));
+                }
+            }
+        }
+        return bridges;
+    }
+
+    private static List<TypeRef> typeRefs(Class<?>[] types) {
+        var refs = new ArrayList<TypeRef>(types.length);
+        for (Class<?> t : types) refs.add(TypeRef.fromClass(t));
+        return refs;
     }
 
     /**

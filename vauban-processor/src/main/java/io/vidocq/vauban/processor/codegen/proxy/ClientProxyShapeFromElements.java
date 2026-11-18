@@ -382,31 +382,12 @@ public final class ClientProxyShapeFromElements {
         for (ExecutableElement m : ElementFilter.methodsIn(request.elements().getAllMembers(request.bean()))) {
             if (isProxiedDefault(m)) {
                 var bridge = methodShape(request.bean(), m, false, false, request.elements(), request.types());
-                if (superCalledBy(request, forwarded, m, bridge).isPresent() && declared.add(descriptorKey(bridge))) {
+                if (InterceptedShapeFromElements.superCalledBy(request.bean(), m, forwarded, request.elements(),
+                        request.types()).isPresent() && declared.add(descriptorKey(bridge))) {
                     methods.add(bridge);
                 }
             }
         }
-    }
-
-    /**
-     * The forwarded class method javac bridges interface method {@code m}, erased as {@code erased}, to by
-     * {@code invokespecial}: one that implements {@code m} in the bean, with another erasure, declared by a class that
-     * does not implement {@code m}'s interface.
-     */
-    private static Optional<ExecutableElement> superCalledBy(ShapeRequest request, List<ExecutableElement> forwarded,
-            ExecutableElement m, ProxyMethodShape erased) {
-        var types = request.types();
-        var anInterface = types.erasure(m.getEnclosingElement().asType());
-        for (var c : forwarded) {
-            if (request.elements().overrides(c, m, request.bean())) {
-                boolean sameErasure = descriptorKey(erased).equals(descriptorKey(
-                        methodShape(request.bean(), c, false, false, request.elements(), types)));
-                boolean implementsIt = types.isSubtype(types.erasure(c.getEnclosingElement().asType()), anInterface);
-                return sameErasure || implementsIt ? Optional.empty() : Optional.of(c);
-            }
-        }
-        return Optional.empty();
     }
 
     /** The name, parameter types and return type: what a method of a class file is told apart by. */

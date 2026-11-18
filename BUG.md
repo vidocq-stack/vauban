@@ -61,21 +61,37 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-18 — The run-time intercepted subclass lets a bridge to a superclass method past its interceptors
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
-- **Module**: `vauban-core` (`interceptor.InterceptorSubclassGenerator`, `InterceptedEmitter`)
+- **Status**: FIXED on `fix/client-proxy-bridge`
+- **Module**: `vauban-core` (`interceptor.InterceptorSubclassGenerator`, `InterceptedEmitter`, `InterceptedShape`),
+  `vauban-processor` (`codegen.interceptor.InterceptedShapeFromElements`)
 - **Symptom**: an intercepted bean compiled without the processor,
   `@Traced class TracedTaggedBySuperclass extends PlainTagBase implements Tagged<String>`, where `PlainTagBase`
   declares `public String tag(String)` and `Tagged<T>` a default `tag(T)`. A call typed by `Tagged` reaches the
   contextual instance (BUG-20261118-17) but not the interceptor: the interceptor sees one call of two.
-- **Repro**: `BridgeMethodClientProxyTest.tagThroughABridgeReachesTheInterceptor` in `vauban-core`, `@Disabled` with
-  this id. Red with the condition switched off: `stack-bug17-red.log`, "Red run 2", expected `[tag, tag]` but was
-  `[tag]`.
-- **Hypothesised cause**: the bean's bridge `tag(Object)` calls `PlainTagBase.tag(String)` by `invokespecial`, and the
-  `$$Intercepted` subclass the container generates overrides `tag(String)` alone: the bridge, which it inherits, runs
-  past that override. javac gives a source subclass, the processor's, a bridge `tag(Object)` of its own that calls
-  `this.tag(String)`. The fix is a bridge of the same kind in the emitted subclass, which `InterceptedEmitter` cannot
-  write yet: a forward of the bridge itself would run the interceptors on the bridge, whose `getMethod()` and
-  bindings are not those of `tag(String)`.
+- **Repro**: `BridgeMethodClientProxyTest.tagThroughABridgeReachesTheInterceptor` in `vauban-core`;
+  `InterceptedShapeFromElementsTest.aBridgeToASuperclassMethodGetsABridgeOfItsOwn` in `vauban-processor` compares the
+  bridges of the two front-ends.
+- **Cause** (proved by the red run): the bean's bridge `tag(Object)` calls `PlainTagBase.tag(String)` by
+  `invokespecial`, and the `$$Intercepted` subclass the container generates overrides `tag(String)` alone: the bridge,
+  which it inherits, runs past that override. javac gives a source subclass, the processor's, a bridge `tag(Object)`
+  of its own that calls `this.tag(String)`. Red: `stack-bug17-red.log`, "Red run 2" (the repro with its `@Disabled`
+  switched off), and `stack-bug18-red.log`, "Red run 1" (the repro enabled, on d2b4468f): expected `[tag, tag]` but
+  was `[tag]`.
+- **Fix**: `InterceptedShape` carries the bridges the subclass declares, and `InterceptedEmitter` writes each as
+  javac does: `ACC_BRIDGE | ACC_SYNTHETIC`, the arguments cast to the intercepted method's parameter types, an
+  `invokevirtual` of that method, which reaches the subclass's override. The run-time front-end takes one per bridge of
+  the bean that calls an intercepted superclass method of another descriptor by `invokespecial`, read from the class
+  bytes (`BridgeCalls`, BUG-20261118-16). The processor's front-end takes one per interface method an intercepted
+  class method implements with another erasure, from a class that does not implement the interface: the rule its
+  bytecode proxies use (BUG-20261118-17), now one method, `InterceptedShapeFromElements.superCalledBy`. Its bytecode
+  subclass (a member signature source cannot name) gets the bridges; its source subclass gets them from javac.
+- **Verification, review round 3**: the processor's bytecode subclass, emitted for a bean whose inherited member names
+  a type its package cannot name: `UnnameableMemberBytecodeEmissionTest.interceptedSubclassBridge` loads
+  `TaggedTaker$$Intercepted` and finds the bridge `tag(Object)`. Red, `stack-bug18-red.log`, "Red run 2" (the
+  processor's shape builders of a2550f3b): `NoSuchMethodException`.
+- **Verification**: green, `stack-bug18-dev.log`, "Dev run 2": `vauban-core` 1635 tests, `vauban-processor` 389, no
+  failure ("Dev run 1": the processor test's expected string was written wrong); the full build of the lane tip,
+  `stack-bug49-build.log`.
 - **Found by**: the proof of BUG-20261118-17.
 
 ## BUG-20261118-17 — A client proxy generated as bytecode misses a bridge to a superclass method
@@ -109,7 +125,7 @@ suspected cause, status. Updated on every investigation.
   whose `tag(String)` is final, which the processor does not. The processor takes an interface method a forwarded
   class method implements with another erasure, declared by a class that does not implement the interface: where javac
   writes such a bridge. Both front-ends give the same shape (`ClientProxyInheritanceCrossCheckTest`).
-- **Not covered**: the intercepted subclass, BUG-20261118-18.
+- **Not covered**: the intercepted subclass, BUG-20261118-18 (fixed in the next commit).
 - **Verification, review round 2**: red, `stack-bug17-red.log`, "Red run 4" (generators of 8d9974fc; "Red run 3"
   lacked the BUG-49 fixup and did not compile): `tagThroughABridgeNextToAnOverload` and
   `aBridgeToASuperclassMethodIsReadFromTheClassBytes` fail. Green, `stack-bug17-dev.log`, "Dev run 4".

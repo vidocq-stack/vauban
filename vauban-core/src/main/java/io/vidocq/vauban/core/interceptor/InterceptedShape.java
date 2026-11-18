@@ -37,7 +37,35 @@ import java.util.List;
 public record InterceptedShape(
         String beanBinaryName,
         List<CtorShape> constructors,
-        List<MethodShape> methods) {
+        List<MethodShape> methods,
+        List<Bridge> bridges) {
+
+    /**
+     * A bridge the subclass declares, as javac declares one in a source subclass: {@code name(params)} with the erased
+     * descriptor of an interface method calls {@code this.name(targetParams)} virtually, the intercepted override of
+     * the superclass method that implements it. The bean's own bridge calls that method by {@code invokespecial}, past
+     * the override (BUG-20261118-18). The source renderer writes none: javac adds it.
+     *
+     * @param name             the method's name
+     * @param returnType       the bridge's return type
+     * @param params           the bridge's parameter types
+     * @param targetReturnType the intercepted method's return type
+     * @param targetParams     the intercepted method's parameter types, cast to from the bridge's
+     */
+    public record Bridge(String name, TypeRef returnType, List<TypeRef> params, TypeRef targetReturnType,
+            List<TypeRef> targetParams) {
+
+        public Bridge {
+            java.util.Objects.requireNonNull(name, "name");
+            params = List.copyOf(params);
+            targetParams = List.copyOf(targetParams);
+        }
+    }
+
+    /** A shape without bridges. */
+    public InterceptedShape(String beanBinaryName, List<CtorShape> constructors, List<MethodShape> methods) {
+        this(beanBinaryName, constructors, methods, List.of());
+    }
 
     /** Suffix of the generated subclass: {@code <bean>$$Intercepted}. */
     public static final String SUBCLASS_SUFFIX = "$$Intercepted";
@@ -61,6 +89,7 @@ public record InterceptedShape(
         java.util.Objects.requireNonNull(beanBinaryName, "beanBinaryName");
         constructors = List.copyOf(constructors);
         methods = List.copyOf(methods);
+        bridges = List.copyOf(bridges);
     }
 
     /** Binary name of the generated subclass: {@code beanBinaryName + "$$Intercepted"}. */

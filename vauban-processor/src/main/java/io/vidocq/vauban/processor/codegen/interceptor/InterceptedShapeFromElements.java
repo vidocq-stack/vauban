@@ -33,8 +33,10 @@ import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Builds an {@link InterceptedShape} from a {@link TypeElement} using the
@@ -109,22 +111,95 @@ public final class InterceptedShapeFromElements {
         // methods come first, so the one the bean runs wins; a final one still hides the other.
         var request = new Request(bean, elements.getPackageOf(bean), elements, types, omitted, unnameable);
         var methods = new ArrayList<MethodShape>();
+        var interceptedClassMethods = new ArrayList<ExecutableElement>();
         var seen = new LinkedHashSet<String>();
         var members = ElementFilter.methodsIn(elements.getAllMembers(bean));
-        for (boolean interfacePass : new boolean[] {false, true}) {
-            for (ExecutableElement method : members) {
-                if (declaredByInterface(method) == interfacePass
-                        && seen.add(memberSignatureKey(bean, method, types))
-                        && shouldIntercept(method)) {
-                    MethodShape shape = interceptedMethodShape(request, method);
-                    if (shape != null) {
-                        methods.add(shape);
+        addInterceptedMethods(request, members, false, seen, methods, interceptedClassMethods);
+        addInterceptedMethods(request, members, true, seen, methods, new ArrayList<>());
+
+        return new InterceptedShape(beanBinaryName, ctors, methods,
+                bridges(bean, members, interceptedClassMethods, elements, types));
+    }
+
+    /**
+     * Adds to {@code methods} the shape of each interceptable member a class declares, or, in the
+     * {@code interfacePass}, an interface, whose member signature {@code seen} does not hold yet; each member whose
+     * shape is added goes to {@code intercepted} too.
+     */
+    private static void addInterceptedMethods(Request request, List<ExecutableElement> members, boolean interfacePass,
+            java.util.Set<String> seen, List<MethodShape> methods, List<ExecutableElement> intercepted) {
+        for (ExecutableElement method : members) {
+            if (declaredByInterface(method) == interfacePass
+                    && seen.add(memberSignatureKey(request.bean(), method, request.types()))
+                    && shouldIntercept(method)) {
+                MethodShape shape = interceptedMethodShape(request, method);
+                if (shape != null) {
+                    methods.add(shape);
+                    intercepted.add(method);
+                }
+            }
+        }
+    }
+
+    /**
+     * The bridges the subclass declares ({@link InterceptedShape.Bridge}), as the run-time generator finds them in the
+     * bean's class bytes: one per interface method an intercepted class method implements through a bridge that calls
+     * it by {@code invokespecial} ({@link #superCalledBy}), which the subclass's override would not catch
+     * (BUG-20261118-18). The source renderer writes none: javac adds them.
+     */
+    private static List<InterceptedShape.Bridge> bridges(TypeElement bean, List<ExecutableElement> members,
+            List<ExecutableElement> interceptedClassMethods, Elements elements, Types types) {
+        var bridges = new ArrayList<InterceptedShape.Bridge>();
+        var declared = new HashSet<String>();
+        for (ExecutableElement m : members) {
+            if (declaredByInterface(m) && !m.getModifiers().contains(Modifier.STATIC)
+                    && !m.getModifiers().contains(Modifier.PRIVATE)) {
+                var target = superCalledBy(bean, m, interceptedClassMethods, elements, types);
+                if (target.isPresent()) {
+                    var bridge = methodShape(bean, m, elements, types);
+                    var called = methodShape(bean, target.get(), elements, types);
+                    if (declared.add(bridge.name() + bridge.params() + bridge.returnType())) {
+                        bridges.add(new InterceptedShape.Bridge(bridge.name(), bridge.returnType(), bridge.params(),
+                                called.returnType(), called.params()));
                     }
                 }
             }
         }
+        return bridges;
+    }
 
-        return new InterceptedShape(beanBinaryName, ctors, methods);
+    /**
+     * The class method, among {@code candidates}, that javac's bridge calls by {@code invokespecial} for interface
+     * method {@code m} of {@code bean}: one that implements {@code m} in the bean with another erasure, declared by a
+     * class that does not implement {@code m}'s interface, so the bridge sits in a subclass of it
+     * ({@code PlainTagBase.tag(String)} for {@code Tagged<String>.tag(T)}). Empty otherwise: a class method that
+     * implements {@code m} with its own erasure, or whose class carries the bridge, which calls it virtually.
+     */
+    public static Optional<ExecutableElement> superCalledBy(TypeElement bean, ExecutableElement m,
+            List<ExecutableElement> candidates, Elements elements, Types types) {
+        var anInterface = types.erasure(m.getEnclosingElement().asType());
+        for (var c : candidates) {
+            if (elements.overrides(c, m, bean)) {
+                boolean implementsIt = types.isSubtype(types.erasure(c.getEnclosingElement().asType()), anInterface);
+                return sameErasure(c, m, types) || implementsIt ? Optional.empty() : Optional.of(c);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Whether {@code a} and {@code b} erase to the same parameter and return types: one descriptor. */
+    private static boolean sameErasure(ExecutableElement a, ExecutableElement b, Types types) {
+        if (a.getParameters().size() != b.getParameters().size()
+                || !types.isSameType(types.erasure(a.getReturnType()), types.erasure(b.getReturnType()))) {
+            return false;
+        }
+        for (int i = 0; i < a.getParameters().size(); i++) {
+            if (!types.isSameType(types.erasure(a.getParameters().get(i).asType()),
+                    types.erasure(b.getParameters().get(i).asType()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
