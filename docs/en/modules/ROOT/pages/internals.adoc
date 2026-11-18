@@ -934,6 +934,9 @@ The `ApplicationContext` is built in memory, without opening any package.
   `AfterDeploymentValidation` observer, and an error reported through `Messages` are deployment
   problems: a `DeploymentException`. The three phases failed with a `DeploymentException`, and only
   `@Enhancement` carried the exception as its cause (BUG-20261118-57).
+* An exception an extension reports through `Messages.error(Exception)`, in any phase, is the cause of
+  the `DeploymentException`, the others it reported suppressed; the message alone was kept
+  (BUG-20261118-59).
 * The build compatible extension phase resolves a bean class across the whole deployment: the
   classes the container holds, the loader set on the builder, then the build's context loader —
   inside a Vauban layer, the layer's loader, which sees the application and the libraries it

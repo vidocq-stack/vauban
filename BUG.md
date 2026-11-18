@@ -53,6 +53,26 @@ suspected cause, status. Updated on every investigation.
   - 2026-11-18: the comment of `isOuterInstance` said only class files older than Java 21 lack the attribute. Every
     class of a `--strip-debug` image lacks it.
 
+## BUG-20261118-59 — `Messages.error(Exception)` keeps the message and drops the exception
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18)
+- **Module**: `vauban-core` (`extensions.VaubanMessages`, `extensions.BceProcessor`, `container.VaubanContainerBuilder`)
+- **Symptom**: an extension that reports `Messages.error(new IllegalStateException(...))` fails the start with a
+  `DeploymentException` without a cause: only the message of the exception is kept, so a caller or a TCK that looks for
+  the exception's type in the cause chain does not find it.
+- **Repro**: `ContainerBuilderExtensionPhasesTest#anExceptionReportedThroughMessagesIsTheCause` (`@Registration`) and
+  `#exceptionsReportedThroughMessagesAreTheCauseAndSuppressed` (two in `@Discovery`) in `vauban-core`.
+- **Cause**: `VaubanMessages.error(Exception)` stored the message, and `PhaseFailures.reported` took the messages
+  alone.
+- **Fix**: `VaubanMessages` keeps the exceptions it is given (`getExceptions`); `PhaseFailures.reported` takes the
+  `VaubanMessages` and adds them to the causes of the deployment problems. `DiscoveryResult` carries
+  `deploymentErrorCauses`, which the start throws. The first is the cause of the `DeploymentException`, the others
+  are suppressed. The type stays a deployment problem.
+- **Verification**: red, `phase-r2-59.log`, "BUG-59 red: an exception reported through Messages is the cause, no fix"
+  (no cause, nothing suppressed). Green, same log, "BUG-59 green".
+- **Found by**: the review of BUG-20261118-57.
+
 ## BUG-20261118-58 — An extension parameter of an unsupported type is a definition error
 
 - **Date**: 2026-11-18

@@ -29,11 +29,13 @@ import java.util.List;
 
 /**
  * Collects info/warn/error messages during BCE processing.
- * Errors cause DeploymentException at the end of the phase.
+ * Errors cause DeploymentException at the end of the phase, the exceptions reported through {@link #error(Exception)}
+ * as its causes (BUG-20261118-59).
  */
 public final class VaubanMessages implements Messages {
 
     private final List<String> errors = new ArrayList<>();
+    private final List<Exception> exceptions = new ArrayList<>();
 
     // info() and warn() are intentionally no-op: only errors are collected for deployment validation
     @Override
@@ -83,6 +85,7 @@ public final class VaubanMessages implements Messages {
     @Override
     public void error(Exception exception) {
         errors.add(exception.getMessage() != null ? exception.getMessage() : exception.getClass().getName());
+        exceptions.add(exception);
     }
 
     public boolean hasErrors() {
@@ -91,5 +94,10 @@ public final class VaubanMessages implements Messages {
 
     public List<String> getErrors() {
         return List.copyOf(errors);
+    }
+
+    /** The exceptions reported through {@link #error(Exception)}, in their order. */
+    public List<Exception> getExceptions() {
+        return List.copyOf(exceptions);
     }
 }

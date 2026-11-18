@@ -219,9 +219,13 @@ public final class BceProcessor {
             deploymentErrorCauses.add(cause);
         }
 
-        /** The errors a method reported through {@code Messages}. */
-        void reported(List<String> errors) {
-            deploymentErrors.addAll(errors);
+        /**
+         * The errors a method reported through {@code Messages}, and the exceptions it reported, the causes of the
+         * deployment problem (BUG-20261118-59).
+         */
+        void reported(VaubanMessages messages) {
+            deploymentErrors.addAll(messages.getErrors());
+            deploymentErrorCauses.addAll(messages.getExceptions());
         }
 
         /** Throws the {@code DefinitionException} of the definition errors, then the deployment problems'. */
@@ -299,7 +303,7 @@ public final class BceProcessor {
             List<String> definitionErrors,
             List<Throwable> definitionErrorCauses,
             List<String> deploymentErrors,
-            /* The DeploymentExceptions its methods threw (BUG-20261118-57). */
+            /* The exceptions its methods reported through Messages (BUG-20261118-59). */
             List<Throwable> deploymentErrorCauses
     ) {}
 
@@ -309,8 +313,6 @@ public final class BceProcessor {
         var scannedClasses = new VaubanScannedClasses();
         var bceInstances = new LinkedHashMap<Class<?>, Object>();
         var failures = new PhaseFailures();
-        var definitionErrors = failures.definitionErrors();
-        var deploymentErrors = failures.deploymentErrors();
 
         for (var bceClass : bceClasses) {
             try {
@@ -319,8 +321,9 @@ public final class BceProcessor {
                     bceInstances.put(bceClass, bce);
                     for (var method : getDeclaredMethodsSafe(bceClass)) {
                         if (method.getAnnotation(Discovery.class) != null
-                                && ExtensionMethodValidator.validDiscoveryMethod(bceClass, method, deploymentErrors)) {
-                            invokeDiscovery(method, bce, metaAnnotations, scannedClasses, deploymentErrors);
+                                && ExtensionMethodValidator.validDiscoveryMethod(bceClass, method,
+                                        failures.deploymentErrors())) {
+                            invokeDiscovery(method, bce, metaAnnotations, scannedClasses, failures);
                         }
                     }
                 });
@@ -332,17 +335,17 @@ public final class BceProcessor {
             }
         }
 
-        return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances, definitionErrors,
-                failures.definitionErrorCauses(), deploymentErrors, failures.deploymentErrorCauses());
+        return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances, failures.definitionErrors(),
+                failures.definitionErrorCauses(), failures.deploymentErrors(), failures.deploymentErrorCauses());
     }
 
     /**
      * Calls the {@code @Discovery} {@code method}, whose parameter types {@link ExtensionMethodValidator} checked, with
-     * the phase's arguments; the errors it reports through {@code Messages} join {@code errors}, the deployment
-     * problems of the phase.
+     * the phase's arguments; the errors and exceptions it reports through {@code Messages} join {@code failures}, the
+     * deployment problems of the phase.
      */
     private static void invokeDiscovery(Method method, Object bce, MetaAnnotations metaAnnotations,
-                                        ScannedClasses scannedClasses, List<String> errors)
+                                        ScannedClasses scannedClasses, PhaseFailures failures)
             throws ReflectiveOperationException {
         makeAccessibleSafe(method);
         var messages = new VaubanMessages();
@@ -358,7 +361,7 @@ public final class BceProcessor {
             }
         }
         method.invoke(bce, args);
-        errors.addAll(messages.getErrors());
+        failures.reported(messages);
     }
 
     /**
@@ -960,7 +963,7 @@ public final class BceProcessor {
             var unwrapped = unwrapped(e);
             sink.failures().thrown(phaseError("@Enhancement", method, unwrapped), unwrapped);
         }
-        sink.failures().reported(services.messages().getErrors());
+        sink.failures().reported(services.messages());
     }
 
     /** The {@code Messages} and {@code Types} an {@code @Enhancement} method may declare besides its target. */
@@ -1163,7 +1166,7 @@ public final class BceProcessor {
         } catch (Exception e) {
             failures.thrown(registrationError(method, e), unwrapped(e));
         }
-        failures.reported(messages.getErrors());
+        failures.reported(messages);
     }
 
     /** Calls the {@code @Registration} {@code method} for {@code beanInfo}; returns the invokers it built. */
@@ -1181,7 +1184,7 @@ public final class BceProcessor {
         } catch (Exception e) {
             failures.thrown(registrationError(method, e), unwrapped(e));
         }
-        failures.reported(messages.getErrors());
+        failures.reported(messages);
         return invokerFactory;
     }
 
@@ -1246,7 +1249,7 @@ public final class BceProcessor {
                 var thrown = unwrapped(e);
                 failures.thrown(phaseError("@Synthesis", method, thrown), thrown);
             }
-            failures.reported(messages.getErrors());
+            failures.reported(messages);
         }
 
         return new SynthesisResult(components.getBeanDefinitions(), components.getObserverDefinitions());
@@ -1279,7 +1282,7 @@ public final class BceProcessor {
                 var thrown = unwrapped(e);
                 failures.deploymentProblem(phaseError("@Validation", method, thrown), thrown);
             }
-            failures.reported(messages.getErrors());
+            failures.reported(messages);
         }
     }
 

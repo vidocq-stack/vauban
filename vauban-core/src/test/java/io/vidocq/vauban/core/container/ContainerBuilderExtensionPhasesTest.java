@@ -58,6 +58,7 @@ import java.util.Enumeration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -119,6 +120,23 @@ class ContainerBuilderExtensionPhasesTest {
         @Validation
         public void validate(Messages messages) {
             throw new IllegalStateException("validation problem");
+        }
+    }
+
+    /** Reports an exception through {@code Messages} while registering {@link Plain}. */
+    public static class ReportingRegistration implements BuildCompatibleExtension {
+        @Registration(types = Plain.class)
+        public void register(BeanInfo plain, Messages messages) {
+            messages.error(new IllegalStateException("reported in registration"));
+        }
+    }
+
+    /** Reports two exceptions through {@code Messages} in {@code @Discovery}. */
+    public static class ReportingDiscovery implements BuildCompatibleExtension {
+        @Discovery
+        public void discover(Messages messages) {
+            messages.error(new IllegalStateException("first report"));
+            messages.error(new IllegalArgumentException("second report"));
         }
     }
 
@@ -327,6 +345,38 @@ class ContainerBuilderExtensionPhasesTest {
         var thrown = assertThrows(DeploymentException.class, builder::build);
 
         assertEquals("validation problem", thrown.getCause().getMessage());
+    }
+
+    /**
+     * An exception an extension reports through {@code Messages.error(Exception)} is the cause of the
+     * {@code DeploymentException}, where only its message was kept (BUG-20261118-59).
+     */
+    @Test
+    @DisplayName("an exception reported through Messages is the cause of the deployment problem")
+    void anExceptionReportedThroughMessagesIsTheCause() {
+        var builder = VaubanContainer.builder().addBeanClass(Plain.class).addBeanClass(ReportingRegistration.class);
+
+        var thrown = assertThrows(DeploymentException.class, builder::build);
+
+        assertAll(() -> assertTrue(thrown.getMessage().contains("reported in registration"), thrown.getMessage()),
+                () -> assertInstanceOf(IllegalStateException.class, thrown.getCause()),
+                () -> assertEquals("reported in registration", thrown.getCause().getMessage()));
+    }
+
+    /**
+     * Several exceptions reported through {@code Messages}: the first is the cause, the others are suppressed, in
+     * {@code @Discovery} too (BUG-20261118-59).
+     */
+    @Test
+    @DisplayName("exceptions reported through Messages: the first is the cause, the others are suppressed")
+    void exceptionsReportedThroughMessagesAreTheCauseAndSuppressed() {
+        var builder = VaubanContainer.builder().addBeanClass(Plain.class).addBeanClass(ReportingDiscovery.class);
+
+        var thrown = assertThrows(DeploymentException.class, builder::build);
+
+        assertAll(() -> assertEquals("first report", thrown.getCause().getMessage()),
+                () -> assertEquals(1, thrown.getSuppressed().length),
+                () -> assertEquals("second report", thrown.getSuppressed()[0].getMessage()));
     }
 
     /**
