@@ -3964,7 +3964,7 @@ class VetoedInterceptorCompileTimeTest {
                     + method.name()).sorted().toList());
             SEEN.add("fields " + child.fields().stream().map(field -> field.declaringClass().simpleName() + "."
                     + field.name()).sorted().toList());
-            SEEN.add("annotations " + child.annotations().stream().map(annotation -> annotation.name()).sorted()
+            SEEN.add("annotations " + child.annotations().stream().map(AnnotationInfo::name).sorted()
                     .toList());
             SEEN.add("Kept " + kept(child) + ", Own " + child.hasAnnotation(Own.class) + ", Kept of Grand "
                     + kept(grand) + ", Own of Grand " + grand.hasAnnotation(Own.class));
