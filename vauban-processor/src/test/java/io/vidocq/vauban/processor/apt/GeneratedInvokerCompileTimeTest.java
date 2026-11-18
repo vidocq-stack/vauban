@@ -66,7 +66,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Lite TCK {@code invokers} tests): a method of a superclass, a package-private one, an interface default method, a
  * generic, a varargs and a static method, primitive arguments widened and a primitive return boxed, {@code void},
  * a checked exception thrown as it is, and looked-up arguments of a parameterized and a qualified type. A private
- * method has no invoker (BUG-20261118-37).
+ * method has no invoker (BUG-20261118-37). A looked-up argument of an inner class of a generic class,
+ * {@code Outer<String>.Inner<Integer>}, keeps its owner: an {@code Outer<Long>.Inner<Integer>} does not satisfy it
+ * (BUG-20261118-49).
  */
 @DisplayName("BUG-20261118-37 - the invoker the build describes is generated, and calls no Method")
 class GeneratedInvokerCompileTimeTest {
@@ -75,7 +77,7 @@ class GeneratedInvokerCompileTimeTest {
     private static final String DISPOSED = "inv.Disposed";
     private static final String LOOKED_UP_TARGET = "usedAndDestroyed";
     private static final List<String> METHODS = List.of("inherited", "packaged", "greet", "identity", "joined",
-            "twice", "sum", "nothing", "fail", "ite", "lookedUp", "hidden");
+            "twice", "sum", "nothing", "fail", "ite", "lookedUp", "owned", "hidden");
 
     @TempDir
     Path workDir;
@@ -122,6 +124,9 @@ class GeneratedInvokerCompileTimeTest {
                     var builder = invokers.createInvoker(bean, method);
                     if (method.name().equals("lookedUp")) {
                         builder.withArgumentLookup(0).withArgumentLookup(1);
+                    }
+                    if (method.name().equals("owned")) {
+                        builder.withArgumentLookup(0);
                     }
                     BUILT.put(method.name(), builder.build());
                 } catch (DeploymentException _) {
@@ -190,7 +195,7 @@ class GeneratedInvokerCompileTimeTest {
         assertTrue(result.success(), () -> "compilation failed: " + result.messages());
 
         try (var classes = Files.list(result.classes().resolve("inv"))) {
-            assertEquals(12, classes.filter(file -> file.getFileName().toString().contains("$$VaubanInvoker$"))
+            assertEquals(13, classes.filter(file -> file.getFileName().toString().contains("$$VaubanInvoker$"))
                     .count(), "the invoker classes, one per method but the private one");
         }
         assertInvokersCall(result, Place.PROCESSOR);
@@ -334,7 +339,9 @@ class GeneratedInvokerCompileTimeTest {
                     assertEquals("checked", assertThrows(IOException.class, () -> fail.invoke(service, none))
                             .getMessage());
                 },
-                () -> assertEquals("held x", invokers.get("lookedUp").invoke(service, new Object[2]), "lookups"));
+                () -> assertEquals("held x", invokers.get("lookedUp").invoke(service, new Object[2]), "lookups"),
+                () -> assertEquals("text", invokers.get("owned").invoke(service, new Object[1]),
+                        "the looked-up Outer<String>.Inner<Integer>, not the Outer<Long> one (BUG-20261118-49)"));
     }
 
     private URLClassLoader loader(ProcessorCompiler.Result result) throws IOException {
@@ -371,6 +378,19 @@ class GeneratedInvokerCompileTimeTest {
                 public record Holder<T>(T value) {
                 }
                 """);
+        sources.put("inv/Outer.java", """
+                package inv;
+
+                public class Outer<O> {
+                    public class Inner<I> {
+                        public final String tag;
+
+                        public Inner(String tag) {
+                            this.tag = tag;
+                        }
+                    }
+                }
+                """);
         sources.put("inv/Producers.java", """
                 package inv;
 
@@ -388,6 +408,16 @@ class GeneratedInvokerCompileTimeTest {
                     @Produces
                     Holder<Integer> other() {
                         return new Holder<>(0);
+                    }
+
+                    @Produces
+                    Outer<String>.Inner<Integer> text() {
+                        return new Outer<String>().new Inner<Integer>("text");
+                    }
+
+                    @Produces
+                    Outer<Long>.Inner<Integer> number() {
+                        return new Outer<Long>().new Inner<Integer>("number");
                     }
 
                     @Produces
@@ -460,6 +490,10 @@ class GeneratedInvokerCompileTimeTest {
 
                     public String lookedUp(Holder<String> holder, @Named("x") String named) {
                         return holder.value() + " " + named;
+                    }
+
+                    public String owned(Outer<String>.Inner<Integer> inner) {
+                        return inner.tag;
                     }
                 }
                 """);

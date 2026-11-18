@@ -20,6 +20,7 @@
 package io.vidocq.vauban.core.extensions;
 
 import io.vidocq.vauban.core.langmodel.types.VaubanClassType;
+import io.vidocq.vauban.core.langmodel.types.VaubanParameterizedType;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.types.ArrayType;
@@ -75,7 +76,10 @@ final class LangModelTypeMapper {
                 List<TypeInfo> args = pt.typeArguments().stream()
                         .map(argument -> toIndexType(argument, reading))
                         .toList();
-                yield new TypeInfo.ParameterizedType(rawName, args);
+                // Outer<String>.Inner<Integer> keeps its owner, which the language model does not give
+                // (BUG-20261118-49)
+                yield new TypeInfo.ParameterizedType(rawName, args,
+                        pt instanceof VaubanParameterizedType indexed ? indexed.indexOwner() : null);
             }
             case ArrayType at -> {
                 var elem = toIndexType(at.componentType(), reading);

@@ -5,6 +5,33 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-49 — An invoker's looked-up argument loses the owner of its type
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes)
+- **Module**: `vauban-core` (`LangModelTypeMapper`, `TypeMapper`, `VaubanParameterizedType`)
+- **Symptom**: `Service.owned(Outer<String>.Inner<Integer> inner)` with an invoker that looks its argument up, and the
+  producers of `Outer<String>.Inner<Integer>` and of `Outer<Long>.Inner<Integer>`. The processor, the start and the
+  freeze refuse the deployment: _Invoker argument lookup ambiguous: 2 beans found for parameter type
+  inv.Outer$Inner<java.lang.Integer> at position 0 of method inv.Service.owned_. Past that check, the frozen `G:`
+  invoker recorded the looked-up type without its owner (`InvokerShape.notation`), so its lookup at call time matched
+  both beans as well.
+- **Repro**: `GeneratedInvokerCompileTimeTest`, the four tests (processor, frozen, start, a module that opens nothing),
+  method `owned`.
+- **Cause** (proved): `LangModelTypeMapper.toIndexType`, which turns a language model type back into an index type,
+  built a `ParameterizedType` without owner: the language model has none. `AssignabilityRules.ownersAssignable`
+  accepts any owner when one side has none. The invoker's lookup check (`ExtensionMethodValidator`), the notation the
+  `G:` record writes (`InvokerShape`) and the injection points `@Enhancement` adds (`EnhancementApplier`) go through it.
+- **Fix**: `VaubanParameterizedType`, which the language model gives for an index type, keeps the index owner outside
+  its equality (`indexOwner()`), and `LangModelTypeMapper` writes it back. A type an extension builds with
+  `Types.parameterized` has no owner, as before.
+- **What stays**: `Outer<String>.Plain`, an inner class without type parameters, is a class type in the language model
+  (BUG-20261118-47); read back, it has no owner.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l2d-ff-49.log`, "BUG-49 red" (the four tests, _ambiguous: 2 beans_). Green, same log,
+  "BUG-49 green".
+- **Found by**: the final whole-branch review of the stack.
+
 ## BUG-20261118-54 — The owner of an inherited observer's parameter type keeps the superclass's type variable
 
 - **Date**: 2026-11-18

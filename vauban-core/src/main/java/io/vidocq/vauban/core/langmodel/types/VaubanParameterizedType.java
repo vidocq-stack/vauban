@@ -21,6 +21,7 @@ package io.vidocq.vauban.core.langmodel.types;
 
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.types.ClassType;
 import jakarta.enterprise.lang.model.types.ParameterizedType;
@@ -35,6 +36,12 @@ public final class VaubanParameterizedType implements ParameterizedType, Annotat
     private final List<Type> typeArguments;
     /** The annotations on this use of the type (BUG-20261117-60); they take no part in its equality. */
     private final List<AnnotationInfo> annotations;
+    /**
+     * The type that encloses this one in the index, {@code Outer<String>} for {@code Outer<String>.Inner<Integer>},
+     * or {@code null}: the language model has no owner, and a lookup of the type needs it (BUG-20261118-49). It takes
+     * no part in the equality, as the language model compares types.
+     */
+    private final TypeInfo indexOwner;
 
     public VaubanParameterizedType(DotName rawType, List<Type> typeArguments, IndexLookup lookup) {
         this(rawType, typeArguments, lookup, List.of());
@@ -43,9 +50,21 @@ public final class VaubanParameterizedType implements ParameterizedType, Annotat
     /** The type {@code rawType<typeArguments>}, used with {@code annotations} on it (BUG-20261117-60). */
     public VaubanParameterizedType(DotName rawType, List<Type> typeArguments, IndexLookup lookup,
             List<AnnotationInfo> annotations) {
+        this(rawType, typeArguments, lookup, annotations, null);
+    }
+
+    /** The type {@code rawType<typeArguments>} of the index, a member of {@code indexOwner} when not {@code null}. */
+    public VaubanParameterizedType(DotName rawType, List<Type> typeArguments, IndexLookup lookup,
+            List<AnnotationInfo> annotations, TypeInfo indexOwner) {
         this.genericClass = new VaubanClassType(rawType, lookup);
         this.typeArguments = List.copyOf(typeArguments);
         this.annotations = List.copyOf(annotations);
+        this.indexOwner = indexOwner;
+    }
+
+    /** The type that encloses this one in the index, or {@code null} (BUG-20261118-49). */
+    public TypeInfo indexOwner() {
+        return indexOwner;
     }
 
     @Override

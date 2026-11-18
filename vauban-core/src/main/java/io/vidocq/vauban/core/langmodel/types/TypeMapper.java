@@ -80,9 +80,9 @@ public final class TypeMapper {
             // (BUG-20261118-47)
             case TypeInfo.ParameterizedType(var rawType, var typeArguments, _) when typeArguments.isEmpty() ->
                     new VaubanClassType(rawType, lookup, use.annotations(lookup));
-            case TypeInfo.ParameterizedType(var rawType, var typeArguments, _) -> new VaubanParameterizedType(
+            case TypeInfo.ParameterizedType(var rawType, var typeArguments, var owner) -> new VaubanParameterizedType(
                     rawType, mapAll(typeArguments, use::typeArgument, lookup, reading), lookup,
-                    use.annotations(lookup));
+                    use.annotations(lookup), owner);
             case TypeInfo.TypeVariable(var name, var bounds) -> typeVariable(name, bounds, lookup, use, reading);
             case TypeInfo.WildcardType(var upperBound, var lowerBound) ->
                     wildcard(upperBound, lowerBound, lookup, use, reading);
