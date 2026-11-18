@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.bean.model.DisposerDescriptor;
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
+import io.vidocq.vauban.core.bean.validation.IndexClassValidator;
 import io.vidocq.vauban.core.loading.DeploymentClasses;
 import io.vidocq.vauban.indexer.model.AnnotationInfo;
 import io.vidocq.vauban.indexer.model.ClassInfo;
@@ -87,8 +88,53 @@ final class ObserverDisposerDiscovery {
                 }
             }
         } catch (ClassNotFoundException _) {
-            // The index alone describes the observers
+            discoverIndexedInheritedObservers(classInfo, result);
         }
+    }
+
+    /**
+     * The observer methods {@code classInfo} inherits, read from the index when its class does not load: the processor
+     * compiles it. The processor gave no observer a bean inherits (BUG-20261118-44). The type arguments each class
+     * gives the one above it are carried down the walk, as {@code ObserverInjectionPoints} does: the event type is the
+     * declared type, those substituted (CDI 4.1, 4.2), and a method the class or a nearer superclass overrides, by
+     * name and erased parameter types after substitution, counts once. The start compares javac's bridges, which the
+     * compiler's elements do not have.
+     */
+    private void discoverIndexedInheritedObservers(ClassInfo classInfo, List<ObserverDescriptor> result) {
+        var seen = new java.util.HashSet<String>();
+        classInfo.methods().forEach(method -> seen.add(signature(method, Map.of())));
+        Map<String, TypeInfo> given = Map.of();
+        var below = classInfo;
+        boolean own = true;
+        for (var current = superclassOf(classInfo); current != null; current = superclassOf(current)) {
+            given = IndexClassValidator.typeArguments(current, below.genericSuperclass(), given, own);
+            own = false;
+            for (var method : current.methods()) {
+                int observed = method.isConstructor() ? -1 : observedParameterIndex(method);
+                if (!java.lang.reflect.Modifier.isPrivate(method.accessFlags()) && seen.add(signature(method, given))
+                        && observed >= 0) {
+                    result.add(indexedObserver(classInfo, method, observed, ObserverInjectionPoints.given(
+                            method.parameters().get(observed).type(), given)));
+                }
+            }
+            below = current;
+        }
+    }
+
+    /**
+     * The superclass of {@code classInfo} as {@code IndexLookup.describe} gives it: the processor describes a class
+     * the index does not hold, such as a superclass with no bean defining annotation; {@code null} for none.
+     */
+    private ClassInfo superclassOf(ClassInfo classInfo) {
+        var superName = classInfo.superName();
+        return superName == null ? null : host.lookup.describe(superName).orElse(null);
+    }
+
+    /** The name and erased parameter types of {@code method}, the type variables {@code given} names substituted. */
+    private static String signature(MethodInfo method, Map<String, TypeInfo> given) {
+        return method.name() + method.parameters().stream()
+                .map(parameter -> BeanDiscovery.erasedName(ObserverInjectionPoints.given(parameter.type(), given)))
+                .toList();
     }
 
     /** The position of the first {@code @Observes} or {@code @ObservesAsync} parameter, or -1. */
@@ -195,6 +241,15 @@ final class ObserverDisposerDiscovery {
 
     private ObserverDescriptor indexedObserver(ClassInfo classInfo, MethodInfo method, int paramIndex) {
         var param = method.parameters().get(paramIndex);
+        // Try to get the parameterized type via reflection
+        return indexedObserver(classInfo, method, paramIndex, resolveObserverParamType(
+                classInfo.name().value(), method.name(), paramIndex, method.parameters(), param.type()));
+    }
+
+    /** The observer {@code method} of {@code classInfo} declares or inherits, of the event type {@code eventType}. */
+    private ObserverDescriptor indexedObserver(ClassInfo classInfo, MethodInfo method, int paramIndex,
+                                               TypeInfo eventType) {
+        var param = method.parameters().get(paramIndex);
         boolean isObservesAsync = BeanDiscovery.hasAnnotation(param.annotations(), BeanDiscovery.OBSERVES_ASYNC);
         // Qualifiers on the observed parameter (excluding @Observes/@ObservesAsync)
         var qualifiers = host.computeObserverQualifiers(param.annotations().stream()
@@ -217,10 +272,6 @@ final class ObserverDisposerDiscovery {
             reception = enumConstant(observesAnn.get(), "notifyObserver", reception);
             transactionPhase = enumConstant(observesAnn.get(), "during", transactionPhase);
         }
-
-        // Try to get the parameterized type via reflection
-        var eventType = resolveObserverParamType(
-                classInfo.name().value(), method.name(), paramIndex, method.parameters(), param.type());
 
         return new ObserverDescriptor(
                 classInfo.name(),

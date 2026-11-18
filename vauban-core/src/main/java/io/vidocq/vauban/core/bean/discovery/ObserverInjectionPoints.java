@@ -132,7 +132,7 @@ final class ObserverInjectionPoints {
     }
 
     /** {@code type} with the type variables {@code given} names replaced by what they are given. */
-    private static TypeInfo given(TypeInfo type, Map<String, TypeInfo> given) {
+    static TypeInfo given(TypeInfo type, Map<String, TypeInfo> given) {
         return switch (type) {
             case TypeInfo.TypeVariable(var name, _) -> given.getOrDefault(name, type);
             case TypeInfo.ParameterizedType(var raw, var arguments) -> new TypeInfo.ParameterizedType(raw,

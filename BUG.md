@@ -5,6 +5,36 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-44 — An `ObserverInfo` of an observer a bean inherits has no method, or none at all
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, lane L4)
+- **Module**: `vauban-core` (`ObserverDisposerDiscovery`, `VaubanBceObserverInfo.observed`)
+- **Symptom**: `vi.Heir extends vi.Ancestor`, a `@Dependent` bean, inherits `hear(BeanManager, @Observes Short)`. At
+  start and frozen, its `ObserverInfo` gives `observerMethod()` and `eventParameter()` `null`, which the
+  `ObserverInfo` Javadoc allows for a synthetic observer only. The processor gives `@Registration` no such observer
+  at all.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anObserverInfoGivesTheObserverMethodABeanInheritsFromTheProcessorAtStartAndFrozen`.
+- **Cause** (proved): `VaubanBceObserverInfo.observed` looked the method up in the declaring class, the bean class,
+  alone. In the processor, `ObserverDisposerDiscovery.discoverInheritedObservers` found inherited observers by
+  reflection only, and a class the compilation compiles does not load there.
+- **Fix**: `observed` walks the superclasses, as the language model describes them (`IndexLookup.find`), until one
+  declares a matching method; the `MethodInfo` it gives belongs to that superclass, and `declaringClass()` and
+  `bean()` stay the bean class, as with Weld. When the bean class does not load, the discovery reads the inherited
+  methods from the superclasses `IndexLookup.describe` gives, a method the class or a nearer superclass overrides
+  counted once, as the reflective walk does. Round 5 of the review: the walk carries the type arguments each class
+  gives the one above it (`IndexClassValidator.typeArguments`, as `ObserverInjectionPoints`), so the event type of
+  `on(@Observes T)` in `Base<T>` is `Pong` for `Sub extends Base<Pong>`, as at start, and the override check compares
+  the erased parameter types after substitution: `Over`, which overrides it with `on(@Observes Pong)`, had two
+  observers in the processor. `parameterTypes` stays the erasure of the declared parameters, and `observed` takes the
+  method those name, whatever its event type. Red `stack-l4-44b-red.log` (the processor gave event `T` and a second
+  `Over` observer, the start and frozen a `null` method for `Sub`); green `stack-l4-44b-dev.log`
+  (`VetoedInterceptorCompileTimeTest#anInheritedObserverOfATypeVariableObservesItsTypeArgumentFromTheProcessorAtStartAndFrozen`).
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-44-red.log`, "Red run (BUG-20261118-44)" (the processor gives no observer, start
+  and frozen `no method`) and the probe after it. Green, `stack-l4-44-dev.log`, "Green run 2".
+- **Found by**: the L4 review, round 4.
+
 ## BUG-20261118-43 — At start, `@Registration` gives a `@Typed` bean for the supertypes of its types
 
 - **Date**: 2026-11-18

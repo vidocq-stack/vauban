@@ -93,8 +93,9 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
 
     /**
      * The observer method: the method of the declaring class with the descriptor's name and an {@code @Observes} or
-     * {@code @ObservesAsync} parameter of the observed event type, its erasure when no type is equal; {@code null} for
-     * a synthetic observer. It was {@code null} for every observer (BUG-20261117-09).
+     * {@code @ObservesAsync} parameter of the observed event type, its erasure when no type is equal, declared by the
+     * class or inherited (BUG-20261118-44); {@code null} for a synthetic observer. It was {@code null} for every
+     * observer (BUG-20261117-09).
      */
     @Override
     public MethodInfo observerMethod() {
@@ -122,11 +123,31 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
     private record Observed(MethodInfo method, int position) {
     }
 
+    /**
+     * The observer method, in the declaring class or, for one the bean inherits, in the nearest superclass that has
+     * it: a bean class need not declare it. It was looked up in the declaring class alone (BUG-20261118-44).
+     */
     private Optional<Observed> observed() {
         var declaring = descriptor.isSynthetic() ? null : lookup.getClass(descriptor.declaringClass()).orElse(null);
-        if (declaring == null) {
-            return Optional.empty();
+        for (var current = declaring; current != null; current = superclassOf(current)) {
+            var found = observedIn(current);
+            if (found.isPresent()) {
+                return found;
+            }
         }
+        return Optional.empty();
+    }
+
+    /**
+     * The superclass of {@code type} as the language model describes it, inside the index or not; {@code null} for
+     * none.
+     */
+    private io.vidocq.vauban.indexer.model.ClassInfo superclassOf(io.vidocq.vauban.indexer.model.ClassInfo type) {
+        return type.superName() == null ? null : lookup.find(type.superName()).orElse(null);
+    }
+
+    /** The observer method {@code declaring} declares itself. */
+    private Optional<Observed> observedIn(io.vidocq.vauban.indexer.model.ClassInfo declaring) {
         var declaringInfo = new VaubanClassInfo(declaring, lookup);
         Observed erasedMatch = null;
         var erasedEvent = BeanDiscovery.erasedName(descriptor.eventType());
@@ -137,7 +158,9 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
             }
             var type = method.parameters().get(position).type();
             var candidate = new Observed(new VaubanMethodInfo(method, declaringInfo, lookup), position);
-            if (type.equals(descriptor.eventType())) {
+            // Known erased parameter types name one method: an inherited event type may be a type variable the bean
+            // class gives a type argument, which the descriptor holds substituted (BUG-20261118-44)
+            if (!descriptor.parameterTypes().isEmpty() || type.equals(descriptor.eventType())) {
                 return Optional.of(candidate);
             }
             if (erasedMatch == null && Objects.equals(erasedEvent, BeanDiscovery.erasedName(type))) {

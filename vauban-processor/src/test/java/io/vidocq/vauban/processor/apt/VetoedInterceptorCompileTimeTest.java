@@ -2661,6 +2661,126 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(List.of("hear of 1 parameters, event at 0", "hear of 2 parameters, event at 1"));
     }
 
+    /**
+     * Records the observer method of each observer of {@code vi.Heir}: the class that declares it, its event parameter,
+     * and the classes {@code declaringClass()} and {@code bean()} give.
+     */
+    public static class InheritedObserverRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Short.class)
+        public void observers(ObserverInfo observer) {
+            if (!observer.declaringClass().name().equals("vi.Heir")) {
+                return;
+            }
+            var method = observer.observerMethod();
+            SEEN.add(method == null ? "no method"
+                    : method.declaringClass().name() + "." + method.name() + " event at "
+                    + method.parameters().indexOf(observer.eventParameter()) + ", declaring class "
+                    + observer.declaringClass().name() + ", bean " + observer.bean().declaringClass().name());
+        }
+    }
+
+    /**
+     * A bean inherits the observer methods of its superclass, and the {@code ObserverInfo} of such an observer gives
+     * the method of the superclass: {@code null} stands for a synthetic observer only. The container looked the method
+     * up in the bean class alone and gave {@code null} (BUG-20261118-44). Its declaring class and its bean stay the
+     * bean class, as with Weld.
+     */
+    @Test
+    @DisplayName("an ObserverInfo gives the method a bean inherits, everywhere")
+    void anObserverInfoGivesTheObserverMethodABeanInheritsFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Ancestor.java", """
+                package vi;
+                public class Ancestor {
+                    void hear(jakarta.enterprise.inject.spi.BeanManager manager,
+                            @jakarta.enterprise.event.Observes Short number) {
+                        // inherited by vi.Heir
+                    }
+                }
+                """);
+        sources.put("vi/Heir.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Heir extends Ancestor {
+                }
+                """);
+
+        var seen = seenThreeWays(sources, InheritedObserverRecorder.class, InheritedObserverRecorder.SEEN);
+
+        seen.assertEachIs(List.of("vi.Ancestor.hear event at 1, declaring class vi.Heir, bean vi.Heir"));
+    }
+
+    /**
+     * Records each observer of {@code vi.Pong} of {@code vi.Sub} and {@code vi.Over}: its declaring class, the class of
+     * its method, and its event type.
+     */
+    public static class GenericObserverRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void observers(ObserverInfo observer) {
+            var declaring = observer.declaringClass().name();
+            if (declaring.equals("vi.Sub") || declaring.equals("vi.Over")) {
+                var method = observer.observerMethod();
+                SEEN.add(declaring + ", method of " + (method == null ? null : method.declaringClass().name())
+                        + ", event " + ObserverRecorder.nameOf(observer.eventType()));
+            }
+        }
+    }
+
+    /**
+     * The event type of an observer a bean inherits from a generic superclass is its declared type, the type arguments
+     * the bean class gives substituted (CDI 4.1, 4.2): {@code vi.Sub extends vi.Base<vi.Pong>} observes
+     * {@code vi.Pong} through {@code on(@Observes T)}, and {@code vi.Over}, which overrides it with
+     * {@code on(@Observes Pong)}, has one observer. The processor gave {@code Sub}'s event type {@code T}, and
+     * {@code Over} two observers: it compared the methods before substitution, where the start compares javac's
+     * bridge (BUG-20261118-44).
+     */
+    @Test
+    @DisplayName("an inherited observer of a type variable observes its type argument, everywhere")
+    void anInheritedObserverOfATypeVariableObservesItsTypeArgumentFromTheProcessorAtStartAndFrozen()
+            throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Pong.java", """
+                package vi;
+                public class Pong {
+                }
+                """);
+        sources.put("vi/Base.java", """
+                package vi;
+                public class Base<T> {
+                    void on(@jakarta.enterprise.event.Observes T event) {
+                        // inherited, of a type variable
+                    }
+                }
+                """);
+        sources.put("vi/Sub.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Sub extends Base<Pong> {
+                }
+                """);
+        sources.put("vi/Over.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Over extends Base<Pong> {
+                    @Override
+                    void on(@jakarta.enterprise.event.Observes Pong event) {
+                        // overrides the inherited observer
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, GenericObserverRecorder.class, GenericObserverRecorder.SEEN);
+
+        seen.assertEachIs(List.of("vi.Over, method of vi.Over, event vi.Pong",
+                "vi.Sub, method of vi.Base, event vi.Pong"));
+    }
+
     /** Records the bean types, the qualifiers and the injection points of the interceptor {@code vi.Logger}. */
     public static class InterceptorDescriber implements BuildCompatibleExtension {
 

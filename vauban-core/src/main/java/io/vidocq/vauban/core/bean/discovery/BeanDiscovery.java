@@ -91,7 +91,7 @@ public final class BeanDiscovery {
 
     final VaubanIndex index;
     /** The classes of {@link #index}, and what the annotation processor describes beside them. */
-    private final IndexLookup lookup;
+    final IndexLookup lookup;
     Set<DotName> customQualifiers = Set.of();
     Set<DotName> customInterceptorBindings = Set.of();
     Set<DotName> customStereotypes = Set.of();
