@@ -44,7 +44,6 @@ import java.util.stream.Collectors;
 @SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
 public final class BceProcessor {
 
-    private static final String MSG_REGISTRATION_ERROR = "@Registration error: ";
 
     /**
      * Runs only the {@code @Enhancement} phase of the BCE lifecycle for the given classes.
@@ -366,7 +365,8 @@ public final class BceProcessor {
             ExtensionAsks.of(bceClass, action::run);
             return true;
         } catch (Exception e) {
-            deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": " + e.getMessage());
+            deploymentErrors.add("BCE processing failed for " + bceClass.getName() + ": "
+                    + java.util.Objects.requireNonNullElse(e.getMessage(), e.getClass().getName()));
             deploymentErrorCauses.add(e);
             return false;
         }
@@ -687,7 +687,7 @@ public final class BceProcessor {
             }
         } catch (Exception e) {
             var unwrapped = unwrapped(e);
-            sink.errors().add("@Enhancement error: " + unwrapped.getMessage());
+            sink.errors().add(phaseError("@Enhancement", method, unwrapped));
             sink.errorCauses().add(unwrapped);
         }
         sink.errors().addAll(services.messages().getErrors());
@@ -701,6 +701,28 @@ public final class BceProcessor {
     private static Throwable unwrapped(Exception e) {
         return e instanceof java.lang.reflect.InvocationTargetException ite
                 ? java.util.Objects.requireNonNullElse(ite.getCause(), ite) : e;
+    }
+
+    /**
+     * The line an extension method's failure adds to the errors of its phase: {@code <phase> error: <message>}, or,
+     * for a failure without a message, such as the {@code AssertionError} of a failed {@code assert}, the extension
+     * class, the method and the failure's type, where the line read {@code null} (BUG-20261117-46).
+     */
+    static String phaseError(String phase, Method method, Throwable thrown) {
+        var message = thrown.getMessage();
+        return message != null ? phase + " error: " + message
+                : phase + " error in " + method.getDeclaringClass().getName() + "." + method.getName() + ": "
+                        + thrown.getClass().getName();
+    }
+
+    /**
+     * The line a {@code @Registration} method's failure adds: an {@code IllegalStateException} it throws, the invoker
+     * factory's own, reads as its message alone; any other failure as {@link #phaseError} writes it.
+     */
+    private static String registrationError(Method method, Exception e) {
+        var thrown = unwrapped(e);
+        return e instanceof java.lang.reflect.InvocationTargetException && thrown instanceof IllegalStateException
+                && thrown.getMessage() != null ? thrown.getMessage() : phaseError("@Registration", method, thrown);
     }
 
     /** Check if a Registration method uses InvokerFactory parameter. */
@@ -849,16 +871,8 @@ public final class BceProcessor {
 
         try {
             method.invoke(bce, args);
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            var cause = e.getCause();
-            if (cause instanceof IllegalStateException ise) {
-                errors.add(ise.getMessage());
-            } else {
-                errors.add(MSG_REGISTRATION_ERROR
-                        + (cause != null ? cause.getMessage() : e.getMessage()));
-            }
         } catch (Exception e) {
-            errors.add(MSG_REGISTRATION_ERROR + e.getMessage());
+            errors.add(registrationError(method, e));
         }
 
         if (messages.hasErrors()) {
@@ -876,16 +890,8 @@ public final class BceProcessor {
 
         try {
             method.invoke(bce, args);
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            var cause = e.getCause();
-            if (cause instanceof IllegalStateException ise) {
-                errors.add(ise.getMessage());
-            } else {
-                errors.add(MSG_REGISTRATION_ERROR
-                        + (cause != null ? cause.getMessage() : e.getMessage()));
-            }
         } catch (Exception e) {
-            errors.add(MSG_REGISTRATION_ERROR + e.getMessage());
+            errors.add(registrationError(method, e));
         }
 
         if (messages.hasErrors()) {
@@ -951,11 +957,8 @@ public final class BceProcessor {
 
             try {
                 method.invoke(bce, args);
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                var cause = e.getCause();
-                errors.add("@Synthesis error: " + (cause != null ? cause.getMessage() : e.getMessage()));
             } catch (Exception e) {
-                errors.add("@Synthesis error: " + e.getMessage());
+                errors.add(phaseError("@Synthesis", method, unwrapped(e)));
             }
             errors.addAll(messages.getErrors());
         }
@@ -985,11 +988,8 @@ public final class BceProcessor {
 
             try {
                 method.invoke(bce, args);
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                var cause = e.getCause();
-                errors.add("@Validation error: " + (cause != null ? cause.getMessage() : e.getMessage()));
             } catch (Exception e) {
-                errors.add("@Validation error: " + e.getMessage());
+                errors.add(phaseError("@Validation", method, unwrapped(e)));
             }
 
             if (messages.hasErrors()) {

@@ -1255,7 +1255,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-46 — An error an extension phase throws without a message is reported as "null"
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED on `fix/vauban-bug-stack`
 - **Module**: `vauban-core` (`extensions.BceProcessor`)
 - **Symptom**: an `@Enhancement` method that throws a `Throwable` without a message, such as the `AssertionError` of a
   failed `assert`, fails the start with
@@ -1272,6 +1272,16 @@ suspected cause, status. Updated on every investigation.
 - **Expected**: when the message is `null`, the line names the extension class, the method and the exception type,
   `@Enhancement error in ...Asserting.verify: java.lang.AssertionError` say.
 - **Found by**: the BUG-20261117-40 probe of the CDI language model TCK.
+- **Fix**: `BceProcessor.phaseError` writes the line of each phase that calls the extension per class or per bean,
+  `@Enhancement`, `@Registration`, `@Synthesis` and `@Validation`: `<phase> error: <message>`, as before, or, for a
+  failure without a message, `<phase> error in <extension class>.<method>: <failure type>`. `@Registration` keeps an
+  `IllegalStateException` the call throws as its message alone, the invoker factory's own errors. The line of an
+  extension that fails outside a method call names its failure type when it has no message.
+- **Verification**: `PhaseErrorReportTest`, `@Disabled` lifted and widened to the four phases: red on e6bca57c
+  with `BceProcessor` unfixed (`stack-l1b-bug46.log`, "RED on e6bca57c (BceProcessor unfixed, test extended)": the
+  four `error: null`), green with the fix ("GREEN on e6bca57c + BUG-46 fix: PhaseErrorReportTest, four phases");
+  "BUG-46 module tests: core, processor, maven-plugin". Checked on the stack tip 7af75cc1 first: BUG-20261118-05 had
+  not changed the message.
 
 ## BUG-20261117-45 — The start checks invoker lookups without the synthetic beans of frozen or compiled extensions
 

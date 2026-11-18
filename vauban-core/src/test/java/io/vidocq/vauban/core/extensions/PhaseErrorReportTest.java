@@ -19,23 +19,31 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
+import jakarta.enterprise.inject.build.compatible.spi.Messages;
+import jakarta.enterprise.inject.build.compatible.spi.Registration;
+import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
+import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
+import jakarta.enterprise.inject.build.compatible.spi.Validation;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
 import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * BUG-20261117-46: an error an extension phase throws without a message, such as the {@code AssertionError} of a
- * failed {@code assert}, fails the start with {@code @Enhancement error: null}; the message names neither the
- * extension, nor its method, nor the error.
+ * failed {@code assert}, failed the start with {@code @Enhancement error: null}; the message named neither the
+ * extension, nor its method, nor the error. It names them now, in each phase that calls the extension per class or per
+ * bean.
  */
 @DisplayName("BUG-20261117-46 - an error an extension phase throws without a message is reported by name")
 class PhaseErrorReportTest {
@@ -53,18 +61,46 @@ class PhaseErrorReportTest {
         }
     }
 
-    @Test
-    @Disabled("BUG-20261117-46: an error thrown without a message in an extension phase is reported as \"null\"")
+    /** Throws what a failed {@code assert} throws, in {@code @Registration}. */
+    public static class AssertingRegistration implements BuildCompatibleExtension {
+
+        @Registration(types = Target.class)
+        public void verify(BeanInfo bean) {
+            throw new AssertionError();
+        }
+    }
+
+    /** Throws what a failed {@code assert} throws, in {@code @Synthesis}. */
+    public static class AssertingSynthesis implements BuildCompatibleExtension {
+
+        @Synthesis
+        public void verify(SyntheticComponents components) {
+            throw new AssertionError();
+        }
+    }
+
+    /** Throws what a failed {@code assert} throws, in {@code @Validation}. */
+    public static class AssertingValidation implements BuildCompatibleExtension {
+
+        @Validation
+        public void verify(Messages messages) {
+            throw new AssertionError();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(classes = {Asserting.class, AssertingRegistration.class, AssertingSynthesis.class,
+            AssertingValidation.class})
     @DisplayName("the start failure names the extension, its method and the error")
-    void theStartFailureNamesTheExtensionItsMethodAndTheError() {
+    void theStartFailureNamesTheExtensionItsMethodAndTheError(Class<?> extension) {
         var initializer = SeContainerInitializer.newInstance().disableDiscovery()
-                .addBeanClasses(Target.class, Asserting.class);
+                .addBeanClasses(Target.class, extension);
 
         var thrown = assertThrows(DeploymentException.class, initializer::initialize);
 
         var message = thrown.getMessage();
-        assertAll(() -> assertTrue(message.contains(Asserting.class.getName()), message),
-                () -> assertTrue(message.contains("verify"), message),
-                () -> assertTrue(message.contains(AssertionError.class.getName()), message));
+        assertAll(() -> assertTrue(message.contains(extension.getName() + ".verify"), message),
+                () -> assertTrue(message.contains(AssertionError.class.getName()), message),
+                () -> assertFalse(message.contains("null"), message));
     }
 }
