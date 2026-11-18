@@ -151,6 +151,22 @@ class ClassChecksumsTest {
     }
 
     /**
+     * The modifiers an extension sees count where they differ from the access flags but {@code ACC_SUPER}, a nested
+     * class's: a top-level class keeps its checksum (BUG-20261117-37).
+     */
+    @Test
+    @DisplayName("the modifiers count where they are not the access flags")
+    void theModifiersCount() {
+        var plain = type(List.of(), List.of(), List.of());
+        var topLevel = new ClassInfo(A, DotName.of("java.lang.Object"), List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, null, null, null, null, 1);
+        var nested = new ClassInfo(A, DotName.of("java.lang.Object"), List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, null, null, null, null, 1 | 8);
+        assertEquals(ClassChecksums.ofModel(plain), ClassChecksums.ofModel(topLevel));
+        assertNotEquals(ClassChecksums.ofModel(plain), ClassChecksums.ofModel(nested));
+    }
+
+    /**
      * The supertypes as the class declares them count where they carry type arguments, which the extensions see
      * (BUG-20261117-22); a class without any keeps the checksum it had before the index read them, the one of a model
      * built from the raw names alone, so the record of a build by an earlier Vauban stays valid for it.
@@ -180,7 +196,8 @@ class ClassChecksumsTest {
      * The checksum of a class whose supertypes carry no type arguments is the one an earlier Vauban wrote in the
      * frozen record: {@code 374142584L} is what {@code ClassChecksums.ofModel} gave this model on 455067f5, the
      * commit before the index read the generic supertypes (BUG-20261117-22). The scan of a class that names a generic
-     * class raw gives the checksum of its model without generic supertypes.
+     * class raw gives the checksum of its model without generic supertypes; both keep the modifiers of the nested
+     * class, which count (BUG-20261117-37).
      */
     @Test
     @DisplayName("a class whose supertypes carry no type arguments keeps the checksum an earlier Vauban wrote")
@@ -198,7 +215,8 @@ class ClassChecksumsTest {
         var scanned = ClassFileScanner.scan(nestedClass(RawFixture.class));
         var scannedWithoutGenericSupertypes = new ClassInfo(scanned.name(), scanned.superName(), scanned.interfaces(),
                 scanned.accessFlags(), scanned.fields(), scanned.methods(), scanned.annotations(), scanned.kind(),
-                scanned.simpleName(), scanned.typeParameters(), scanned.genericMembers());
+                scanned.simpleName(), scanned.typeParameters(), scanned.genericMembers(), null, null, null, null,
+                scanned.modifiers());
 
         assertEquals(374142584L, ClassChecksums.ofModel(rawSupertypes));
         assertEquals(374142584L, ClassChecksums.ofModel(declaredRaw));

@@ -44,6 +44,9 @@ import java.util.stream.IntStream;
 public final class VaubanClassInfo implements jakarta.enterprise.lang.model.declarations.ClassInfo {
 
     private static final DotName OBJECT = DotName.of("java.lang.Object");
+    /** The modifiers a class or an interface can have, as {@code java.lang.reflect.Modifier} encodes them. */
+    private static final int CLASS_MODIFIERS = ClassFile.ACC_PUBLIC | ClassFile.ACC_PROTECTED | ClassFile.ACC_PRIVATE
+            | ClassFile.ACC_STATIC | ClassFile.ACC_FINAL | ClassFile.ACC_ABSTRACT | ClassFile.ACC_INTERFACE;
     private static final DotName INHERITED = DotName.of("java.lang.annotation.Inherited");
 
     private final DotName name;
@@ -232,9 +235,15 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
         return indexClass().isFinal();
     }
 
+    /**
+     * The modifiers as {@code java.lang.reflect.Modifier} reads a class's: those of its source, a nested class's
+     * {@code static}, {@code private} and {@code protected} included, {@code interface} for an interface, and no class
+     * file flag that has another meaning as a modifier, {@code ACC_SUPER} reading as {@code synchronized}, the same in
+     * the processor, at start and frozen (BUG-20261117-37).
+     */
     @Override
     public int modifiers() {
-        return indexClass().accessFlags();
+        return indexClass().modifiers() & CLASS_MODIFIERS;
     }
 
     /**

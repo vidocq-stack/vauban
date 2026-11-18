@@ -1920,7 +1920,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-37 — At start, `ClassInfo.modifiers()` gives the class file's flags
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED
 - **Module**: `vauban-indexer` (`scanner.ClassFileScanner`), `vauban-core` (`langmodel.declarations.VaubanClassInfo`)
 - **Symptom**: `ClassInfo.modifiers()` should read as `java.lang.reflect.Modifier` reads a class's modifiers. At
   start and frozen, `Modifier.toString` gives `public synchronized` for `public class Plain`, and `public synchronized`
@@ -1939,6 +1939,20 @@ suspected cause, status. Updated on every investigation.
   `InnerClasses` flags when it has an entry, without `ACC_SUPER`. Kept out of BUG-20261117-31: the index's
   `accessFlags` feed the bean discovery and the class checks, so the change belongs to the scan or to a new field of
   the index, and must be shown not to move a bean.
+- **Cause, proved**: red on 9152f813 with the `@Disabled` lifted (`stack-l2d-red.log`, "RED BUG-20261117-37 on
+  9152f813"): `public synchronized` for `Plain` and for `Plain$Inner` at start and frozen, `public` and `public static`
+  in the processor.
+- **Fix**: the index's `ClassInfo` gains `modifiers`, the class's modifiers as `Class.getModifiers()` gives them:
+  `ClassFileScanner` reads them from the class's own `InnerClasses` entry when it has one, otherwise from its access
+  flags without `ACC_SUPER`; the processor's flags already are its modifiers. `accessFlags` stays the class file's,
+  which the bean discovery and the class checks read, so no bean moves. `ClassInfo.modifiers()` gives them, keeping
+  the bits `java.lang.reflect.Modifier` gives a class or an interface. The frozen record's checksum of a class whose
+  modifiers differ from its access flags but `ACC_SUPER`, a nested class, changes.
+- **Verification**: the repro, widened to a `private static final`, a `protected abstract` inner and a member
+  interface, green the three ways (`stack-l2d-dev37.log`, "BUG-37 fix (1): processor repro"); indexer, core,
+  processor and maven-plugin tests: indexer 138; core 1753 (11 skipped), processor 440 (15 skipped), maven-plugin 172
+  (`stack-l2d-dev37.log`, "BUG-37 fix (3)"), after `ClassChecksumsTest` kept the scanned nested class's modifiers
+  and gained `theModifiersCount`.
 - **Found by**: BUG-20261117-31's comparison of the processor and the bytecode scan.
 
 ## BUG-20261117-36 — The processor's scan overflows the stack on a member of a type variable bounded by itself

@@ -157,6 +157,11 @@ final class ClassChecksums {
                 text.append('O');
                 name(type.enclosingClass());
             }
+            // The modifiers the extensions see (BUG-20261117-37), where they differ from the access flags but
+            // ACC_SUPER: a nested class's own; a top-level class keeps its checksum.
+            if (type.modifiers() != (type.accessFlags() & ~ClassFile.ACC_SUPER)) {
+                text.append('M').append(type.modifiers());
+            }
         }
 
         /**

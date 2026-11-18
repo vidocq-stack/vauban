@@ -3517,7 +3517,8 @@ class VetoedInterceptorCompileTimeTest {
 
         @Synthesis
         public void modifiers(Types types) {
-            for (var name : List.of(TYPES + PLAIN, TYPES + PLAIN + "$Inner")) {
+            for (var nested : List.of("", "$Inner", "$Hidden", "$Shielded", "$Contract")) {
+                var name = TYPES + PLAIN + nested;
                 var modifiers = types.ofClass(name).declaration().modifiers();
                 SEEN.add(name + ": " + java.lang.reflect.Modifier.toString(modifiers));
             }
@@ -3814,7 +3815,6 @@ class VetoedInterceptorCompileTimeTest {
      * (BUG-20261117-37).
      */
     @Test
-    @Disabled("BUG-20261117-37: at start, ClassInfo.modifiers() gives the class file's flags")
     @DisplayName("an extension sees a class's modifiers the same in the processor, at start and frozen")
     void anExtensionSeesTheModifiersOfAClassInTheProcessorAtStartAndFrozen() throws Exception {
         var sources = withAVetoedPackage();
@@ -3822,11 +3822,22 @@ class VetoedInterceptorCompileTimeTest {
                 public class Plain {
                     public static class Inner {
                     }
+
+                    private static final class Hidden {
+                    }
+
+                    protected abstract class Shielded {
+                    }
+
+                    interface Contract {
+                    }
                 }""");
 
         var seen = seenThreeWays(sources, ModifierRecorder.class, ModifierRecorder.SEEN);
 
-        seen.assertEachIs(sorted(List.of(TYPES + "Plain: public", TYPES + "Plain$Inner: public static")));
+        seen.assertEachIs(sorted(List.of(TYPES + "Plain: public", TYPES + "Plain$Inner: public static",
+                TYPES + "Plain$Hidden: private static final", TYPES + "Plain$Shielded: protected abstract",
+                TYPES + "Plain$Contract: abstract static interface")));
     }
 
     /**

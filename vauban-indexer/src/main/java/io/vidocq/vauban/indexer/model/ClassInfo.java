@@ -38,7 +38,8 @@ public record ClassInfo(
         TypeInfo genericSuperclass,
         List<TypeInfo> genericInterfaces,
         List<TypeAnnotationInfo> typeAnnotations,
-        DotName enclosingClass
+        DotName enclosingClass,
+        int modifiers
 ) {
 
     public enum ClassKind {
@@ -72,6 +73,11 @@ public record ClassInfo(
      * @param enclosingClass    the class that encloses an inner member class, which is not {@code static}: its
      *                          constructors take an instance of it first, and its type variables are in scope in the
      *                          class (BUG-20261118-01). {@code null} for any other class.
+     * @param modifiers         the class's modifiers as {@link Class#getModifiers()} gives them: a nested class's from
+     *                          its own entry of the {@code InnerClasses} attribute, which keeps its {@code static},
+     *                          {@code private} and {@code protected}, and never {@code ACC_SUPER}, which reads as
+     *                          {@code synchronized}. {@code accessFlags} stays the class file's, which the bean
+     *                          discovery reads (BUG-20261117-37).
      * @throws IllegalArgumentException when {@code genericSuperclass} is given without a {@code superName}, or when
      *                                  {@code genericInterfaces} does not name as many interfaces as
      *                                  {@code interfaces}: each says how the class declares a supertype the class
@@ -98,6 +104,23 @@ public record ClassInfo(
         }
         typeAnnotations = TypeAnnotationInfo.canonical(typeAnnotations);
     }
+
+    /**
+     * A class info whose modifiers are its access flags but {@code ACC_SUPER}: a top-level class read from its class
+     * file, or a class the compiler describes.
+     */
+    public ClassInfo(DotName name, DotName superName, List<DotName> interfaces, int accessFlags,
+                     List<FieldInfo> fields, List<MethodInfo> methods, List<AnnotationInfo> annotations,
+                     ClassKind kind, String simpleName, List<TypeInfo.TypeVariable> typeParameters,
+                     boolean genericMembers, TypeInfo genericSuperclass, List<TypeInfo> genericInterfaces,
+                     List<TypeAnnotationInfo> typeAnnotations, DotName enclosingClass) {
+        this(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName, typeParameters,
+                genericMembers, genericSuperclass, genericInterfaces, typeAnnotations, enclosingClass,
+                accessFlags & ~ACC_SUPER);
+    }
+
+    /** {@code ACC_SUPER}, which javac sets on every class it compiles; {@code synchronized} for a modifier. */
+    private static final int ACC_SUPER = 0x0020;
 
     /** A class info that no class encloses as an inner member class. */
     public ClassInfo(DotName name, DotName superName, List<DotName> interfaces, int accessFlags,
@@ -153,7 +176,7 @@ public record ClassInfo(
     public ClassInfo withAnnotations(List<AnnotationInfo> newAnnotations) {
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, newAnnotations, kind,
                 simpleName, typeParameters, genericMembers, genericSuperclass, genericInterfaces, typeAnnotations,
-                enclosingClass);
+                enclosingClass, modifiers);
     }
 
     private static List<TypeInfo> raw(List<DotName> interfaces) {

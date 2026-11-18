@@ -69,6 +69,7 @@ public final class ClassFileScanner {
         var annotations = new ArrayList<AnnotationInfo>();
         String simpleName = null;
         DotName enclosingClass = null;
+        var modifiers = accessFlags & ~ClassFile.ACC_SUPER;
         // Read first: the fields and methods resolve their type variables against the class's.
         var signature = classSignature(cm);
         var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
@@ -89,6 +90,7 @@ public final class ClassFileScanner {
                 case InnerClassesAttribute ica -> {
                     simpleName = innerSimpleName(cm, ica);
                     enclosingClass = enclosingClass(cm, ica);
+                    modifiers = innerFlags(cm, ica).orElse(modifiers);
                 }
                 default -> {
                     // other class elements carry nothing the index records
@@ -109,7 +111,7 @@ public final class ClassFileScanner {
                         : supertypes.interfaces());
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
                 typeParameters, true, supertypes.superclass(), supertypes.interfaces(), typeAnnotations,
-                enclosingClass);
+                enclosingClass, modifiers);
     }
 
     /**
@@ -166,6 +168,17 @@ public final class ClassFileScanner {
             }
         }
         return null;
+    }
+
+    /**
+     * The flags of a nested, local or anonymous class's own entry of the {@code InnerClasses} attribute, which keep its
+     * {@code static}, {@code private} and {@code protected}, as {@link Class#getModifiers()} reads them; empty for a
+     * top-level class (BUG-20261117-37).
+     */
+    private static Optional<Integer> innerFlags(ClassModel cm, InnerClassesAttribute attribute) {
+        var self = cm.thisClass().asInternalName();
+        return attribute.classes().stream().filter(inner -> inner.innerClass().asInternalName().equals(self))
+                .findFirst().map(InnerClassInfo::flagsMask);
     }
 
     /**
