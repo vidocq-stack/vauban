@@ -22,8 +22,8 @@ This page consolidates the state of the official CDI 4.1 TCK runs against Vauban
 
 | Language model TCK
 | 63 run
-| 41 passed, 22 known gaps
-| xref:#language-model-tck[Skipped for `BUG-20261117-42` and `BUG-20261117-43`], each naming its bug.
+| 63 passed, 0 known gaps
+| xref:#language-model-tck[At start, in the processor and frozen], type annotation checks on.
 
 | CDI Lite tests (non-skipped)
 | 774
@@ -155,20 +155,10 @@ The core TCK never calls the language model TCK (`cdi-tck-lang-model`), which ch
 * in a deployment frozen at build, whose start then loads the record and runs no extension.
 
 Each place reports 21 tests: `verify` as the TCK runs it, then each of its 20 steps on its own, so that a failing step does not hide the next.
-A step that fails for a known bug is reported as skipped, naming that bug; `KnownLangModelGaps` lists them, one line each, and a listed step that passes fails the run until its line is removed.
-
-[cols="2,1,3"]
-|===
-| Steps skipped | Where | Bug
-
-| `verify`, `PlainClassMembers`, `InheritedMethods`, `InheritedFields`, `InheritedAnnotations`, `BridgeMethods`, `RepeatableAnnotations`
-| Everywhere
-| `BUG-20261117-42`, no inherited members; `BridgeMethods` and `verify` also `BUG-20261117-43`, synthetic members listed
-
-| `EnumMembers`
-| In the processor
-| `BUG-20261117-42`
-|===
+All 63 pass.
+A step that fails for a known bug may be listed in `KnownLangModelGaps`, one line each, with the line of the TCK it fails at first: it is then reported as skipped, naming that bug.
+A listed step that passes, or fails at another line, fails the run until its line is updated or removed.
+None is listed: the last two, `BUG-20261117-42` (no inherited members) and `BUG-20261117-43` (synthetic members listed), are fixed.
 
 [source,bash]
 ----
