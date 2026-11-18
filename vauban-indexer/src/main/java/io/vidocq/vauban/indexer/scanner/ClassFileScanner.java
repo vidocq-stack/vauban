@@ -98,11 +98,13 @@ public final class ClassFileScanner {
         // class file names them, when the signature does not name as many interfaces, or the class file no superclass.
         var supertypes = signature.isPresent() ? supertypes(signature.get(), superName, interfaces.size()) : RAW;
         // A class without type annotations reads none: most classes.
-        List<TypeAnnotationInfo> typeAnnotations = !TypeAnnotationReader.hasTypeAnnotations(cm) ? List.of()
-                : classTypeAnnotations(cm, members, typeParameters,
-                        superName == null ? null
-                                : Objects.requireNonNullElse(supertypes.superclass(), new ClassType(superName)),
-                        supertypes.interfaces() == null ? rawTypes(interfaces) : supertypes.interfaces());
+        List<TypeAnnotationInfo> typeAnnotations = List.of();
+        if (TypeAnnotationReader.hasTypeAnnotations(cm)) {
+            typeAnnotations = classTypeAnnotations(cm, members, typeParameters,
+                    superName == null ? null
+                            : Objects.requireNonNullElse(supertypes.superclass(), new ClassType(superName)),
+                    supertypes.interfaces() == null ? rawTypes(interfaces) : supertypes.interfaces());
+        }
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
                 typeParameters, true, supertypes.superclass(), supertypes.interfaces(), typeAnnotations,
                 enclosingClass, modifiers);
@@ -283,10 +285,12 @@ public final class ClassFileScanner {
         var type = fieldType(fm, members.classParameters());
         var accessFlags = fm.flags().flagsMask();
         var annotations = extractAnnotations(fm);
-        List<TypeAnnotationInfo> typeAnnotations = !TypeAnnotationReader.hasTypeAnnotations(fm) ? List.of()
-                : members.typeAnnotations().read(fm,
-                        annotation -> annotation.targetInfo().targetType() == TypeAnnotation.TargetType.FIELD
-                                ? TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.FIELD, 0, type) : null);
+        List<TypeAnnotationInfo> typeAnnotations = List.of();
+        if (TypeAnnotationReader.hasTypeAnnotations(fm)) {
+            typeAnnotations = members.typeAnnotations().read(fm,
+                    annotation -> annotation.targetInfo().targetType() == TypeAnnotation.TargetType.FIELD
+                            ? TypeAnnotationReader.Placed.on(TypeAnnotationInfo.Target.FIELD, 0, type) : null);
+        }
         return new FieldInfo(name, type, accessFlags, annotations, typeAnnotations);
     }
 
