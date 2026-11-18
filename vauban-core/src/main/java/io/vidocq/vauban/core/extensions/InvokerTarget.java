@@ -28,8 +28,6 @@ import jakarta.enterprise.lang.model.types.PrimitiveType;
 import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
 
-import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -37,7 +35,8 @@ import java.util.Set;
  * The method an invoker calls, by names: the class of its bean, the class that declares it, its name, and the
  * erasures of its parameter types as {@link Class#getName()} writes them. The build describes so a method of a class
  * it compiles, which has no class file to load yet, and records the invoker with these names; the start loads the
- * classes and finds the {@link Method} (BUG-20261117-48).
+ * classes and finds the method (BUG-20261117-48), or loads the class the build generated to call it
+ * (BUG-20261118-37).
  */
 public record InvokerTarget(String beanClass, String declaringClass, String name, List<String> parameterTypes) {
 
@@ -53,32 +52,9 @@ public record InvokerTarget(String beanClass, String declaringClass, String name
                 method.parameters().stream().map(parameter -> erasedName(parameter.type())).toList());
     }
 
-    /** The target of an invoker of {@code method}, of a bean of {@code beanClass}. */
-    static InvokerTarget of(Class<?> beanClass, Method method) {
-        return new InvokerTarget(beanClass.getName(), method.getDeclaringClass().getName(), method.getName(),
-                Arrays.stream(method.getParameterTypes()).map(Class::getName).toList());
-    }
-
     /** Whether the method is one {@code Object} declares. */
     boolean isObjectMethod() {
         return OBJECT.equals(declaringClass);
-    }
-
-    /**
-     * The method, its classes loaded through {@code loader}.
-     *
-     * @throws IllegalArgumentException when a class cannot be loaded, or the class declares no such method
-     */
-    Method resolve(ClassLoader loader) {
-        var declaring = SyntheticParamCodec.load(declaringClass, loader);
-        var parameters = parameterTypes.stream().map(type -> SyntheticParamCodec.load(type, loader))
-                .toArray(Class<?>[]::new);
-        try {
-            return declaring.getDeclaredMethod(name, parameters);
-        } catch (NoSuchMethodException e) {
-            throw new IllegalArgumentException("the invoked method " + declaringClass + "." + name + parameterTypes
-                    + " no longer exists", e);
-        }
     }
 
     /**
@@ -125,10 +101,13 @@ public record InvokerTarget(String beanClass, String declaringClass, String name
     }
 
     /**
-     * An invoker the build made of a method of a class it compiles: it has no {@link Method} yet, and is recorded by
+     * An invoker the build made of a method of a class it compiles: it has no method object yet, and is recorded by
      * {@link SyntheticParamCodec} as a {@link VaubanInvoker} is, for the start to resolve.
+     *
+     * @param shape how a generated class calls the method, {@code null} when the invoker was not built from the
+     *              language model
      */
-    record Described(InvokerTarget target, boolean instanceLookup, Set<Integer> argumentLookups)
+    record Described(InvokerTarget target, boolean instanceLookup, Set<Integer> argumentLookups, InvokerShape shape)
             implements InvokerInfo {
 
         Described {

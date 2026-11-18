@@ -326,7 +326,6 @@ final class ArchitectureRules {
                 "core.extensions.BceTypeMatcher",
                 "core.extensions.EnhancementApplier",
                 "core.extensions.ExtensionMethodValidator",
-                "core.extensions.InvokerTarget",
                 "core.extensions.ReflectionMethodInfo",
                 "core.extensions.VaubanInvoker",
                 "core.extensions.VaubanInvokerBuilder",

@@ -8,23 +8,59 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-37 — An invoker the processor described is called through reflection at start
 
 - **Date**: 2026-11-18
-- **Status**: OPEN. Not a defect: the invoker works. It predates batch 2, which moved the invoker's description to
-  the build (BUG-20261117-48) but left its call at start as it was.
-- **Module**: `vauban-core` (`extensions.VaubanInvoker`, `SyntheticParamCodec.readInvoker`), `vauban-processor`
-- **Symptom** (by reading): an invoker the annotation processor built for a bean class it compiles is recorded as
-  names (`InvokerTarget`, the `V:` parameter of `SyntheticParamCodec`). At start, `readInvoker` resolves it with
-  `InvokerTarget.resolve` (`Class.getDeclaredMethod`), and `VaubanInvoker` gets a `MethodHandle` with
-  `MethodHandles.lookup().unreflect(method)` (constructor, l.66; `unreflect`, l.109), calling `invokeWithArguments`,
-  or `Method.invoke` when the module gives no handle. Every invoker of the deployment goes through that reflective
-  path, though the build knew the method, its parameters and its lookups.
-- **What the build could generate**: for each invoker the processor builds, a class written with the Class-File API
-  next to the bean's other generated classes, implementing `jakarta.enterprise.invoke.Invoker`, whose `invoke` casts
-  the target and the arguments and calls the method with `invokevirtual`/`invokeinterface`/`invokestatic`. The
-  instance and argument lookups would become `BeanManager` calls with the bean type and qualifiers resolved at build.
-  The `V:` parameter would then name that class, which the start instantiates instead of calling `getDeclaredMethod`,
-  `unreflect` and `invokeWithArguments`. An invoker built by an extension that runs at start keeps the reflective
-  path.
-- **Repro**: none; nothing fails. `ArchitectureRules` lists `VaubanInvoker` and `InvokerTarget` as reflective.
+- **Status**: FIXED (batch 3 of lane L3). It predated batch 2, which moved the invoker's description to the build
+  (BUG-20261117-48) but left its call at start as it was.
+- **Module**: `vauban-core` (`extensions.VaubanInvoker`, `InvokerTarget`, `SyntheticParamCodec`, new
+  `InvokerShape`, `InvokerClassWriter`, `InvokerClasses`; `container.VaubanContainerBuilder` freeze),
+  `vauban-processor` (`VaubanProcessor.writeSyntheticMetadata`)
+- **Symptom**: an invoker the annotation processor built for a bean class it compiles was recorded as names
+  (`InvokerTarget`, the `V:` parameter of `SyntheticParamCodec`). At start, `readInvoker` resolved it with
+  `InvokerTarget.resolve` (`Class.getDeclaredMethod`), and `VaubanInvoker` got a `MethodHandle` with
+  `MethodHandles.lookup().unreflect(method)`, calling `invokeWithArguments`, or `Method.invoke` when the module gave
+  no handle. So did an invoker `vauban:generate` froze. The build knew the method, its parameters and its lookups.
+- **Repro**: `BceCompileTimeTest.theInvokerOfABeanTheBuildCompilesIsGeneratedAtBuild`: an extension the processor
+  runs builds an invoker of `app.Worker.work()`; the test expects one `Worker$$VaubanInvoker…` class in the output,
+  and an invoker read back from the metadata whose `method()` is `null`. Red on 17715ef4: "the invoker class the
+  build generated ==> expected: <1> but was: <0>".
+- **Cause** (proved by the repro): nothing generated a class for an invoker; the metadata had only the names, so the
+  start had nothing to call but the method it resolved by reflection.
+- **Fix**: the build generates, with the Class-File API, a class per invoked method of a bean whose class it writes,
+  in the package of that class (`<Bean>$$VaubanInvoker$<method>$<hash>`, public, final, synthetic). It implements
+  `BiFunction<Object, Object[], Object>`, a type of `java.base` every module reads, and calls the method by name:
+  `invokevirtual` on the bean class or the declaring class, `invokeinterface` for an interface default method,
+  `invokestatic` for a static method; it casts the instance and each argument, unboxes a primitive argument, boxes a
+  primitive return and returns `null` for `void`; an exception of the method is thrown as it is. `InvokerShape`,
+  read from the language model when `createInvoker` runs, says how to call the method and whether a class of the
+  bean's package may: a private method has no invoker, and a protected or package-private method of a class of
+  another package, or a parameter type that package cannot name, keeps the reflective call; so does a method reached
+  as a member of the bean's package (not public, or of a class that is not public) when the build does not write
+  every class it reaches that way, which a split package of another archive, with another loader, would refuse with
+  an `IllegalAccessError`. The metadata names the class with a `G:` parameter, followed by the static flag, the
+  declared type and the annotations of each looked-up parameter, then the `V:` names. The start loads the class,
+  makes it through a public lookup when its package is exported, through the lookup the generated provider of its
+  package grants otherwise (the package needs no `opens`), and calls through it, or calls the method itself when
+  neither lookup exists; a value a primitive parameter takes by widening (JLS 5.1.2) is widened first, as a method
+  handle did. An exception of the method reaches the caller as it is, an `InvocationTargetException` it throws
+  included. The argument lookups use the recorded type and qualifiers, with no `Method`. The processor
+  writes the classes through the Filer; the freeze writes them next to the bean classes under the output it records
+  into, for the bean classes that output holds. An invoker built at start, and one of a class another archive ships,
+  keep the reflective path. `InvokerTarget` no longer reflects (`resolve` moved to `VaubanInvoker`), and leaves
+  `ArchitectureRules.REFLECTIVE_FALLBACKS`.
+- **Verification**: `stack-l3b-red.log`, header "BUG-20261118-37 red, on 17715ef4: the processor-built invoker
+  reflects"; `stack-l3b-green.log`, header "BUG-20261118-37 green, on 17715ef4 + fix: generated invoker classes"
+  (core 1770, processor 452, architecture 56, all green). `GeneratedInvokerCompileTimeTest` calls the same invokers
+  built in the processor, frozen and at start, and in a named module that exports and opens nothing: a method of a
+  superclass, a package-private one, an interface default method, a generic, a varargs and a static method,
+  primitive arguments widened and refused when narrowed, a primitive return, `void`, a checked exception, and
+  argument lookups of `Holder<String>` and `@Named("x") String` (the CDI Lite TCK `invokers` cases); a private method
+  has no invoker; an instance lookup of a `@Dependent` target destroys it after the call. `GeneratedInvokerTest` covers
+  the widening, the `G:` record, the split package, the call with no lookup and a class that cannot be made, and the
+  message that names the version skew when a newer build wrote a kind of parameter the runtime does not read.
+  Review round 1: `stack-l3b-green.log`, header "BUG-20261118-37 round 1 (Sonar + M1-M4), on 1f58c392" (core 1773,
+  processor 452, architecture 56).
+  Review round 2: `stack-l3b-red.log`, header "BUG-20261118-37 round 2 red, on 192925c1: the generated path unwraps
+  an InvocationTargetException the method throws" (processor, frozen and module places red, at start green);
+  `stack-l3b-green.log`, header "BUG-20261118-37 round 2 green, on 192925c1 + fix".
 - **Found by**: the review of batch 2 (minor M3).
 
 ## BUG-20261118-36 — Two intercepted instances created with one creational context share their interceptor instances

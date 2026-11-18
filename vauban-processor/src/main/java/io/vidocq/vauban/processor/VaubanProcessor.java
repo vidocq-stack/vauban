@@ -2168,10 +2168,19 @@ public class VaubanProcessor extends AbstractProcessor {
             List<io.vidocq.vauban.core.extensions.VaubanSyntheticBeanBuilder<?>> syntheticBeans,
             List<io.vidocq.vauban.core.extensions.VaubanSyntheticObserverBuilder<?>> syntheticObservers) {
         try {
+            // The invokers of the beans this compilation writes call their method through a class generated here,
+            // in the bean's package, which the metadata names (BUG-20261118-37).
+            var invokers = io.vidocq.vauban.core.extensions.InvokerClasses.of(syntheticBeans, syntheticObservers,
+                    this::isCompiledType);
+            invokers.classes().forEach((name, bytes) ->
+                    output.generateClass(new io.vidocq.vauban.processor.codegen.GeneratedClass(name, bytes)));
             var resource = processingEnv.getFiler().createResource(
                     StandardLocation.CLASS_OUTPUT, "", SyntheticMetadataSerializer.METADATA_PATH);
             try (var os = resource.openOutputStream()) {
-                SyntheticMetadataSerializer.write(syntheticBeans, syntheticObservers, os);
+                invokers.<Void, IOException>writing(() -> {
+                    SyntheticMetadataSerializer.write(syntheticBeans, syntheticObservers, os);
+                    return null;
+                });
             }
             processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                     "[Vauban] Serialized " + syntheticBeans.size() + " synthetic bean(s), "

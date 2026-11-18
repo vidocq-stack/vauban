@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -86,8 +87,9 @@ class InvokerTargetTest {
             }
             var target = InvokerTarget.of(Shapes.class.getName(), method);
             checks.add(() -> {
-                var reflected = target.resolve(loader);
-                assertEquals(InvokerTarget.of(Shapes.class, reflected), target, method.name());
+                var reflected = VaubanInvoker.resolve(target, loader);
+                assertEquals(new VaubanInvoker(reflected, Shapes.class, false, Set.of()).target(), target,
+                        method.name());
             });
         }
         assertAll(checks);
@@ -102,7 +104,7 @@ class InvokerTargetTest {
         var loader = getClass().getClassLoader();
 
         assertTrue(toString.isObjectMethod(), "toString of Object");
-        var refused = assertThrows(IllegalArgumentException.class, () -> missing.resolve(loader));
+        var refused = assertThrows(IllegalArgumentException.class, () -> VaubanInvoker.resolve(missing, loader));
         assertTrue(refused.getMessage().contains("gone[int] no longer exists"), refused::getMessage);
     }
 

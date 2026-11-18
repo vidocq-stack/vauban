@@ -650,7 +650,8 @@ public final class VaubanContainerBuilder {
                     io.vidocq.vauban.core.extensions.ExtensionAsks.recordingInto(capture.asked,
                             () -> io.vidocq.vauban.core.langmodel.ReadClasses.recordingInto(capture.read,
                                     () -> build(capture))));
-            var frozen = capture.frozen(startExtensions);
+            var frozen = capture.frozen(startExtensions, output);
+            capture.writeInvokerClasses(output);
             frozen.write(output);
             return new FrozenExtensions.Outcome(true, null, frozen.extensions(),
                     frozen.extensions().stream().filter(frozen.startExtensions()::contains).toList());
@@ -704,8 +705,30 @@ public final class VaubanContainerBuilder {
             this.ranAtCompile = ranAtCompile;
         }
 
-        /** The record of what was captured, without what the extensions that run at start did. */
-        FrozenExtensions frozen(java.util.Collection<String> namedForStart) {
+        /** The classes generated for the invokers of the frozen synthetic components (BUG-20261118-37). */
+        private Map<String, byte[]> invokerClasses = Map.of();
+
+        /** Writes the invoker classes {@link #frozen} generated under {@code output}, next to their bean classes. */
+        void writeInvokerClasses(java.nio.file.Path output) {
+            try {
+                for (var generated : invokerClasses.entrySet()) {
+                    java.nio.file.Files.write(classFile(output, generated.getKey()), generated.getValue());
+                }
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+
+        private static java.nio.file.Path classFile(java.nio.file.Path output, String className) {
+            return output.resolve(className.replace('.', '/') + CLASS_FILE);
+        }
+
+        /**
+         * The record of what was captured, without what the extensions that run at start did. An invoker of a bean
+         * whose class is under {@code output} calls its method through a class generated for it, next to that
+         * class.
+         */
+        FrozenExtensions frozen(java.util.Collection<String> namedForStart, java.nio.file.Path output) {
             if (extensions.isEmpty() || result == null || discovery == null) {
                 throw new NotFrozen(ranAtCompile ? FrozenExtensions.ALL_AT_COMPILE : FrozenExtensions.NO_EXTENSION);
             }
@@ -737,7 +760,13 @@ public final class VaubanContainerBuilder {
                     .filter(observer -> !runsAtStart(observer.getSourceExtension(), atStart)).toList();
             try {
                 var written = new java.io.ByteArrayOutputStream();
-                io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.write(beans, observers, written);
+                var invokers = io.vidocq.vauban.core.extensions.InvokerClasses.of(beans, observers,
+                        className -> java.nio.file.Files.isRegularFile(classFile(output, className)));
+                invokers.<Void, IOException>writing(() -> {
+                    io.vidocq.vauban.core.extensions.SyntheticMetadataSerializer.write(beans, observers, written);
+                    return null;
+                });
+                invokerClasses = invokers.classes();
                 synthetic.load(new java.io.InputStreamReader(
                         new java.io.ByteArrayInputStream(written.toByteArray()),
                         java.nio.charset.StandardCharsets.UTF_8));

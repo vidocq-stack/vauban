@@ -71,6 +71,15 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
     }
 
     private Type resolveTypeInfo(TypeInfo typeInfo) {
+        return reflectTypeOf(typeInfo, classLoader);
+    }
+
+    /**
+     * {@code typeInfo} as a {@link Type}, its classes loaded through {@code classLoader}, as the build recorded it: the
+     * observed type of a synthetic observer, the looked-up parameter of an invoker the build generated
+     * (BUG-20261118-37). A class that cannot be loaded is {@code Object}.
+     */
+    public static Type reflectTypeOf(TypeInfo typeInfo, ClassLoader classLoader) {
         return switch (typeInfo) {
             case TypeInfo.ClassType(DotName(var name)) -> {
                 try {
@@ -83,7 +92,7 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
                 try {
                     var rawClass = Class.forName(rawName, true, classLoader);
                     var typeArgs = typeArguments.stream()
-                            .map(this::resolveTypeInfo)
+                            .map(type -> reflectTypeOf(type, classLoader))
                             .toArray(Type[]::new);
                     yield new ResolvedParameterizedType(rawClass, typeArgs);
                 } catch (ClassNotFoundException _) {
@@ -92,20 +101,20 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
             }
             case TypeInfo.TypeVariable(var name, var typeBounds) -> {
                 var bounds = typeBounds.stream()
-                        .map(this::resolveTypeInfo)
+                        .map(type -> reflectTypeOf(type, classLoader))
                         .filter(t -> t != Object.class)
                         .toArray(Type[]::new);
                 yield new ResolvedTypeVariable(name, bounds.length > 0 ? bounds : new Type[]{Object.class});
             }
             case TypeInfo.WildcardType(var upperBound, var lowerBound) -> {
-                var upper = upperBound != null ? resolveTypeInfo(upperBound) : Object.class;
-                var lower = lowerBound != null ? resolveTypeInfo(lowerBound) : null;
+                var upper = upperBound != null ? reflectTypeOf(upperBound, classLoader) : Object.class;
+                var lower = lowerBound != null ? reflectTypeOf(lowerBound, classLoader) : null;
                 yield new ResolvedWildcardType(
                         new Type[]{upper},
                         lower != null ? new Type[]{lower} : new Type[0]);
             }
             case TypeInfo.ArrayType(var componentType, _) -> {
-                var component = resolveTypeInfo(componentType);
+                var component = reflectTypeOf(componentType, classLoader);
                 if (component instanceof Class<?> cc) {
                     yield java.lang.reflect.Array.newInstance(cc, 0).getClass();
                 }

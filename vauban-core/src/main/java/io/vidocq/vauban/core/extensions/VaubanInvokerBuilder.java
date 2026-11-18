@@ -37,15 +37,19 @@ public final class VaubanInvokerBuilder implements InvokerBuilder<InvokerInfo> {
     private final MethodInfo methodInfo;
     private final Method method;
     private final Class<?> beanClass;
+    private final InvokerShape shape;
     private boolean instanceLookup;
     private final Set<Integer> argumentLookups = new HashSet<>();
 
     /**
      * @param method    the method, {@code null} when its class has no class file yet
      * @param beanClass the bean class, {@code null} when it has no class file yet
+     * @param shape     how a class the build generates calls the method (BUG-20261118-37)
      */
-    VaubanInvokerBuilder(InvokerTarget target, MethodInfo methodInfo, Method method, Class<?> beanClass) {
+    VaubanInvokerBuilder(InvokerTarget target, MethodInfo methodInfo, Method method, Class<?> beanClass,
+                         InvokerShape shape) {
         this.target = target;
+        this.shape = shape;
         this.methodInfo = methodInfo;
         this.method = method;
         this.beanClass = beanClass;
@@ -86,8 +90,8 @@ public final class VaubanInvokerBuilder implements InvokerBuilder<InvokerInfo> {
     @Override
     public InvokerInfo build() {
         if (method == null) {
-            return new InvokerTarget.Described(target, instanceLookup, argumentLookups);
+            return new InvokerTarget.Described(target, instanceLookup, argumentLookups, shape);
         }
-        return new VaubanInvoker(method, beanClass, instanceLookup, argumentLookups);
+        return new VaubanInvoker(method, beanClass, instanceLookup, argumentLookups, shape);
     }
 }

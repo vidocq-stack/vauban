@@ -73,8 +73,9 @@ public final class VaubanInvokerFactory implements InvokerFactory {
                     "Method " + method.name() + " does not belong to bean class " + beanClassName);
         }
         var beanClass = loadable(beanClassName);
-        var reflectMethod = beanClass == null ? null : target.resolve(classLoader);
-        var builder = new VaubanInvokerBuilder(target, method, reflectMethod, beanClass);
+        var reflectMethod = beanClass == null ? null : VaubanInvoker.resolve(target, classLoader);
+        var builder = new VaubanInvokerBuilder(target, method, reflectMethod, beanClass,
+                InvokerShape.of(bean.declaringClass(), method));
         builders.add(builder);
         return builder;
     }

@@ -83,10 +83,8 @@ public final class SyntheticParamCodec {
             case Enum<?> e -> "E:" + e.getDeclaringClass().getName() + ":" + e.name();
             case Annotation a -> "A:" + annotation(AnnotationValues.infoOf(a));
             case jakarta.enterprise.lang.model.AnnotationInfo a -> "A:" + annotation(LangModelAnnotations.toIndex(a));
-            case VaubanInvoker v -> "V:" + invoker(InvokerTarget.of(v.beanClass(), v.method()), v.instanceLookup(),
-                    v.argumentLookups());
-            case InvokerTarget.Described(var target, var instanceLookup, var argumentLookups) ->
-                    "V:" + invoker(target, instanceLookup, argumentLookups);
+            case VaubanInvoker v -> invoker(v, v.target(), v.instanceLookup(), v.argumentLookups());
+            case InvokerTarget.Described d -> invoker(d, d.target(), d.instanceLookup(), d.argumentLookups());
             default -> {
                 if (value.getClass().isArray()) {
                     yield "[:" + array(value);
@@ -120,6 +118,28 @@ public final class SyntheticParamCodec {
         if (InvokerInfo.class.isAssignableFrom(component)) return "V";
         throw new IllegalArgumentException("a parameter of type " + component.getName()
                 + "[] cannot be recorded at build time");
+    }
+
+    /**
+     * An invoker: by the class the build generated for it, {@code G:}, when the metadata being written has one
+     * (BUG-20261118-37), with its static flag and what each looked-up parameter is; by names only, {@code V:}, when
+     * not. Both end with the names, so the start can still call the method itself.
+     */
+    private static String invoker(InvokerInfo info, InvokerTarget target, boolean instanceLookup,
+                                  java.util.Set<Integer> lookups) {
+        var names = invoker(target, instanceLookup, lookups);
+        var generated = InvokerClasses.generatedFor(info);
+        if (generated == null) {
+            return "V:" + names;
+        }
+        var shape = InvokerClasses.shapeOf(info);
+        var points = new StringBuilder();
+        for (var position : new java.util.TreeSet<>(lookups)) {
+            var parameter = shape.parameters().get(position);
+            points.append(frame(String.valueOf(position))).append(frame(parameter.type()))
+                    .append(frame(encodeAnnotations(parameter.annotations())));
+        }
+        return "G:" + frame(generated) + frame(String.valueOf(shape.isStatic())) + frame(points.toString()) + names;
     }
 
     /**
@@ -258,9 +278,25 @@ public final class SyntheticParamCodec {
                 yield AnnotationInstances.create(type, info, loader);
             }
             case 'V' -> readInvoker(new Frames(value), loader);
+            case 'G' -> readGeneratedInvoker(new Frames(value), loader);
             case '[' -> readArray(new Frames(value), loader);
-            default -> throw new IllegalArgumentException("not a synthetic parameter: " + encoded);
+            default -> throw unknownKind(encoded);
         };
+    }
+
+    /**
+     * A value of a kind this version does not know. An upper-case letter is how {@code encode} names a kind: one this
+     * version does not read was written by a newer Vauban build, as the {@code G:} invoker of BUG-20261118-37 is for an
+     * older one; the message says so, so that the deployment names the version skew.
+     */
+    private static IllegalArgumentException unknownKind(String encoded) {
+        var kind = encoded.charAt(0);
+        if (kind >= 'A' && kind <= 'Z') {
+            return new IllegalArgumentException("a synthetic parameter of kind '" + kind + "' that this Vauban version"
+                    + " cannot read: a newer Vauban build wrote the record; build and run the application with the same"
+                    + " Vauban version (" + encoded + ")");
+        }
+        return new IllegalArgumentException("not a synthetic parameter: " + encoded);
     }
 
     private static Object readArray(Frames frames, ClassLoader loader) {
@@ -294,21 +330,61 @@ public final class SyntheticParamCodec {
     }
 
     private static VaubanInvoker readInvoker(Frames frames, ClassLoader loader) {
-        var beanClass = frames.next();
-        var declaringClass = frames.next();
-        var name = frames.next();
-        var instanceLookup = Boolean.parseBoolean(frames.next());
-        var argumentLookups = new HashSet<Integer>();
-        var lookups = new Frames(frames.next());
-        while (lookups.hasNext()) {
-            argumentLookups.add(Integer.parseInt(lookups.next()));
+        var recorded = RecordedInvoker.read(frames);
+        return new VaubanInvoker(VaubanInvoker.resolve(recorded.target(), loader),
+                load(recorded.target().beanClass(), loader), recorded.instanceLookup(), recorded.argumentLookups());
+    }
+
+    /** An invoker that calls its method through the class the build generated, and resolves no method. */
+    private static VaubanInvoker readGeneratedInvoker(Frames frames, ClassLoader loader) {
+        var generated = load(frames.next(), loader);
+        var isStatic = Boolean.parseBoolean(frames.next());
+        var points = new java.util.HashMap<Integer, VaubanInvoker.LookupPoint>();
+        var recordedPoints = new Frames(frames.next());
+        while (recordedPoints.hasNext()) {
+            var position = Integer.parseInt(recordedPoints.next());
+            var type = io.vidocq.vauban.core.event.VaubanObserverMethod.reflectTypeOf(
+                    ObservedTypeNotation.read(recordedPoints.next()), loader);
+            points.put(position, new VaubanInvoker.LookupPoint(type,
+                    annotations(decodeAnnotations(recordedPoints.next()), loader)));
         }
-        var parameters = new ArrayList<String>();
-        while (frames.hasNext()) {
-            parameters.add(frames.next());
+        var recorded = RecordedInvoker.read(frames);
+        var target = recorded.target();
+        return new VaubanInvoker(target, load(target.beanClass(), loader), load(target.declaringClass(), loader),
+                isStatic, recorded.instanceLookup(), points, generated);
+    }
+
+    /** The annotations of {@code infos} whose type {@code loader} loads, as instances. */
+    private static java.util.List<Annotation> annotations(java.util.List<AnnotationInfo> infos, ClassLoader loader) {
+        var annotations = new ArrayList<Annotation>();
+        for (var info : infos) {
+            AnnotationInstances.typeNamed(info.name().value(), loader)
+                    .ifPresent(type -> annotations.add(AnnotationInstances.create(type, info, loader)));
         }
-        var target = new InvokerTarget(beanClass, declaringClass, name, parameters);
-        return new VaubanInvoker(target.resolve(loader), load(beanClass, loader), instanceLookup, argumentLookups);
+        return annotations;
+    }
+
+    /** An invoker by names, as {@code invoker} writes it. */
+    private record RecordedInvoker(InvokerTarget target, boolean instanceLookup,
+                                   java.util.Set<Integer> argumentLookups) {
+
+        static RecordedInvoker read(Frames frames) {
+            var beanClass = frames.next();
+            var declaringClass = frames.next();
+            var name = frames.next();
+            var instanceLookup = Boolean.parseBoolean(frames.next());
+            var argumentLookups = new HashSet<Integer>();
+            var lookups = new Frames(frames.next());
+            while (lookups.hasNext()) {
+                argumentLookups.add(Integer.parseInt(lookups.next()));
+            }
+            var parameters = new ArrayList<String>();
+            while (frames.hasNext()) {
+                parameters.add(frames.next());
+            }
+            return new RecordedInvoker(new InvokerTarget(beanClass, declaringClass, name, parameters), instanceLookup,
+                    argumentLookups);
+        }
     }
 
     private static AnnotationInfo readAnnotation(Frames frames) {

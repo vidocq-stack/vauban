@@ -162,7 +162,8 @@ class SyntheticParamCodecTest {
     void describedInvoker() throws Exception {
         var method = Greeter.class.getMethod("greet", String.class, int.class);
         var described = new InvokerTarget.Described(new InvokerTarget(Greeter.class.getName(),
-                Greeter.class.getName(), "greet", java.util.List.of("java.lang.String", "int")), false, Set.of(0));
+                Greeter.class.getName(), "greet", java.util.List.of("java.lang.String", "int")), false, Set.of(0),
+                null);
 
         assertEquals(SyntheticParamCodec.encode(new VaubanInvoker(method, Greeter.class, false, Set.of(0))),
                 SyntheticParamCodec.encode(described), "what the build writes");

@@ -1287,8 +1287,49 @@ class BceCompileTimeTest {
             var read = io.vidocq.vauban.core.extensions.SyntheticParamCodec.decode(written.get("invoker"), loader);
             var invoker = assertInstanceOf(io.vidocq.vauban.core.extensions.VaubanInvoker.class, read,
                     "what the start reads");
-            assertEquals(loader.loadClass("app.Worker").getMethod("work"), invoker.method(), "the invoked method");
+            assertEquals(new io.vidocq.vauban.core.extensions.InvokerTarget("app.Worker", "app.Worker", "work",
+                    List.of()), invoker.target(), "the invoked method");
             assertTrue(invoker.instanceLookup(), "the instance lookup the extension asked for");
+        }
+    }
+
+    /**
+     * The invoker the build describes for a bean it compiles is generated at build, a class that calls the method
+     * directly: the start loads it, and resolves no {@link java.lang.reflect.Method}. The start resolved the method by
+     * name ({@code getDeclaredMethod}) and called it through {@code unreflect} (BUG-20261118-37).
+     */
+    @Test
+    @DisplayName("the invoker of a bean the build compiles is generated, and calls no Method (BUG-20261118-37)")
+    void theInvokerOfABeanTheBuildCompilesIsGeneratedAtBuild() throws Exception {
+        var result = compileWithBce(List.of(SameBuildInvokerBce.class), """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+
+                @Dependent
+                public class Worker {
+                    public String work() {
+                        return "work";
+                    }
+                }
+                """);
+        assertTrue(result.success(), "the build refused the invoker: " + result.messages());
+
+        Map<String, String> written;
+        try (var in = Files.newInputStream(result.outputDir().resolve(SyntheticMetadataSerializer.METADATA_PATH))) {
+            written = SyntheticMetadataSerializer.readBeans(in).getFirst().params();
+        }
+        try (var classes = Files.list(result.outputDir().resolve("app"))) {
+            assertEquals(1, classes.filter(file -> file.getFileName().toString().startsWith("Worker$$VaubanInvoker"))
+                    .count(), "the invoker class the build generated");
+        }
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var read = io.vidocq.vauban.core.extensions.SyntheticParamCodec.decode(written.get("invoker"), loader);
+            var invoker = assertInstanceOf(io.vidocq.vauban.core.extensions.VaubanInvoker.class, read);
+            assertNull(invoker.method(), "the start resolved the method reflectively");
+            assertTrue(invoker.generatedClass().getName().startsWith("app.Worker$$VaubanInvoker$"),
+                    () -> "the class the invoker calls through: " + invoker.generatedClass());
         }
     }
 

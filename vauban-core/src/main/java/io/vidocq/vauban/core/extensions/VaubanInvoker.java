@@ -40,41 +40,134 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
-@SuppressWarnings({"unchecked", "java:S3011", "java:S3776"}) // CDI spec requires reflective access
+/**
+ * An invoker of a method of a bean (CDI 4.1, "Invokers"). Built at start, or read from the metadata of a build that
+ * did not generate its class, it calls the method through a method handle, or reflectively when it may have none. Read
+ * from the metadata of a build that generated its class ({@link InvokerClasses}), it calls the method through that
+ * class, which calls it by name, and resolves no {@link Method} (BUG-20261118-37).
+ */
+@SuppressWarnings({"unchecked", "java:S3011"}) // CDI spec requires reflective access
 public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo {
 
-    private final Method method;
+    /** The order in which a primitive widens to another (JLS 5.1.2); {@code char} widens from none but itself. */
+    private static final Map<Class<?>, Integer> WIDTHS = Map.of(Byte.class, 1, Short.class, 2, Character.class, 2,
+            Integer.class, 3, Long.class, 4, Float.class, 5, Double.class, 6);
+    private static final String SHORT = "short";
+    private static final Map<String, Integer> WIDTHS_BY_NAME = Map.of(SHORT, 2, "int", 3, "long", 4, "float", 5,
+            "double", 6);
+
+    private final InvokerTarget target;
     private final Class<?> beanClass;
+    private final Class<?> declaringClass;
     private final boolean isStatic;
     private final boolean instanceLookup;
     private final Set<Integer> argumentLookups;
-    /** Resolved once, here rather than per call; {@code null} when the method is not reachable. */
-    private final java.lang.invoke.MethodHandle handle;
+    /** How a generated class calls the method, when the language model built this invoker; else {@code null}. */
+    private final InvokerShape shape;
+    /** The method, {@code null} for an invoker that calls through its generated class. */
+    private final Method method;
+    /** The generated class, {@code null} for an invoker that calls the method itself. */
+    private final Class<?> generatedClass;
+    /** By looked-up position, what the build recorded of the parameter, for an invoker with a generated class. */
+    private final Map<Integer, LookupPoint> lookupPoints;
+    /** How the method is called; resolved on the first call for an invoker with a generated class. */
+    private final AtomicReference<Call> call = new AtomicReference<>();
 
-    public VaubanInvoker(Method method, Class<?> beanClass,
-                         boolean instanceLookup, Set<Integer> argumentLookups) {
-        this.method = method;
-        this.beanClass = beanClass;
-        this.isStatic = Modifier.isStatic(method.getModifiers());
-        this.instanceLookup = instanceLookup;
-        this.argumentLookups = Set.copyOf(argumentLookups);
-        this.handle = unreflect(method);
-        if (this.handle == null) {
-            // Only when no handle could be obtained: the reflective path still needs the member to
-            // be accessible. trySetAccessible, never setAccessible — the latter throws
-            // InaccessibleObjectException on a module that opens nothing.
-            method.trySetAccessible();
+    /**
+     * What the call of the method does with the target instance and the arguments. A checked exception of the method
+     * comes wrapped in an {@link InvocationTargetException} from the reflective calls, and as it is from a generated
+     * class, which declares none.
+     */
+    @FunctionalInterface
+    private interface Call {
+        Object call(Object target, Object[] arguments) throws InvocationTargetException;
+    }
+
+    /**
+     * A looked-up parameter, as the build recorded it for an invoker with a generated class.
+     *
+     * @param type        its declared type
+     * @param annotations its annotations, its qualifiers among them
+     */
+    record LookupPoint(Type type, List<Annotation> annotations) {
+
+        LookupPoint {
+            annotations = List.copyOf(annotations);
         }
     }
 
-    /** The invoked method. */
+    public VaubanInvoker(Method method, Class<?> beanClass,
+                         boolean instanceLookup, Set<Integer> argumentLookups) {
+        this(method, beanClass, instanceLookup, argumentLookups, null);
+    }
+
+    /** An invoker that calls {@code method} itself; {@code shape} is how a generated class would call it. */
+    VaubanInvoker(Method method, Class<?> beanClass, boolean instanceLookup, Set<Integer> argumentLookups,
+                  InvokerShape shape) {
+        this.target = new InvokerTarget(beanClass.getName(), method.getDeclaringClass().getName(), method.getName(),
+                Arrays.stream(method.getParameterTypes()).map(Class::getName).toList());
+        this.beanClass = beanClass;
+        this.declaringClass = method.getDeclaringClass();
+        this.isStatic = Modifier.isStatic(method.getModifiers());
+        this.instanceLookup = instanceLookup;
+        this.argumentLookups = Set.copyOf(argumentLookups);
+        this.shape = shape;
+        this.method = method;
+        this.generatedClass = null;
+        this.lookupPoints = Map.of();
+        this.call.set(reflectiveCall(method, isStatic));
+    }
+
+    /**
+     * An invoker that calls the method of {@code target} through {@code generatedClass}, the class the build generated
+     * for it, with the looked-up parameters {@code lookupPoints} recorded.
+     */
+    VaubanInvoker(InvokerTarget target, Class<?> beanClass, Class<?> declaringClass, boolean isStatic,
+                  boolean instanceLookup, Map<Integer, LookupPoint> lookupPoints, Class<?> generatedClass) {
+        this.target = target;
+        this.beanClass = beanClass;
+        this.declaringClass = declaringClass;
+        this.isStatic = isStatic;
+        this.instanceLookup = instanceLookup;
+        this.argumentLookups = Set.copyOf(lookupPoints.keySet());
+        this.shape = null;
+        this.method = null;
+        this.generatedClass = generatedClass;
+        this.lookupPoints = Map.copyOf(lookupPoints);
+    }
+
+    /** The invoked method; {@code null} for an invoker that calls it through the class the build generated. */
     public Method method() {
         return method;
+    }
+
+    /** The class the build generated to call the method, {@code null} when this invoker calls it itself. */
+    public Class<?> generatedClass() {
+        return generatedClass;
+    }
+
+    /** What the build recorded of the looked-up parameter at {@code position}, for a generated invoker. */
+    LookupPoint lookupPoint(int position) {
+        return lookupPoints.get(position);
+    }
+
+    /** The invoked method, by names. */
+    public InvokerTarget target() {
+        return target;
+    }
+
+    /** How a generated class calls the method, {@code null} when the language model did not build this invoker. */
+    InvokerShape shape() {
+        return shape;
     }
 
     /** The class of the bean whose method is invoked. */
@@ -93,43 +186,151 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
     }
 
     /**
-     * A method handle for {@code method}, or {@code null} when this module may not have one.
+     * The method of {@code target}, its classes loaded through {@code loader}.
      *
-     * <p>Preferred over {@link Method#invoke}: the access check happens once, here, instead of on
-     * every call. It is not a way around the module system — {@code unreflect} needs the same
-     * consent {@code setAccessible} would — so a method this module cannot reach yields
-     * {@code null} and the reflective path takes over, exactly as before.
-     *
-     * <p>The handle has a fixed arity. The {@code Invoker} contract passes a variadic parameter as the
-     * array itself, and {@code invokeWithArguments} on a variable-arity handle would collect that array
-     * into a new one, as {@code Method#invoke} never does.
+     * @throws IllegalArgumentException when a class cannot be loaded, or the class declares no such method
      */
-    private static java.lang.invoke.MethodHandle unreflect(Method method) {
+    static Method resolve(InvokerTarget target, ClassLoader loader) {
+        var declaring = SyntheticParamCodec.load(target.declaringClass(), loader);
+        var parameters = target.parameterTypes().stream().map(type -> SyntheticParamCodec.load(type, loader))
+                .toArray(Class<?>[]::new);
         try {
-            return java.lang.invoke.MethodHandles.lookup().unreflect(method).asFixedArity();
-        } catch (IllegalAccessException _) {
-            return null;
+            return declaring.getDeclaredMethod(target.name(), parameters);
+        } catch (NoSuchMethodException e) {
+            throw new IllegalArgumentException("the invoked method " + target.declaringClass() + "." + target.name()
+                    + target.parameterTypes() + " no longer exists", e);
         }
     }
 
+    /**
+     * The call of {@code method}: through a method handle when this module may have one, reflectively otherwise.
+     *
+     * <p>The handle is preferred over {@link Method#invoke}: the access check happens once, here, instead of on every
+     * call. It is not a way around the module system — {@code unreflect} needs the same consent
+     * {@code setAccessible} would — so a method this module cannot reach yields no handle and the reflective path
+     * takes over. That path needs the member accessible: {@code trySetAccessible}, never {@code setAccessible}, which
+     * throws {@code InaccessibleObjectException} on a module that opens nothing.
+     *
+     * <p>The handle has a fixed arity. The {@code Invoker} contract passes a variadic parameter as the array itself,
+     * and {@code invokeWithArguments} on a variable-arity handle would collect that array into a new one, as
+     * {@code Method#invoke} never does.
+     */
+    private static Call reflectiveCall(Method method, boolean isStatic) {
+        try {
+            var handle = java.lang.invoke.MethodHandles.lookup().unreflect(method).asFixedArity();
+            return (target, arguments) -> invokeHandle(handle, isStatic, target, arguments);
+        } catch (IllegalAccessException _) {
+            method.trySetAccessible();
+            return (target, arguments) -> invokeReflectively(method, isStatic, target, arguments);
+        }
+    }
+
+    /**
+     * The call through the generated class: an instance of it, made through a public lookup when its package is
+     * exported, through the lookup the generated provider of the bean's package grants otherwise (the package needs
+     * no {@code opens}). With neither, the method is resolved and called as an invoker built at start calls it.
+     */
+    @SuppressWarnings("java:S1181") // a constructor handle throws Throwable; an Error is rethrown as it is
+    private Call generatedCall() {
+        var lookup = generatedClass.getModule().isExported(generatedClass.getPackageName())
+                ? java.lang.invoke.MethodHandles.publicLookup()
+                : io.vidocq.vauban.core.access.ModuleLookups.lookupFor(beanClass).orElse(null);
+        if (lookup == null) {
+            return reflectiveCall(resolve(target, beanClass.getClassLoader()), isStatic);
+        }
+        try {
+            var constructor = lookup.findConstructor(generatedClass,
+                    java.lang.invoke.MethodType.methodType(void.class));
+            var function = (BiFunction<Object, Object[], Object>) constructor.invoke();
+            return (instance, arguments) -> applyGenerated(function, instance, widened(arguments));
+        } catch (Error e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new IllegalStateException("cannot create " + generatedClass.getName(), e);
+        }
+    }
+
+    /**
+     * Calls the generated class, with the contract of the reflective calls: an unchecked throwable as it is, a checked
+     * exception of the method wrapped, so that {@code invoke} rethrows it as it is, an
+     * {@code InvocationTargetException} the method throws included.
+     */
+    @SuppressWarnings("java:S1181") // the generated class throws the method's checked exceptions, undeclared
+    private static Object applyGenerated(BiFunction<Object, Object[], Object> function, Object instance,
+                                         Object[] arguments) throws InvocationTargetException {
+        try {
+            return function.apply(instance, arguments);
+        } catch (RuntimeException | Error unchecked) {
+            throw unchecked;
+        } catch (Throwable checked) {
+            throw new InvocationTargetException(checked);
+        }
+    }
+
+    /**
+     * {@code arguments} with each value a primitive parameter takes by widening widened to its type (JLS 5.1.2), as
+     * a method handle converts it: the generated class unboxes the wrapper of the parameter's own type only.
+     */
+    private Object[] widened(Object[] arguments) {
+        if (arguments == null) {
+            return arguments;
+        }
+        Object[] widened = null;
+        var types = target.parameterTypes();
+        for (int i = 0; i < Math.min(arguments.length, types.size()); i++) {
+            var value = widen(arguments[i], types.get(i));
+            if (value != null) {
+                if (widened == null) {
+                    widened = arguments.clone();
+                }
+                widened[i] = value;
+            }
+        }
+        return widened == null ? arguments : widened;
+    }
+
+    /** {@code value} widened to {@code primitive}, or {@code null} when it takes no widening to it. */
+    private static Object widen(Object value, String primitive) {
+        var from = value == null ? null : WIDTHS.get(value.getClass());
+        var to = WIDTHS_BY_NAME.get(primitive);
+        if (from == null || to == null || from >= to || (value instanceof Character && SHORT.equals(primitive))) {
+            return null;
+        }
+        var number = value instanceof Character character ? Integer.valueOf(character) : (Number) value;
+        return switch (primitive) {
+            case SHORT -> number.shortValue();
+            case "int" -> number.intValue();
+            case "long" -> number.longValue();
+            case "float" -> number.floatValue();
+            default -> number.doubleValue();
+        };
+    }
+
+    private Call call() {
+        var resolved = call.get();
+        if (resolved == null) {
+            resolved = generatedCall();
+            call.compareAndSet(null, resolved);
+        }
+        return resolved;
+    }
+
     @Override
-    @SuppressWarnings("java:S112") // CDI spec: container exceptions propagate as RuntimeException
     public Object invoke(Object instance, Object[] arguments) throws Exception {
-        var cdi = CDI.current();
         List<Runnable> cleanups = new ArrayList<>();
 
         try {
-            var target = instanceLookup ? lookupTarget(cdi.getBeanManager(), cleanups) : instance;
-            var callArguments = trimToParameterCount(lookupArguments(cdi.getBeanManager(), arguments, cleanups));
+            var beanManager = instanceLookup || !argumentLookups.isEmpty() ? CDI.current().getBeanManager() : null;
+            var instanceOrLookup = instanceLookup ? lookupTarget(beanManager, cleanups) : instance;
+            var callArguments = trimToParameterCount(lookupArguments(beanManager, arguments, cleanups));
 
-            if (!isStatic && target == null) {
-                throw new RuntimeException("Cannot invoke instance method " + method.getName()
+            if (!isStatic && instanceOrLookup == null) {
+                throw new IllegalArgumentException("Cannot invoke instance method " + target.name()
                         + " with null instance");
             }
-            if (handle != null) {
-                return invokeHandle(target, callArguments);
-            }
-            return invokeReflectively(target, callArguments);
+            return call().call(instanceOrLookup, callArguments);
+        } catch (InvocationTargetException e) {
+            throw thrownBy(e);
         } finally {
             runCleanups(cleanups);
         }
@@ -151,7 +352,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         }
         if (bean == null) {
             throw new UnsatisfiedResolutionException("No bean of class " + beanClass.getName()
-                    + " for the invoker of " + method.getName());
+                    + " for the invoker of " + target.name());
         }
         var context = beanManager.createCreationalContext(bean);
         if (bean.getScope() == Dependent.class) {
@@ -182,10 +383,9 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
      * or {@code Object}, a bean type of every bean, when a {@code @Typed} left that type out.
      */
     private Type declaringBeanType(Bean<?> bean) {
-        var declaring = method.getDeclaringClass();
         for (var type : bean.getTypes()) {
-            if (type == declaring || (type instanceof ParameterizedType parameterized
-                    && parameterized.getRawType() == declaring)) {
+            if (type == declaringClass || (type instanceof ParameterizedType parameterized
+                    && parameterized.getRawType() == declaringClass)) {
                 return type;
             }
         }
@@ -215,21 +415,37 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
      * {@code Holder<String>} parameter found no bean of {@code Holder<String>} (BUG-20261117-27).
      */
     private Object lookupArgument(BeanManager beanManager, int position, List<Runnable> cleanups) {
-        var parameter = method.getParameters()[position];
-        var qualifiers = new HashSet<Annotation>();
-        for (var annotation : parameter.getAnnotations()) {
-            if (beanManager.isQualifier(annotation.annotationType())) {
-                qualifiers.add(annotation);
-            }
-        }
-        var injectionPoint = new VaubanInjectionPoint(parameter, position, method, parameter.getParameterizedType(),
-                qualifiers, null);
+        var injectionPoint = injectionPoint(beanManager, position);
         var value = beanManager.getInjectableReference(injectionPoint,
                 contextOf(beanManager, injectionPoint, cleanups));
         if (value instanceof InstanceImpl<?> instanceImpl) {
             cleanups.add(instanceImpl::releaseAllDependents);
         }
         return value;
+    }
+
+    /**
+     * The injection point of the parameter at {@code position}: read from the method, or from what the build recorded
+     * of it when the invoker calls through a generated class.
+     */
+    private VaubanInjectionPoint injectionPoint(BeanManager beanManager, int position) {
+        if (method == null) {
+            var point = lookupPoints.get(position);
+            return new VaubanInjectionPoint(point.type(), qualifiers(beanManager, point.annotations()), null, null);
+        }
+        var parameter = method.getParameters()[position];
+        return new VaubanInjectionPoint(parameter, position, method, parameter.getParameterizedType(),
+                qualifiers(beanManager, List.of(parameter.getAnnotations())), null);
+    }
+
+    private static Set<Annotation> qualifiers(BeanManager beanManager, List<Annotation> annotations) {
+        var qualifiers = new HashSet<Annotation>();
+        for (var annotation : annotations) {
+            if (beanManager.isQualifier(annotation.annotationType())) {
+                qualifiers.add(annotation);
+            }
+        }
+        return qualifiers;
     }
 
     /**
@@ -257,7 +473,7 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
 
     /** {@code arguments} without the trailing values the method has no parameter for. */
     private Object[] trimToParameterCount(Object[] arguments) {
-        var paramCount = method.getParameterCount();
+        var paramCount = target.parameterTypes().size();
         if (arguments == null || arguments.length <= paramCount) {
             return arguments;
         }
@@ -266,8 +482,18 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         return trimmed;
     }
 
-    @SuppressWarnings("java:S112") // a Throwable that is neither an Exception nor an Error has no better type
-    private Object invokeHandle(Object target, Object[] arguments) throws Exception {
+    /** What the method threw, {@code e}'s cause: an exception is returned for the caller to throw, an error thrown. */
+    private static Exception thrownBy(InvocationTargetException e) {
+        return switch (e.getCause()) {
+            case Exception exception -> exception;
+            case Error error -> throw error;
+            case null, default -> e;
+        };
+    }
+
+    @SuppressWarnings("java:S1181") // a handle throws Throwable: an unchecked one as it is, a checked one wrapped
+    private static Object invokeHandle(java.lang.invoke.MethodHandle handle, boolean isStatic, Object target,
+                                       Object[] arguments) throws InvocationTargetException {
         var callArgs = new ArrayList<Object>();
         if (!isStatic) {
             callArgs.add(target);
@@ -277,26 +503,21 @@ public final class VaubanInvoker implements Invoker<Object, Object>, InvokerInfo
         }
         try {
             return handle.invokeWithArguments(callArgs);
-        } catch (Exception | Error direct) {
+        } catch (RuntimeException | Error direct) {
             // A handle throws the target's exception as-is, with no wrapper to unpack.
             throw direct;
-        } catch (Throwable t) {
-            throw new RuntimeException(t);
+        } catch (Throwable checked) {
+            throw new InvocationTargetException(checked);
         }
     }
 
     /** The reflective path, when no method handle could be obtained; the target's exception is unwrapped. */
-    private Object invokeReflectively(Object target, Object[] arguments) throws Exception {
+    private static Object invokeReflectively(Method method, boolean isStatic, Object target, Object[] arguments)
+            throws InvocationTargetException {
         try {
-            if (isStatic) {
-                return method.invoke(null, arguments);
-            }
-            return method.invoke(target, arguments);
-        } catch (InvocationTargetException e) {
-            var cause = e.getCause();
-            if (cause instanceof Exception ex) throw ex;
-            if (cause instanceof Error err) throw err;
-            throw e;
+            return method.invoke(isStatic ? null : target, arguments);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("cannot call " + method + ": " + e.getMessage(), e);
         }
     }
 
