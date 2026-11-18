@@ -440,19 +440,23 @@ public final class VaubanGenerator {
      */
     private static Class<?> resolveProducedClass(BeanDescriptor bean, ClassLoader cl) {
         for (var t : bean.types()) {
-            var name = switch (t) {
-                case TypeInfo.ClassType(var raw) -> raw;
-                case TypeInfo.ParameterizedType(var raw, _, _) -> raw;
-                default -> null;
-            };
-            if (name != null && !"java.lang.Object".equals(name.value())) {
-                var concrete = concreteClass(name.value(), cl);
-                if (concrete.isPresent()) {
-                    return concrete.get();
-                }
+            var concrete = rawName(t)
+                    .filter(name -> !"java.lang.Object".equals(name))
+                    .flatMap(name -> concreteClass(name, cl));
+            if (concrete.isPresent()) {
+                return concrete.get();
             }
         }
         return null;
+    }
+
+    /** The raw class name of a class or parameterized type, {@code Box} for {@code Box<Integer>}. */
+    private static Optional<String> rawName(TypeInfo type) {
+        return switch (type) {
+            case TypeInfo.ClassType(var raw) -> Optional.of(raw.value());
+            case TypeInfo.ParameterizedType(var raw, _, _) -> Optional.of(raw.value());
+            default -> Optional.empty();
+        };
     }
 
     /** The class {@code fqn} names, unless it is an interface or not on the plugin's class path. */

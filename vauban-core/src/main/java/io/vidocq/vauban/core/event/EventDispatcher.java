@@ -870,7 +870,8 @@ public final class EventDispatcher {
                     var primitiveClass = PRIMITIVE_NAME_TO_CLASS.get(name);
                     yield primitiveClass != null ? primitiveClass : Class.forName(name, true, cl);
                 }
-                case TypeInfo.ParameterizedType(DotName(var rawName), _, _) -> Class.forName(rawName, true, cl);
+                case TypeInfo.ParameterizedType(DotName(var rawName), _, _) ->
+                        io.vidocq.vauban.core.loading.DeploymentClasses.load(rawName, cl);
                 case TypeInfo.ArrayType(var componentType, _) -> {
                     var component = resolveObservedType(componentType);
                     yield component != null

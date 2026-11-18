@@ -123,8 +123,8 @@ public final class VaubanInvokerFactory implements InvokerFactory {
      */
     private Class<?> loadable(String beanClassName) {
         try {
-            return Class.forName(beanClassName, false, classLoader);
-        } catch (ClassNotFoundException | LinkageError _) {
+            return io.vidocq.vauban.core.loading.DeploymentClasses.load(beanClassName, classLoader);
+        } catch (ClassNotFoundException _) {
             return null;
         }
     }

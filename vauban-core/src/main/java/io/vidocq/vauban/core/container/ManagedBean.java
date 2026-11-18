@@ -774,7 +774,7 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
      */
     private static Type reflectParameterized(io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType type,
             ClassLoader classLoader) throws ClassNotFoundException {
-        var rawClass = Class.forName(type.rawType().value(), true, classLoader);
+        var rawClass = io.vidocq.vauban.core.loading.DeploymentClasses.load(type.rawType().value(), classLoader);
         var owner = type.owner() instanceof io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType parameterized
                 ? reflectParameterized(parameterized, classLoader) : rawClass.getDeclaringClass();
         return new ResolvedParameterizedType(rawClass, resolveTypeArguments(type.typeArguments(), classLoader), owner);

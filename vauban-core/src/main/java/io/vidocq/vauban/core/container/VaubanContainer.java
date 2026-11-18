@@ -574,9 +574,8 @@ public final class VaubanContainer implements AutoCloseable {
                                                    io.vidocq.vauban.core.bean.resolution.BeanResolver resolver) {
         Class<?> beanClass;
         try {
-            beanClass = Class.forName(observer.declaringClass().value(), false,
-                    Thread.currentThread().getContextClassLoader());
-        } catch (ClassNotFoundException | LinkageError _) {
+            beanClass = io.vidocq.vauban.core.loading.DeploymentClasses.load(observer.declaringClass().value(), null);
+        } catch (ClassNotFoundException _) {
             return; // Skip validation for classes that can't be loaded
         }
         var method = observerMethodNamed(beanClass, observer.methodName());
