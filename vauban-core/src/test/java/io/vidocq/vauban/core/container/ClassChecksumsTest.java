@@ -151,6 +151,25 @@ class ClassChecksumsTest {
     }
 
     /**
+     * The parameterized type that encloses a type counts where there is one, which the bean types read
+     * (BUG-20261117-21): any other type keeps its checksum.
+     */
+    @Test
+    @DisplayName("the enclosing type of a parameterized type counts where there is one")
+    void theEnclosingTypeOfAParameterizedTypeCounts() {
+        var string = List.<TypeInfo>of(new TypeInfo.ClassType(DotName.of("java.lang.String")));
+        var alone = new TypeInfo.ParameterizedType(B, string);
+        var owned = new TypeInfo.ParameterizedType(B, string, new TypeInfo.ParameterizedType(A, string));
+        var withAlone = new FieldInfo("f", alone, 0, List.of());
+        var withOwned = new FieldInfo("f", owned, 0, List.of());
+        var withRaw = new FieldInfo("f", new TypeInfo.ParameterizedType(B, string, null), 0, List.of());
+        assertEquals(ClassChecksums.ofModel(type(List.of(withAlone), List.of(), List.of())),
+                ClassChecksums.ofModel(type(List.of(withRaw), List.of(), List.of())));
+        assertNotEquals(ClassChecksums.ofModel(type(List.of(withAlone), List.of(), List.of())),
+                ClassChecksums.ofModel(type(List.of(withOwned), List.of(), List.of())));
+    }
+
+    /**
      * The modifiers an extension sees count where they differ from the access flags but {@code ACC_SUPER}, a nested
      * class's: a top-level class keeps its checksum (BUG-20261117-37).
      */

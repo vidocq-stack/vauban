@@ -306,7 +306,7 @@ public final class EventDispatcher {
             case TypeInfo.WildcardType(var upperBound, var lowerBound) ->
                     withinWildcard(eventArg, upperBound, lowerBound, cl);
             case TypeInfo.ClassType(DotName(var expectedName)) -> isClassNamed(eventArg, expectedName);
-            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments) ->
+            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments, _) ->
                     isParameterizedAs(eventArg, rawName, typeArguments, cl);
             default -> true;
         };
@@ -870,7 +870,7 @@ public final class EventDispatcher {
                     var primitiveClass = PRIMITIVE_NAME_TO_CLASS.get(name);
                     yield primitiveClass != null ? primitiveClass : Class.forName(name, true, cl);
                 }
-                case TypeInfo.ParameterizedType(DotName(var rawName), _) -> Class.forName(rawName, true, cl);
+                case TypeInfo.ParameterizedType(DotName(var rawName), _, _) -> Class.forName(rawName, true, cl);
                 case TypeInfo.ArrayType(var componentType, _) -> {
                     var component = resolveObservedType(componentType);
                     yield component != null

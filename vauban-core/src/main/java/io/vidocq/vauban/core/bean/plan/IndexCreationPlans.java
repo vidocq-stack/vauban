@@ -167,7 +167,7 @@ public final class IndexCreationPlans {
             };
             case TypeInfo.ArrayType(var component, var dimensions) -> "[".repeat(dimensions) + descriptor(component);
             case TypeInfo.ClassType(var name) -> "L" + name.value().replace('.', '/') + ";";
-            case TypeInfo.ParameterizedType(var raw, _) -> "L" + raw.value().replace('.', '/') + ";";
+            case TypeInfo.ParameterizedType(var raw, _, _) -> "L" + raw.value().replace('.', '/') + ";";
             case TypeInfo.TypeVariable(_, var bounds) ->
                     bounds.isEmpty() ? "Ljava/lang/Object;" : descriptor(bounds.getFirst());
             case TypeInfo.WildcardType _, TypeInfo.VoidType _ -> "Ljava/lang/Object;";

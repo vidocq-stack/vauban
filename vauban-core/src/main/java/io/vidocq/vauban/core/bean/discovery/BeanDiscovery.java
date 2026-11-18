@@ -862,7 +862,7 @@ public final class BeanDiscovery {
     private static void addTypeVariableNames(TypeInfo type, Set<String> names) {
         switch (type) {
             case TypeInfo.TypeVariable(var name, _) -> names.add(name);
-            case TypeInfo.ParameterizedType(_, var arguments) -> arguments.forEach(
+            case TypeInfo.ParameterizedType(_, var arguments, _) -> arguments.forEach(
                     argument -> addTypeVariableNames(argument, names));
             case TypeInfo.ArrayType(var component, _) -> addTypeVariableNames(component, names);
             case TypeInfo.WildcardType(var upper, var lower) -> {
@@ -882,7 +882,7 @@ public final class BeanDiscovery {
     private static void dropRawFormsOfParameterizedTypes(Set<TypeInfo> types) {
         var parameterizedNames = new HashSet<DotName>();
         for (var t : types) {
-            if (t instanceof TypeInfo.ParameterizedType(var rawType, _)) {
+            if (t instanceof TypeInfo.ParameterizedType(var rawType, _, _)) {
                 parameterizedNames.add(rawType);
             }
         }
@@ -909,7 +909,7 @@ public final class BeanDiscovery {
         var restrictedTypes = new LinkedHashSet<TypeInfo>();
         for (var rawName : restrictedRawTypes) {
             restrictedTypes.add(types.stream()
-                    .filter(t -> t instanceof TypeInfo.ParameterizedType(var rawType, _) && rawType.equals(rawName))
+                    .filter(t -> t instanceof TypeInfo.ParameterizedType(var rawType, _, _) && rawType.equals(rawName))
                     .findFirst()
                     .orElseGet(() -> new TypeInfo.ClassType(rawName)));
         }
@@ -994,8 +994,9 @@ public final class BeanDiscovery {
             case TypeInfo.VoidType _ -> new TypeInfo.ClassType(DotName.of("void"));
             case TypeInfo.ArrayType(var component, var dimensions) ->
                     new TypeInfo.ArrayType(asReflected(component), dimensions);
-            case TypeInfo.ParameterizedType(var raw, var arguments) ->
-                    new TypeInfo.ParameterizedType(raw, arguments.stream().map(BeanDiscovery::asReflected).toList());
+            case TypeInfo.ParameterizedType(var raw, var arguments, var owner) ->
+                    new TypeInfo.ParameterizedType(raw, arguments.stream().map(BeanDiscovery::asReflected).toList(),
+                            asReflected(owner));
             case TypeInfo.TypeVariable(var name, var bounds) ->
                     new TypeInfo.TypeVariable(name, bounds.stream().map(BeanDiscovery::asReflected).toList());
             case TypeInfo.WildcardType(var upper, var lower) ->
@@ -1036,9 +1037,13 @@ public final class BeanDiscovery {
                     var argInfo = reflectTypeToTypeInfo(arg, visited);
                     if (argInfo != null) args.add(argInfo);
                 }
+                // The enclosing type, where it carries type arguments, as the index reads it (BUG-20261117-21)
+                var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType parameterizedOwner
+                        && reflectTypeToTypeInfo(parameterizedOwner, visited) instanceof TypeInfo.ParameterizedType
+                        ownerInfo ? ownerInfo : null;
                 yield args.isEmpty()
                         ? new TypeInfo.ClassType(rawType)
-                        : new TypeInfo.ParameterizedType(rawType, args);
+                        : new TypeInfo.ParameterizedType(rawType, args, owner);
             }
             case java.lang.reflect.TypeVariable<?> tv -> {
                 if (!visited.add(tv)) {
@@ -1086,7 +1091,7 @@ public final class BeanDiscovery {
         if (compiled.isPresent() || !addReflectedSupertypes(producerType, types)) {
             var rawName = switch (producerType) {
                 case TypeInfo.ClassType(var name) -> name;
-                case TypeInfo.ParameterizedType(var rawType, _) -> rawType;
+                case TypeInfo.ParameterizedType(var rawType, _, _) -> rawType;
                 default -> null;
             };
             if (rawName != null) {
@@ -1128,8 +1133,7 @@ public final class BeanDiscovery {
             throws ClassNotFoundException {
         return switch (producerType) {
             case TypeInfo.ClassType(var name) -> Optional.of(DeploymentClasses.load(name.value()));
-            case TypeInfo.ParameterizedType(var rawType, var typeArguments) ->
-                    Optional.of(parameterizedReflectType(rawType, typeArguments));
+            case TypeInfo.ParameterizedType parameterized -> Optional.of(parameterizedReflectType(parameterized));
             default -> Optional.empty();
         };
     }
@@ -1143,9 +1147,13 @@ public final class BeanDiscovery {
      * was {@code Object}, so a producer of {@code Box<List<String>>} had {@code Repo<Object>} at start where the build
      * gives {@code Repo<List<String>>} (BUG-20261117-17).
      */
-    private static java.lang.reflect.ParameterizedType parameterizedReflectType(DotName rawType,
-            List<TypeInfo> typeArguments) throws ClassNotFoundException {
-        Class<?> clazz = DeploymentClasses.load(rawType.value());
+    private static java.lang.reflect.ParameterizedType parameterizedReflectType(TypeInfo.ParameterizedType type)
+            throws ClassNotFoundException {
+        var typeArguments = type.typeArguments();
+        Class<?> clazz = DeploymentClasses.load(type.rawType().value());
+        // The enclosing type, whose arguments the classes above an inner class may name (BUG-20261117-21)
+        java.lang.reflect.Type owner = type.owner() instanceof TypeInfo.ParameterizedType parameterizedOwner
+                ? parameterizedReflectType(parameterizedOwner) : null;
         var args = new java.lang.reflect.Type[typeArguments.size()];
         for (int i = 0; i < typeArguments.size(); i++) {
             args[i] = typeArguments.get(i) instanceof TypeInfo.ClassType(var argName)
@@ -1155,7 +1163,7 @@ public final class BeanDiscovery {
         return new java.lang.reflect.ParameterizedType() {
             @Override public java.lang.reflect.Type[] getActualTypeArguments() { return args.clone(); }
             @Override public java.lang.reflect.Type getRawType() { return clazz; }
-            @Override public java.lang.reflect.Type getOwnerType() { return null; }
+            @Override public java.lang.reflect.Type getOwnerType() { return owner; }
         };
     }
 
@@ -1414,7 +1422,7 @@ public final class BeanDiscovery {
     public static String erasedName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name.value();
-            case TypeInfo.ParameterizedType(var raw, _) -> raw.value();
+            case TypeInfo.ParameterizedType(var raw, _, _) -> raw.value();
             case TypeInfo.PrimitiveType(var kind) -> kind.name().toLowerCase(java.util.Locale.ROOT);
             case TypeInfo.ArrayType(var component, var dimensions) -> {
                 var element = erasedName(component);

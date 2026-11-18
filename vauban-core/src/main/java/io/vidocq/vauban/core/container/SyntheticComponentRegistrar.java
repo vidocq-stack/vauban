@@ -323,7 +323,7 @@ final class SyntheticComponentRegistrar {
     static String typeName(io.vidocq.vauban.indexer.model.TypeInfo type) {
         return switch (type) {
             case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) -> name.value();
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, var arguments) -> raw.value()
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, var arguments, _) -> raw.value()
                     + arguments.stream().map(SyntheticComponentRegistrar::typeName)
                             .collect(java.util.stream.Collectors.joining(", ", "<", ">"));
             case io.vidocq.vauban.indexer.model.TypeInfo.ArrayType(var component, var dimensions) ->

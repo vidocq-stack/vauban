@@ -156,7 +156,7 @@ public final class AssignabilityRules {
             // a raw required type if the raw types are identical and all type parameters
             // of the bean type are either unbounded type variables or java.lang.Object.
             // Otherwise, check if there's any supertype that matches.
-            case ParameterizedType(var rawType, var typeArguments) -> rawType.equals(required.name())
+            case ParameterizedType(var rawType, var typeArguments, _) -> rawType.equals(required.name())
                     ? rawEquivalentArguments(typeArguments)
                     : isSubtypeOf(rawType, required.name());
             default -> false;
@@ -197,7 +197,7 @@ public final class AssignabilityRules {
             case ClassType(var requiredName) -> switch (beanType) {
                 case ClassType(var beanName) ->
                         beanName.equals(requiredName) || primitiveAndWrapper(beanName, requiredName);
-                case ParameterizedType(var rawType, var typeArguments) ->
+                case ParameterizedType(var rawType, var typeArguments, _) ->
                         rawType.equals(requiredName) && rawEquivalentArguments(typeArguments);
                 default -> false;
             };
@@ -208,7 +208,7 @@ public final class AssignabilityRules {
 
     private boolean isAssignableToParameterized(TypeInfo beanType, ParameterizedType required) {
         return switch (beanType) {
-            case ParameterizedType(var rawType, var typeArguments) -> rawType.equals(required.rawType())
+            case ParameterizedType(var rawType, var typeArguments, _) -> rawType.equals(required.rawType())
                     && typeArgumentsAssignable(typeArguments, required.typeArguments());
             // CDI 4.1, 5.2.4: "A raw bean type is considered assignable to a parameterized required type if the raw
             // types are identical and all type parameters of the required type are either unbounded type variables
@@ -298,9 +298,9 @@ public final class AssignabilityRules {
      */
     private boolean isAssignableToBound(TypeInfo type, TypeInfo bound) {
         return switch (bound) {
-            case ParameterizedType(var rawType, _) when type instanceof ClassType(var name) ->
+            case ParameterizedType(var rawType, _, _) when type instanceof ClassType(var name) ->
                     isSubtypeOf(name, rawType);
-            case ClassType(var name) when type instanceof ParameterizedType(var rawType, _) ->
+            case ClassType(var name) when type instanceof ParameterizedType(var rawType, _, _) ->
                     isSubtypeOf(rawType, name);
             default -> isAssignable(type, bound);
         };
@@ -370,10 +370,10 @@ public final class AssignabilityRules {
             return beanName != null && beanName.equals(requiredName);
         }
         if (bean instanceof ClassType(var beanName)
-                && required instanceof ParameterizedType(var rawType, var typeArguments)) {
+                && required instanceof ParameterizedType(var rawType, var typeArguments, _)) {
             return beanName.equals(rawType) && allArgumentsUnbounded(typeArguments);
         }
-        if (bean instanceof ParameterizedType(var rawType, var typeArguments)
+        if (bean instanceof ParameterizedType(var rawType, var typeArguments, _)
                 && required instanceof ClassType(var requiredName)) {
             return rawType.equals(requiredName) && allArgumentsUnbounded(typeArguments);
         }

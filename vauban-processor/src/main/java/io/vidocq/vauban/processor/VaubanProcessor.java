@@ -1933,7 +1933,7 @@ public class VaubanProcessor extends AbstractProcessor {
         for (var type : bean.types()) {
             DotName raw = switch (type) {
                 case TypeInfo.ClassType(DotName name) -> name;
-                case TypeInfo.ParameterizedType(DotName rawType, _) -> rawType;
+                case TypeInfo.ParameterizedType(DotName rawType, _, _) -> rawType;
                 default -> null;
             };
             if (wanted.equals(raw)) {
@@ -2005,7 +2005,7 @@ public class VaubanProcessor extends AbstractProcessor {
     private static void collectClassNames(TypeInfo type, Set<DotName> out) {
         switch (type) {
             case TypeInfo.ClassType(DotName name) -> out.add(name);
-            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments) -> {
+            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments, _) -> {
                 out.add(rawType);
                 typeArguments.forEach(arg -> collectClassNames(arg, out));
             }

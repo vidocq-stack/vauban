@@ -81,7 +81,7 @@ final class ObservedTypeNotation {
         switch (type) {
             case TypeInfo.ClassType(DotName(var name)) -> out.append(name);
             case TypeInfo.PrimitiveType(var kind) -> out.append(kind.name().toLowerCase(Locale.ROOT));
-            case TypeInfo.ParameterizedType(DotName(var rawName), var arguments) -> {
+            case TypeInfo.ParameterizedType(DotName(var rawName), var arguments, _) -> {
                 out.append(rawName).append('<');
                 appendAll(out, arguments, ", ");
                 out.append('>');

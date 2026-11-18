@@ -304,7 +304,8 @@ public final class TypeRef {
                         ? new TypeRef(component.primitive, null, component.dims + dimensions)
                         : new TypeRef(null, component.binaryName, component.dims + dimensions);
             }
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(io.vidocq.vauban.indexer.model.DotName(var rawName), _) ->
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(
+                    io.vidocq.vauban.indexer.model.DotName(var rawName), _, _) ->
                     ofReference(rawName);
             case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable _ ->
                     ofReference("java.lang.Object");

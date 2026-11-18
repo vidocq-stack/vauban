@@ -184,7 +184,7 @@ class IndexSignatureEquivalenceTest {
                     "[".repeat(dimensions) + descriptor(component);
             case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) ->
                     "L" + name.value().replace('.', '/') + ";";
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, _) ->
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var raw, _, _) ->
                     "L" + raw.value().replace('.', '/') + ";";
             case io.vidocq.vauban.indexer.model.TypeInfo.TypeVariable(_, var bounds) ->
                     bounds.isEmpty() ? "Ljava/lang/Object;" : descriptor(bounds.getFirst());

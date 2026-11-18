@@ -110,6 +110,13 @@ class ClassFileScannerTest {
         }
     }
 
+    /** Produces an inner class of a generic class, as {@code Outer<Number>.Inner<Integer>}. */
+    static class InnerFactory {
+        Outer<Number>.Inner<Integer> inner() {
+            return null;
+        }
+    }
+
     // --- Utility ---
 
     private static byte[] bytesOf(Class<?> clazz) throws IOException {
@@ -745,6 +752,38 @@ class ClassFileScannerTest {
             var io = List.<TypeInfo>of(new ClassType(DotName.of("java.io.IOException")));
             assertAll(() -> assertEquals(io, thrownBy("plain"), "a method without a signature"),
                     () -> assertEquals(io, thrownBy("signed"), "a signature without a thrown type"));
+        }
+    }
+
+    /** BUG-20261117-21: a parameterized type keeps the parameterized type that encloses it, from its signature. */
+    @Nested
+    @DisplayName("Enclosing types")
+    class EnclosingTypes {
+
+        @Test
+        @DisplayName("an inner class of a generic class has the type that encloses it as its owner")
+        void anInnerClassHasItsOwner() throws IOException {
+            var returned = (ParameterizedType) scan(InnerFactory.class).methods().stream()
+                    .filter(m -> m.name().equals("inner")).findFirst().orElseThrow().returnType();
+            var outer = new ParameterizedType(DotName.of(Outer.class.getName()),
+                    List.of(new ClassType(DotName.of("java.lang.Number"))));
+            assertAll(() -> assertEquals(DotName.of(Outer.Inner.class.getName()), returned.rawType()),
+                    () -> assertEquals(List.of(new ClassType(DotName.of("java.lang.Integer"))),
+                            returned.typeArguments()),
+                    () -> assertEquals(outer, returned.owner()));
+        }
+
+        @Test
+        @DisplayName("the owner is no part of the type's identity")
+        void theOwnerIsNoPartOfTheIdentity() {
+            var integer = List.<TypeInfo>of(new ClassType(DotName.of("java.lang.Integer")));
+            var inner = DotName.of(Outer.Inner.class.getName());
+            var owned = new ParameterizedType(inner, integer,
+                    new ParameterizedType(DotName.of(Outer.class.getName()), integer));
+            var alone = new ParameterizedType(inner, integer);
+            assertAll(() -> assertEquals(alone, owned), () -> assertEquals(alone.hashCode(), owned.hashCode()),
+                    () -> assertTrue(owned.toString().endsWith(", owner=" + owned.owner() + "]")),
+                    () -> assertFalse(alone.toString().contains("owner")));
         }
     }
 }

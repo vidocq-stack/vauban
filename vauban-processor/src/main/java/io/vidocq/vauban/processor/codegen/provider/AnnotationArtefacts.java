@@ -522,7 +522,7 @@ public final class AnnotationArtefacts {
     String sourceName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(DotName name) -> sourceName(name);
-            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments) -> sourceName(rawType)
+            case TypeInfo.ParameterizedType(DotName rawType, List<TypeInfo> typeArguments, _) -> sourceName(rawType)
                     + typeArguments.stream().map(this::sourceName)
                             .collect(Collectors.joining(", ", "<", ">"));
             case TypeInfo.ArrayType(TypeInfo componentType, int dimensions) ->

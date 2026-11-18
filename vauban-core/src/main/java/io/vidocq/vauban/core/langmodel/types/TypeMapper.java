@@ -76,7 +76,7 @@ public final class TypeMapper {
                     new VaubanPrimitiveType(primitive, use.annotations(lookup));
             case TypeInfo.ClassType(var name) -> new VaubanClassType(name, lookup, use.annotations(lookup));
             case TypeInfo.ArrayType a -> mapArray(a, lookup, use, reading);
-            case TypeInfo.ParameterizedType(var rawType, var typeArguments) -> new VaubanParameterizedType(
+            case TypeInfo.ParameterizedType(var rawType, var typeArguments, _) -> new VaubanParameterizedType(
                     rawType, mapAll(typeArguments, use::typeArgument, lookup, reading), lookup,
                     use.annotations(lookup));
             case TypeInfo.TypeVariable(var name, var bounds) -> typeVariable(name, bounds, lookup, use, reading);

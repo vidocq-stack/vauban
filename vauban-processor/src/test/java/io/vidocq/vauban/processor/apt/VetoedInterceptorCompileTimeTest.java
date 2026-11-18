@@ -2021,27 +2021,36 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
-     * A producer of {@code Outer<String>.Inner<Integer>}, where {@code Inner<I> implements Holder<O>}: the index names
-     * the produced type {@code Outer$Inner<Integer>}, without the arguments of the class that encloses it, so
-     * {@code O} is not known, and the producer has the raw {@code Holder}, at build as at start. The build fell back
-     * to the raw {@code Holder} and the start kept {@code Holder<O>} (BUG-20261117-21).
+     * A producer of {@code Outer<String>.Inner<Integer>}, where {@code Inner<I> implements Holder<List<? extends O>>}:
+     * the type above it is {@code Holder<List<? extends String>>}, which has a wildcard type argument and is no bean
+     * type, so the producer has no {@code Holder}, as {@code Bean.getTypes()} says. Without the enclosing type, the
+     * descriptor had the raw {@code Holder}, at build, at start and frozen (BUG-20261117-21).
      */
     @Test
-    @DisplayName("a producer of an inner class of a generic class has the same types at build as at start")
-    void aProducerOfAnInnerClassOfAGenericClassHasTheSameTypesAtBuildAsAtStart() throws Exception {
-        var seen = seenThreeWays(withAnInnerClassProducer(), BeanTypeRecorder.class, BeanTypeRecorder.SEEN);
+    @DisplayName("a producer of an inner class has no type above it with a wildcard from the enclosing type")
+    void aProducerOfAnInnerClassHasNoTypeWithAWildcardFromTheEnclosingType() throws Exception {
+        var sources = withAnInnerClassProducer();
+        putType(sources, "Outer", """
+                public class Outer<O> {
+                    public class Inner<I> implements Holder<java.util.List<? extends O>> {
+                    }
+                }""");
+        var container = new ContainerTypes();
 
-        seen.assertEachIs(List.of("producer of vi.types.InnerFactory: java.lang.Object, vi.types.Holder,"
-                + " vi.types.Outer$Inner<java.lang.Integer>", INNER_FACTORY_TYPES));
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, container);
+
+        var expected = List.of("producer of vi.types.InnerFactory: java.lang.Object,"
+                + " vi.types.Outer$Inner<java.lang.Integer>", INNER_FACTORY_TYPES);
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(expected));
     }
 
     /**
      * The producer of {@code Outer<String>.Inner<Integer>} is a {@code Holder<String>}, as {@code Bean.getTypes()}
-     * says, which reads the producer method: the index names the produced type without {@code Outer<String>}, and the
-     * descriptor has the raw {@code Holder}, at build and at start (BUG-20261117-21).
+     * says, which reads the producer method: the index names the produced type with {@code Outer<String>}, the type
+     * that encloses it, and the descriptor has {@code Holder<String>}, at build, at start and frozen. It had the raw
+     * {@code Holder} (BUG-20261117-21).
      */
     @Test
-    @Disabled("BUG-20261117-21: the descriptor of a producer of an inner class of a generic class has a raw supertype")
     @DisplayName("a producer of an inner class of a generic class has the parameterized types above it")
     void aProducerOfAnInnerClassOfAGenericClassHasTheTypesAboveIt() throws Exception {
         var container = new ContainerTypes();

@@ -483,7 +483,7 @@ public final class IndexClassValidator {
      */
     public static Map<String, TypeInfo> typeArguments(ClassInfo superClass, TypeInfo generic,
             Map<String, TypeInfo> below, boolean own) {
-        if (!(generic instanceof TypeInfo.ParameterizedType(_, var arguments))
+        if (!(generic instanceof TypeInfo.ParameterizedType(_, var arguments, _))
                 || arguments.size() != superClass.typeParameters().size()) {
             return Map.of();
         }
@@ -663,14 +663,14 @@ public final class IndexClassValidator {
         switch (type) {
             case TypeInfo.TypeVariable _ -> errors.add(PRODUCER + location + " has type variable return type");
             case TypeInfo.WildcardType _ -> errors.add(PRODUCER + location + " has wildcard return type");
-            case TypeInfo.ParameterizedType(_, var arguments) when hasWildcard(arguments) ->
+            case TypeInfo.ParameterizedType(_, var arguments, _) when hasWildcard(arguments) ->
                     errors.add(PRODUCER + location + " has parameterized type with wildcard argument");
             // Reflection's GenericArrayType: one dimension of a generic component (a T[][] nests another array)
             case TypeInfo.ArrayType(var component, var dimensions) when dimensions == 1 -> {
                 switch (component) {
                     case TypeInfo.TypeVariable _ ->
                             errors.add(PRODUCER + location + " has array type with type variable component");
-                    case TypeInfo.ParameterizedType(_, var arguments) when hasWildcard(arguments) ->
+                    case TypeInfo.ParameterizedType(_, var arguments, _) when hasWildcard(arguments) ->
                             errors.add(PRODUCER + location + " has array of parameterized type with wildcard");
                     default -> { /* a plain component */ }
                 }
@@ -686,7 +686,7 @@ public final class IndexClassValidator {
     private static boolean containsWildcard(TypeInfo type) {
         return switch (type) {
             case TypeInfo.WildcardType _ -> true;
-            case TypeInfo.ParameterizedType(_, var arguments) ->
+            case TypeInfo.ParameterizedType(_, var arguments, _) ->
                     arguments.stream().anyMatch(IndexClassValidator::containsWildcard);
             case TypeInfo.ArrayType(var component, _) -> containsWildcard(component);
             default -> false;
@@ -697,7 +697,7 @@ public final class IndexClassValidator {
         return switch (type) {
             case null -> false;
             case TypeInfo.TypeVariable _ -> true;
-            case TypeInfo.ParameterizedType(_, var arguments) ->
+            case TypeInfo.ParameterizedType(_, var arguments, _) ->
                     arguments.stream().anyMatch(IndexClassValidator::containsTypeVariable);
             case TypeInfo.ArrayType(var component, _) -> containsTypeVariable(component);
             case TypeInfo.WildcardType(var upper, var lower) -> containsTypeVariable(upper) || containsTypeVariable(lower);
@@ -720,7 +720,7 @@ public final class IndexClassValidator {
     private static DotName rawClass(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name;
-            case TypeInfo.ParameterizedType(var raw, _) -> raw;
+            case TypeInfo.ParameterizedType(var raw, _, _) -> raw;
             case TypeInfo.TypeVariable(_, var bounds) -> bounds.isEmpty() ? OBJECT : rawClass(bounds.getFirst());
             default -> null;
         };

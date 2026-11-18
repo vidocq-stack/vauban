@@ -276,10 +276,15 @@ final class ClassChecksums {
                     text.append('A').append(dimensions).append(';');
                     type(componentType);
                 }
-                case TypeInfo.ParameterizedType(var rawType, var typeArguments) -> {
+                case TypeInfo.ParameterizedType(var rawType, var typeArguments, var owner) -> {
                     text.append('Q');
                     name(rawType);
                     list(typeArguments, this::type);
+                    // The enclosing type the bean types now read (BUG-20261117-21): any other type keeps its checksum
+                    if (owner != null) {
+                        text.append('W');
+                        type(owner);
+                    }
                 }
                 case TypeInfo.TypeVariable(var name, var bounds) -> {
                     text.append('T');

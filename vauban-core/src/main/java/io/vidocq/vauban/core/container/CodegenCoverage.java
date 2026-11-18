@@ -257,7 +257,7 @@ public final class CodegenCoverage {
     private static String rawName(TypeInfo type) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> name.value();
-            case TypeInfo.ParameterizedType(var rawType, _) -> rawType.value();
+            case TypeInfo.ParameterizedType(var rawType, _, _) -> rawType.value();
             case null, default -> null;
         };
     }

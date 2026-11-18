@@ -2827,7 +2827,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-21 — A producer of an inner class of a generic class has the raw types above it in its descriptor
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED
 - **Module**: `vauban-indexer` (`TypeInfo.ParameterizedType`), as `vauban-core` (`BeanDiscovery.computeProducerTypes`)
   and `vauban-processor` (`ParameterizedSupertypes`) read it
 - **Symptom**: `@Produces Outer<String>.Inner<Integer> inner()`, where `Outer<O>` declares
@@ -2861,8 +2861,28 @@ suspected cause, status. Updated on every investigation.
     `Bean.getTypes()` resolves `Holder<List<? extends String>>` and drops it, as a type with a wildcard type argument
     should be. The descriptor, without the enclosing type, has the raw `Holder`, at build, at start and frozen, which
     satisfied an injection point of any `Holder<X>` until BUG-20261117-16, and now satisfies `Holder<Object>` only.
-- **Fix** (not done): carry the enclosing type in the index's parameterized type, read by the indexer and the
-  processor, and given to the compiler and to reflection; a change of the index's model, beyond this pull request.
+- **Cause, proved**: red on 67964972 with the `@Disabled` lifted (`stack-l2d-red.log`, "RED BUG-20261117-21 on
+  67964972"): the raw `Holder` in the processor, at start and frozen, where `Bean.getTypes()` has `Holder<String>`.
+- **Fix**: `TypeInfo.ParameterizedType` gains `owner`, the parameterized type that encloses it, `null` otherwise; a
+  two-argument constructor keeps the old calls, and two types of the same class and arguments stay equal whatever
+  their owners, so the resolution of an injection point compares as before. The bytecode scan reads the owner from
+  the signature's outer type (`ClassTypeParameters`), the processor from `DeclaredType.getEnclosingType()`, and
+  `BeanDiscovery.reflectTypeToTypeInfo` from `getOwnerType()`, each where the enclosing type is parameterized. At
+  start, the produced type rebuilt for `TypeHierarchyResolver` gives the owner, which maps `O` to `String`; at build,
+  `ParameterizedSupertypes` builds the compiler's type within the enclosing one
+  (`Types.getDeclaredType(containing, ...)`), and a type variable an enclosing argument stands for is no foreign one.
+  `ClassChecksums` counts the owner where there is one. Every record pattern on the type names three components.
+- **Verification**: the repro green the three ways and with the container's `Bean.getTypes()`; the earlier
+  `...HasTheSameTypesAtBuildAsAtStart`, which pinned the raw `Holder` both ways, now checks the wildcard shape, which
+  has no `Holder` at all, as `Bean.getTypes()` says (`stack-l2d-dev21.log`, "BUG-21 (7)"); `ClassFileScannerTest
+  .EnclosingTypes` and `ClassChecksumsTest.theEnclosingTypeOfAParameterizedTypeCounts`; the whole reactor, indexer
+  140, core 1754 (11 skipped), processor 444 (13 skipped), maven-plugin 172, architecture 56 (`stack-l2d-dev21.log`,
+  "BUG-21 (9)").
+- **What stays**: an inner class that declares no type parameter, `Outer<String>.Inner`, is a `ClassType`, which has
+  no owner, and keeps the raw types above it; the first shape above, `<F> Outer<F>.Inner<Integer>`, keeps the raw
+  `Holder` (`ManagedBean.typesOfProducedType` and the descriptor read the producer's type variables from the type
+  arguments only; not tested). Vidocq's dev console (`CdiInventory.type`) names two components in its record
+  pattern and needs `, _` to compile against this Vauban (a one-line companion).
 - **Found by**: the review of fix round 3 of BUG-20261117-14 (M-2).
 
 ## BUG-20261117-20 — Under a Turkish default locale, a primitive type no longer matches the class named after it

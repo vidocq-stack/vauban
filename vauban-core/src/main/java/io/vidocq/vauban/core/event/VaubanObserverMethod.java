@@ -88,7 +88,7 @@ public final class VaubanObserverMethod<T> implements ObserverMethod<T> {
                     yield Object.class;
                 }
             }
-            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments) -> {
+            case TypeInfo.ParameterizedType(DotName(var rawName), var typeArguments, _) -> {
                 try {
                     var rawClass = Class.forName(rawName, true, classLoader);
                     var typeArgs = typeArguments.stream()

@@ -79,8 +79,8 @@ final class ParameterizedSupertypes implements Function<TypeInfo, Optional<List<
     public Optional<List<TypeInfo>> apply(TypeInfo type) {
         return read.computeIfAbsent(type, key -> switch (key) {
             case TypeInfo.ClassType(var name) -> element(name).map(element -> above(element.asType(), Map.of()));
-            case TypeInfo.ParameterizedType(var raw, var arguments) -> element(raw)
-                    .flatMap(element -> above(element, arguments));
+            case TypeInfo.ParameterizedType parameterized -> element(parameterized.rawType())
+                    .flatMap(element -> above(element, parameterized));
             default -> Optional.empty();
         });
     }
@@ -90,23 +90,40 @@ final class ParameterizedSupertypes implements Function<TypeInfo, Optional<List<
      * the type variable it stands for, and the conversion to the index's types puts any other one, a parameterized
      * type, an array, a wildcard or a type variable, as the index wrote it: a type alone does not declare its type
      * variables, and reflection carries such an argument the same way at start (BUG-20261117-17). Empty for a class
-     * argument the compiler does not know, and for a member class of a generic class, which the index's types name
-     * without the arguments of the class that encloses it.
+     * argument the compiler does not know, and for a member class of a generic class the index names without the
+     * type that encloses it, which the compiler refuses.
      */
-    private Optional<List<TypeInfo>> above(TypeElement raw, List<TypeInfo> arguments) {
-        var parameters = raw.getTypeParameters();
+    private Optional<List<TypeInfo>> above(TypeElement raw, TypeInfo.ParameterizedType type) {
         var asWritten = new HashMap<Element, TypeInfo>();
+        try {
+            return declared(raw, type, asWritten).map(declared -> above(declared, asWritten));
+        } catch (IllegalArgumentException _) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * The compiler's type of {@code type}, of class {@code raw}, within the compiler's type of the parameterized type
+     * that encloses it, whose arguments the classes above an inner class may name (BUG-20261117-21); empty for an
+     * argument the compiler does not know.
+     */
+    private Optional<DeclaredType> declared(TypeElement raw, TypeInfo.ParameterizedType type,
+            Map<Element, TypeInfo> asWritten) {
+        var parameters = raw.getTypeParameters();
+        var arguments = type.typeArguments();
         var mirrors = new ArrayList<TypeMirror>();
         for (int i = 0; i < arguments.size() && i < parameters.size(); i++) {
             argument(parameters.get(i), arguments.get(i), asWritten).ifPresent(mirrors::add);
         }
-        try {
-            return mirrors.size() == arguments.size()
-                    ? Optional.of(above(types.getDeclaredType(raw, mirrors.toArray(TypeMirror[]::new)), asWritten))
-                    : Optional.empty();
-        } catch (IllegalArgumentException _) {
+        if (mirrors.size() != arguments.size()) {
             return Optional.empty();
         }
+        var written = mirrors.toArray(TypeMirror[]::new);
+        if (!(type.owner() instanceof TypeInfo.ParameterizedType owner)) {
+            return Optional.of(types.getDeclaredType(raw, written));
+        }
+        return element(owner.rawType()).flatMap(element -> declared(element, owner, asWritten))
+                .map(containing -> types.getDeclaredType(containing, raw, written));
     }
 
     /**
@@ -159,24 +176,27 @@ final class ParameterizedSupertypes implements Function<TypeInfo, Optional<List<
      * {@code List<E>}, whose {@code E} is {@code ArrayList}'s (BUG-20261117-14).
      */
     private TypeInfo supertypeInfo(DeclaredType type, Climb climb) {
-        return hasForeignTypeVariable(type, climb.root())
+        return hasForeignTypeVariable(type, climb)
                 ? new TypeInfo.ClassType(DotName.of(elements.getBinaryName((TypeElement) type.asElement()).toString()))
                 : typeInfo(type, new Reading(climb.asWritten(), new HashSet<>()));
     }
 
     /**
      * Whether a type argument of {@code type}, at any depth, a wildcard's bounds included, is a type variable a
-     * declaration other than {@code root} declares.
+     * declaration other than the root of {@code climb} declares, and that no argument of the type walked stands for:
+     * the type variable of a class enclosing the root has the argument the enclosing type gives (BUG-20261117-21).
      */
-    private static boolean hasForeignTypeVariable(TypeMirror type, Element root) {
+    private static boolean hasForeignTypeVariable(TypeMirror type, Climb climb) {
         return switch (type.getKind()) {
             case DECLARED -> ((DeclaredType) type).getTypeArguments().stream()
-                    .anyMatch(argument -> hasForeignTypeVariable(argument, root));
-            case ARRAY -> hasForeignTypeVariable(((ArrayType) type).getComponentType(), root);
+                    .anyMatch(argument -> hasForeignTypeVariable(argument, climb));
+            case ARRAY -> hasForeignTypeVariable(((ArrayType) type).getComponentType(), climb);
             case WILDCARD -> Stream.of(((WildcardType) type).getExtendsBound(), ((WildcardType) type).getSuperBound())
-                    .anyMatch(bound -> bound != null && hasForeignTypeVariable(bound, root));
-            case TYPEVAR -> !root.equals(
-                    ((TypeParameterElement) ((TypeVariable) type).asElement()).getGenericElement());
+                    .anyMatch(bound -> bound != null && hasForeignTypeVariable(bound, climb));
+            case TYPEVAR -> {
+                var parameter = (TypeParameterElement) ((TypeVariable) type).asElement();
+                yield !climb.root().equals(parameter.getGenericElement()) && !climb.asWritten().containsKey(parameter);
+            }
             default -> false;
         };
     }

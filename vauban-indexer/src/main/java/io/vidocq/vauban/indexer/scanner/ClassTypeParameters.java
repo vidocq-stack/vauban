@@ -145,7 +145,10 @@ final class ClassTypeParameters {
         if (type.typeArgs().isEmpty()) {
             return new TypeInfo.ClassType(name);
         }
-        return new TypeInfo.ParameterizedType(name, type.typeArgs().stream().map(this::typeArgument).toList());
+        // The enclosing type, where it carries type arguments the classes above this one may name (BUG-20261117-21)
+        var owner = type.outerType().map(this::classType)
+                .filter(TypeInfo.ParameterizedType.class::isInstance).orElse(null);
+        return new TypeInfo.ParameterizedType(name, type.typeArgs().stream().map(this::typeArgument).toList(), owner);
     }
 
     private TypeInfo typeArgument(Signature.TypeArg argument) {

@@ -439,7 +439,7 @@ final class ClientProxyArtefacts {
         for (var t : bean.types()) {
             var name = switch (t) {
                 case TypeInfo.ClassType(DotName raw) -> raw.value();
-                case TypeInfo.ParameterizedType(DotName raw, _) -> raw.value();
+                case TypeInfo.ParameterizedType(DotName raw, _, _) -> raw.value();
                 default -> JAVA_LANG_OBJECT;
             };
             // By binary name: a nested produced type is app.Outer$Inner here (BUG-20261007-01).

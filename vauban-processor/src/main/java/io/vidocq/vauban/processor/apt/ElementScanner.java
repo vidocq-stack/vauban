@@ -415,7 +415,13 @@ public final class ElementScanner {
                     var typeArgs = declaredType.getTypeArguments().stream()
                             .map(argument -> typeMirrorToTypeInfo(argument, typeVariables))
                             .toList();
-                    yield new TypeInfo.ParameterizedType(dotName, typeArgs);
+                    // The enclosing type, where it carries type arguments, as the class file's signature names it
+                    // (BUG-20261117-21)
+                    var enclosing = declaredType.getEnclosingType();
+                    var owner = enclosing.getKind() == TypeKind.DECLARED
+                            && typeMirrorToTypeInfo(enclosing, typeVariables) instanceof TypeInfo.ParameterizedType
+                            parameterized ? parameterized : null;
+                    yield new TypeInfo.ParameterizedType(dotName, typeArgs, owner);
                 }
             }
             case ARRAY -> {

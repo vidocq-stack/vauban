@@ -136,7 +136,7 @@ final class ObserverInjectionPoints {
     static TypeInfo given(TypeInfo type, Map<String, TypeInfo> given) {
         return switch (type) {
             case TypeInfo.TypeVariable(var name, _) -> given.getOrDefault(name, type);
-            case TypeInfo.ParameterizedType(var raw, var arguments) -> new TypeInfo.ParameterizedType(raw,
+            case TypeInfo.ParameterizedType(var raw, var arguments, _) -> new TypeInfo.ParameterizedType(raw,
                     arguments.stream().map(argument -> given(argument, given)).toList());
             case TypeInfo.ArrayType(var component, var dimensions) ->
                     new TypeInfo.ArrayType(given(component, given), dimensions);
@@ -149,7 +149,7 @@ final class ObserverInjectionPoints {
     private static boolean hasTypeVariable(TypeInfo type) {
         return switch (type) {
             case TypeInfo.TypeVariable _ -> true;
-            case TypeInfo.ParameterizedType(_, var arguments) ->
+            case TypeInfo.ParameterizedType(_, var arguments, _) ->
                     arguments.stream().anyMatch(ObserverInjectionPoints::hasTypeVariable);
             case TypeInfo.ArrayType(var component, _) -> hasTypeVariable(component);
             case TypeInfo.WildcardType(var upper, var lower) ->

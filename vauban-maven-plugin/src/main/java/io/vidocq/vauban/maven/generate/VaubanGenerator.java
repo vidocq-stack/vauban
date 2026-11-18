@@ -442,7 +442,7 @@ public final class VaubanGenerator {
         for (var t : bean.types()) {
             var name = switch (t) {
                 case TypeInfo.ClassType(var raw) -> raw;
-                case TypeInfo.ParameterizedType(var raw, _) -> raw;
+                case TypeInfo.ParameterizedType(var raw, _, _) -> raw;
                 default -> null;
             };
             if (name != null && !"java.lang.Object".equals(name.value())) {

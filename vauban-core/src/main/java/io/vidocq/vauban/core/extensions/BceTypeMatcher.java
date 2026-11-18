@@ -195,7 +195,7 @@ final class BceTypeMatcher {
                                              ClassLoader classLoader) {
         return switch (type) {
             case TypeInfo.ClassType(var name) -> isSubtypeOfAny(types, name, lookup, classLoader);
-            case TypeInfo.ParameterizedType(var rawType, _) -> isSubtypeOfAny(types, rawType, lookup, classLoader);
+            case TypeInfo.ParameterizedType(var rawType, _, _) -> isSubtypeOfAny(types, rawType, lookup, classLoader);
             case TypeInfo.PrimitiveType(var kind) -> isSubtypeOfAny(types, DotName.of(wrapperOf(kind).getName()),
                     lookup, classLoader);
             case TypeInfo.ArrayType(var component, var dimensions) ->
@@ -339,7 +339,7 @@ final class BceTypeMatcher {
     private static Optional<String> rawTypeName(TypeInfo beanType) {
         return switch (beanType) {
             case TypeInfo.ClassType(DotName(var name)) -> Optional.of(name);
-            case TypeInfo.ParameterizedType(DotName(var rawName), _) -> Optional.of(rawName);
+            case TypeInfo.ParameterizedType(DotName(var rawName), _, _) -> Optional.of(rawName);
             default -> Optional.empty();
         };
     }

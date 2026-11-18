@@ -514,7 +514,7 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
                     var type = loadClassOrNull(name.value());
                     if (type != null) types.add(type);
                 }
-                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var typeArguments) -> {
+                case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var typeArguments, _) -> {
                     var type = parameterizedTypeOrNull(rawType.value(), typeArguments);
                     if (type != null) types.add(type);
                 }
@@ -765,7 +765,7 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
                     };
             // A parameterized component (Class<?>[] from the lang-model side)
             // erases to its raw array class for the runtime bean-type set.
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, _) ->
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, _, _) ->
                     "[".repeat(at.dimensions()) + "L" + rawType.value() + ";";
             default -> null;
         };
@@ -791,7 +791,7 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
         return switch (argInfo) {
             case io.vidocq.vauban.indexer.model.TypeInfo.ClassType(var name) ->
                     Class.forName(name.value(), true, classLoader);
-            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var typeArguments) -> {
+            case io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(var rawType, var typeArguments, _) -> {
                 var rawClass = Class.forName(rawType.value(), true, classLoader);
                 var nestedArgs = resolveTypeArguments(typeArguments, classLoader);
                 yield new java.lang.reflect.ParameterizedType() {

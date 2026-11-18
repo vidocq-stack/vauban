@@ -226,7 +226,7 @@ final class TypeAnnotationReader {
     private int depth(TypeInfo node) {
         return switch (node) {
             case TypeInfo.ClassType(var name) -> depth(name);
-            case TypeInfo.ParameterizedType(var name, _) -> depth(name);
+            case TypeInfo.ParameterizedType(var name, _, _) -> depth(name);
             default -> 0;
         };
     }
@@ -236,7 +236,7 @@ final class TypeAnnotationReader {
         return switch (component.typePathKind()) {
             case ARRAY -> node instanceof TypeInfo.ArrayType array ? component(array) : null;
             case WILDCARD -> node instanceof TypeInfo.WildcardType wildcard ? bound(wildcard) : null;
-            case TYPE_ARGUMENT -> node instanceof TypeInfo.ParameterizedType(_, var arguments)
+            case TYPE_ARGUMENT -> node instanceof TypeInfo.ParameterizedType(_, var arguments, _)
                     && component.typeArgumentIndex() < arguments.size()
                     ? arguments.get(component.typeArgumentIndex()) : null;
             case INNER_TYPE -> null;
