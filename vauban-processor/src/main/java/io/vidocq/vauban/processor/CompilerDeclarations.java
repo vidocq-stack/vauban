@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.processor;
 
+import io.vidocq.vauban.core.bean.discovery.PackageInfos;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.processor.apt.ElementScanner;
@@ -59,11 +60,23 @@ final class CompilerDeclarations {
     Optional<ClassInfo> declaration(DotName name) {
         var known = described.get(name);
         if (known == null) {
-            var type = typeElement(name);
-            var scanned = new Lookup(type == null ? null : scanner.scan(type));
+            var scanned = new Lookup(scan(name));
             known = Objects.requireNonNullElse(described.putIfAbsent(name, scanned), scanned);
         }
         return known.found();
+    }
+
+    /**
+     * What the compiler sees of the class: of a package's {@code package-info}, the package, which carries its
+     * annotations, as the class file does (BUG-20261117-57); {@code null} when it sees no such class.
+     */
+    private ClassInfo scan(DotName name) {
+        if (PackageInfos.isPackageInfo(name.value())) {
+            var pkg = elements.getPackageElement(name.packageName());
+            return pkg == null ? null : scanner.scan(pkg);
+        }
+        var type = typeElement(name);
+        return type == null ? null : scanner.scan(type);
     }
 
     /** One class looked up, a miss included: every asker of the class gets the same {@code Optional}. */

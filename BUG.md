@@ -839,6 +839,29 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261117-57 — A package of the language model has no annotation
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`langmodel.declarations.VaubanPackageInfo`), `vauban-processor`
+  (`CompilerDeclarations`)
+- **Symptom**: `ClassInfo.packageInfo().annotations()` was always empty, and `hasAnnotation`, `annotation` and
+  `repeatableAnnotation` answered as for a package without annotation, in the processor, at start and frozen, for a
+  package whose `package-info.java` declares some. The official language model TCK fails 6 checks on it
+  (vauban#336, group 13, `LangModelVerifier` lines 133-138).
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExtensionSeesTheAnnotationsOfAPackageInTheProcessorAtStartAndFrozen`
+  in `vauban-processor`, red on 0a9ca0e3 the three ways (`stack-l1b-bug57.log`, "RED on 0a9ca0e3": `vi.types has
+  @Labelled false`); `VaubanPackageInfoTest` in `vauban-core`.
+- **Cause**: `VaubanPackageInfo` held the package name alone and returned no annotation ("packages have no
+  annotations in our model").
+- **Fix**: a package shows the annotations of its `package-info` class, as the language model describes a class
+  (`IndexLookup.find`): from the index, which holds a vetoed package's, else from its class file at start and frozen,
+  and in the processor from the compiler's package element, which `CompilerDeclarations` now describes as the
+  bytecode scan describes a `package-info` (`ElementScanner.scan(PackageElement)`). A package without one has no
+  annotation. Nothing of the index changes, and a `package-info` stays out of the bean discovery.
+- **Verification**: `stack-l1b-bug57.log`, "GREEN on 0a9ca0e3 + BUG-57 fix", "GREEN: BUG-57 core unit test" and
+  "BUG-57 module tests: core, processor, maven-plugin".
+
 ## BUG-20261117-56 — `repeatableAnnotation` does not unwrap the container
 
 - **Date**: 2026-11-18

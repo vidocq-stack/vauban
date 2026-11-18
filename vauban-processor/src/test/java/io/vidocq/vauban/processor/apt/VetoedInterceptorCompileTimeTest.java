@@ -3803,6 +3803,45 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(expected);
     }
 
+    /**
+     * Records, in {@code @Synthesis}, the annotations the package of {@link #DEFAULTED} shows, as {@link #membersOf}
+     * writes them, and what its other annotation methods answer for {@code @Labelled} (BUG-20261117-57).
+     */
+    public static class PackageAnnotationRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(DEFAULTED);
+        }
+
+        @Synthesis
+        public void annotations(Types types) {
+            var pkg = types.ofClass(DEFAULTED).declaration().packageInfo();
+            pkg.annotations().forEach(annotation -> SEEN.add(pkg.name() + " " + membersOf(annotation)));
+            SEEN.add(pkg.name() + " has @Labelled "
+                    + pkg.hasAnnotation(annotation -> annotation.name().equals(TYPES + "Labelled")));
+        }
+    }
+
+    /**
+     * A package shows the annotations its {@code package-info} declares, in the processor, at start and frozen. It
+     * showed none (BUG-20261117-57).
+     */
+    @Test
+    @DisplayName("an extension sees the annotations of a package in the processor, at start and frozen")
+    void anExtensionSeesTheAnnotationsOfAPackageInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withAnnotationDefaults();
+        sources.put("vi/types/package-info" + JAVA, "@Labelled(\"pkg\")\npackage vi.types;\n");
+        var expected = List.of("vi.types @Labelled rank true: rank=3 tags=[a, b] value=pkg",
+                "vi.types has @Labelled true");
+
+        var seen = seenThreeWays(sources, PackageAnnotationRecorder.class, PackageAnnotationRecorder.SEEN);
+
+        seen.assertEachIs(expected);
+    }
+
     // ---- helpers ----
 
     /** The classes of the beans and interceptors {@code @Registration} sees while the processor compiles them. */
