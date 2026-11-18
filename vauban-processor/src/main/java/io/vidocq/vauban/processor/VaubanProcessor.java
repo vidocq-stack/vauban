@@ -751,7 +751,9 @@ public class VaubanProcessor extends AbstractProcessor {
                 bceInstances, archiveClasses,
                 name -> index.getClassByName(name).map(discovery::buildManagedBean).orElse(null),
                 new BceProcessor.RegisteredQualifiers(discovery.getCustomQualifiers(),
-                        nonbindingMembers(discoveryResult))));
+                        nonbindingMembers(discoveryResult)),
+                // The build holds every bean of the archive: it checks the invokers' lookups now
+                false));
 
         // Report BCE errors as compilation errors
         boolean definitionFailed = reported(bceResult.definitionErrors());

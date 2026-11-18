@@ -171,8 +171,37 @@ public final class BceProcessor {
              * FaultToleranceDefinitionException) and TCKs assert it through the
              * DeploymentException cause chain — the flattened messages alone lose it.
              */
-            List<Throwable> deploymentErrorCauses
+            List<Throwable> deploymentErrorCauses,
+            /*
+             * The invokers whose argument lookups the caller checks, once it holds every bean of the deployment
+             * (BUG-20261117-45); none when process checked them itself.
+             */
+            InvokerLookups invokerLookups
     ) {}
+
+    /**
+     * The invokers the extensions built, and what their argument lookups are checked with. A start checks them once it
+     * registered the synthetic beans of the frozen extensions and of the archives the processor processed: CDI 4.1,
+     * "Configuring lookups", identifies a looked-up bean among every bean of the deployment, and a lookup only one of
+     * those satisfies was refused (BUG-20261117-45).
+     */
+    public record InvokerLookups(List<VaubanInvokerFactory> factories, VaubanIndex index, ClassLoader classLoader,
+                                 RegisteredQualifiers qualifiers) {
+
+        static final InvokerLookups NONE = new InvokerLookups(List.of(), null, null, RegisteredQualifiers.NONE);
+
+        public InvokerLookups {
+            factories = List.copyOf(factories);
+        }
+
+        /** The unsatisfied and ambiguous argument lookups, each bean identified among {@code allBeans}. */
+        public List<String> errors(List<BeanDescriptor> allBeans) {
+            var errors = new ArrayList<String>();
+            ExtensionMethodValidator.validateInvokerLookups(factories, allBeans, index, classLoader, qualifiers,
+                    errors);
+            return errors;
+        }
+    }
 
     /**
      * What {@code @Discovery} did. {@code definitionErrors} and their causes are the exceptions its methods threw: a
@@ -258,7 +287,7 @@ public final class BceProcessor {
                                  Map<Class<?>, Object> bceInstances,
                                  List<Class<?>> allArchiveClasses) {
         return process(bceClasses, beans, List.of(), List.of(), index, classLoader, bceInstances, allArchiveClasses,
-                _ -> null, RegisteredQualifiers.NONE);
+                _ -> null, RegisteredQualifiers.NONE, false);
     }
 
     /**
@@ -271,6 +300,9 @@ public final class BceProcessor {
      *                    (see {@link #beansAfterEnhancement})
      * @param qualifiers  the qualifiers the extensions registered, which the check of the invokers' lookups
      *                    applies as the container does
+     * @param deferLookups whether the caller checks the invokers' lookups, through {@link Result#invokerLookups()},
+     *                    once it holds the synthetic beans of other extensions too: a start, which registers those of
+     *                    the frozen extensions and of the processed archives after (BUG-20261117-45)
      */
     @SuppressWarnings("java:S107") // CDI BCE processing requires multiple contextual parameters
     public static Result process(List<Class<?>> bceClasses,
@@ -282,7 +314,8 @@ public final class BceProcessor {
                                  Map<Class<?>, Object> bceInstances,
                                  List<Class<?>> allArchiveClasses,
                                  java.util.function.Function<DotName, BeanDescriptor> managedBean,
-                                 RegisteredQualifiers qualifiers) {
+                                 RegisteredQualifiers qualifiers,
+                                 boolean deferLookups) {
         var lookup = new IndexLookup(index);
         var definitionErrors = new ArrayList<String>();
         var deploymentErrors = new ArrayList<String>();
@@ -297,7 +330,7 @@ public final class BceProcessor {
         }
         if (!definitionErrors.isEmpty()) {
             return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
-                    allEnhancementMods, deploymentErrorCauses);
+                    allEnhancementMods, deploymentErrorCauses, InvokerLookups.NONE);
         }
 
         // Reuse the instances of the Discovery phase to keep the state an extension builds across phases.
@@ -336,15 +369,17 @@ public final class BceProcessor {
 
         // The looked-up beans of the invokers built, identified among every bean, the synthetic ones included: they
         // were checked in @Registration, before @Synthesis added any (BUG-20261117-39)
-        ExtensionMethodValidator.validateInvokerLookups(invokers, withSyntheticBeans(enhancedBeans, allSyntheticBeans),
-                lookup.index(), classLoader, qualifiers, deploymentErrors);
+        var invokerLookups = new InvokerLookups(invokers, lookup.index(), classLoader, qualifiers);
+        if (!deferLookups) {
+            deploymentErrors.addAll(invokerLookups.errors(withSyntheticBeans(enhancedBeans, allSyntheticBeans)));
+        }
 
         // Phase: @Validation
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
                 processValidation(bce, bceClass, types, deploymentErrors));
 
         return new Result(allSyntheticBeans, allSyntheticObservers, definitionErrors, deploymentErrors,
-                allEnhancementMods, deploymentErrorCauses);
+                allEnhancementMods, deploymentErrorCauses, deferLookups ? invokerLookups : InvokerLookups.NONE);
     }
 
     /** One phase of every extension still taking part, in their order. */

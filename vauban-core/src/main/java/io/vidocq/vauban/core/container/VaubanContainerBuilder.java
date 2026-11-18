@@ -1066,7 +1066,9 @@ public final class VaubanContainerBuilder {
                         nonBceClasses,
                         managedBeans(index, discovery),
                         new BceProcessor.RegisteredQualifiers(discovery.getCustomQualifiers(),
-                                discovery.getCustomNonbindingMembers()));
+                                discovery.getCustomNonbindingMembers()),
+                        // A start checks the invokers' lookups once it registered every synthetic bean, below
+                        capture == null);
                 failOnExtensionErrors(bceResult);
                 registerExtensionResults(bceResult, descriptors, observers, syntheticDisposers,
                         seenSyntheticSignatures, combinedEnhMods);
@@ -1102,6 +1104,11 @@ public final class VaubanContainerBuilder {
             if (!bceProcessedSources.isEmpty()) {
                 SyntheticComponentRegistrar.loadSyntheticMetadataFromApt(discoveryClassLoader, descriptors, factories,
                         syntheticDisposers, observers, seenSyntheticSignatures);
+            }
+            if (bceResult != null) {
+                // Every bean is registered: those of the frozen extensions and of the processed archives included
+                // (BUG-20261117-45)
+                failOnDeploymentErrors(bceResult.invokerLookups().errors(descriptors), List.of());
             }
 
             // One view of the annotation types for the whole container (vauban#70): the index first,

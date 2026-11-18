@@ -27,13 +27,16 @@ import jakarta.enterprise.context.spi.AlterableContext;
 import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.context.spi.CreationalContext;
 import jakarta.enterprise.inject.Instance;
+import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
+import jakarta.enterprise.inject.build.compatible.spi.InvokerFactory;
 import jakarta.enterprise.inject.build.compatible.spi.Messages;
 import jakarta.enterprise.inject.build.compatible.spi.MetaAnnotations;
 import jakarta.enterprise.inject.build.compatible.spi.Parameters;
+import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
 import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticBeanCreator;
@@ -64,6 +67,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -145,6 +149,27 @@ class FrozenExtensionsTest {
         public void greeting(SyntheticComponents components) {
             components.addBean(Greeting.class).type(Greeting.class).scope(Dependent.class)
                     .withParam("text", "hello").createWith(GreetingCreator.class);
+        }
+    }
+
+    /** Reads the synthetic {@link Greeting} {@link StaticExtension} adds, through an invoker that looks it up. */
+    @Dependent
+    public static class Greeter {
+        public String greet(Greeting greeting) {
+            return greeting.text();
+        }
+    }
+
+    /** Builds an invoker of {@link Greeter#greet} that looks its argument up; the build names it to run at start. */
+    public static class GreeterInvokerExtension implements BuildCompatibleExtension {
+        static final AtomicInteger BUILT = new AtomicInteger();
+
+        @Registration(types = Greeter.class)
+        public void greeter(BeanInfo bean, InvokerFactory invokers) {
+            bean.declaringClass().methods().stream().filter(method -> method.name().equals("greet")).forEach(method -> {
+                invokers.createInvoker(bean, method).withArgumentLookup(0).build();
+                BUILT.incrementAndGet();
+            });
         }
     }
 
@@ -418,6 +443,30 @@ class FrozenExtensionsTest {
             assertEquals("hello", container.select(Greeting.class).text());
             assertTrue(container.extensionsAtStart().frozen());
             assertEquals(List.of(StartCheckExtension.class.getName()), container.extensionsAtStart().ranAtStart());
+        }
+    }
+
+    /**
+     * An extension that runs at start builds an invoker whose argument lookup only the synthetic bean of a frozen
+     * extension satisfies: the start checked it before it registered the frozen synthetic beans, and refused it as
+     * unsatisfied (BUG-20261117-45).
+     */
+    @Test
+    @DisplayName("an extension that runs at start may look up the synthetic bean of a frozen one")
+    void anExtensionThatRunsAtStartMayLookUpTheSyntheticBeanOfAFrozenOne() {
+        List<Class<?>> classes = List.of(Promoted.class, Greeter.class, StaticExtension.class,
+                GreeterInvokerExtension.class);
+        FrozenExtensions.Outcome outcome = deployment(classes)
+                .freezeExtensions(output, Set.of(GreeterInvokerExtension.class.getName()));
+        assertTrue(outcome.frozen(), outcome.reason());
+        assertEquals(List.of(GreeterInvokerExtension.class.getName()), outcome.startExtensions());
+
+        StaticExtension.RUNS.set(0);
+        GreeterInvokerExtension.BUILT.set(0);
+        try (VaubanContainer container = assertDoesNotThrow(deployment(classes)::build, "the start refused it")) {
+            assertEquals(0, StaticExtension.RUNS.get(), "the extension of the synthetic bean stays frozen");
+            assertEquals(1, GreeterInvokerExtension.BUILT.get(), "the extension that runs at start built the invoker");
+            assertEquals("hello", container.select(Greeting.class).text());
         }
     }
 

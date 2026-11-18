@@ -1381,6 +1381,86 @@ class BceCompileTimeTest {
         assertTrue(result.success(), () -> String.join("\n", result.messages()));
     }
 
+    /** Creates the counter {@link CounterBce} synthesizes. */
+    public static class CounterCreator implements SyntheticBeanCreator<java.util.concurrent.atomic.AtomicInteger> {
+        @Override
+        public java.util.concurrent.atomic.AtomicInteger create(jakarta.enterprise.inject.Instance<Object> lookup,
+                                                                Parameters params) {
+            return new java.util.concurrent.atomic.AtomicInteger(7);
+        }
+    }
+
+    /** Adds a synthetic bean of {@code AtomicInteger}: the processor runs it, and records the bean in the archive. */
+    public static class CounterBce implements BuildCompatibleExtension {
+        @Synthesis
+        public void synthesis(SyntheticComponents components) {
+            components.addBean(java.util.concurrent.atomic.AtomicInteger.class)
+                    .type(java.util.concurrent.atomic.AtomicInteger.class).createWith(CounterCreator.class);
+        }
+    }
+
+    /** A bean of an archive the processor did not process: its extensions run at start. */
+    @jakarta.enterprise.context.Dependent
+    public static class UnprocessedBean {
+    }
+
+    /** Runs at start: builds an invoker of {@code app.CounterUser.read} that looks its argument up. */
+    public static class StartLookupBce implements BuildCompatibleExtension {
+        static final List<String> BUILT = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void register(BeanInfo bean, InvokerFactory invokers) {
+            if (bean.declaringClass().name().equals("app.CounterUser")) {
+                for (var method : bean.declaringClass().methods()) {
+                    if (method.name().equals("read")) {
+                        invokers.createInvoker(bean, method).withArgumentLookup(0).build();
+                        BUILT.add(method.name());
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * An extension that runs at start builds an invoker whose argument lookup only a synthetic bean of an extension
+     * the processor ran satisfies: the start checked the lookup among the beans discovered and the synthetic beans of
+     * the extensions it ran, before it registered those the archive records, and refused it as unsatisfied, though
+     * the call finds the bean (CDI 4.1, "Configuring lookups": every bean of the deployment; BUG-20261117-45). The
+     * deployment holds an archive the processor did not process too, whose extensions run at start.
+     */
+    @Test
+    @DisplayName("the start checks an invoker's lookup among the synthetic beans the archive records (BUG-20261117-45)")
+    void theStartChecksALookupAmongTheSyntheticBeansTheArchiveRecords() throws Exception {
+        StartLookupBce.BUILT.clear();
+        var result = compileWithBce(List.of(CounterBce.class), """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+                import java.util.concurrent.atomic.AtomicInteger;
+
+                @Dependent
+                public class CounterUser {
+                    public int read(AtomicInteger counter) {
+                        return counter.get();
+                    }
+                }
+                """);
+        assertTrue(result.success(), () -> String.join("\n", result.messages()));
+        assertTrue(result.readFile(SyntheticMetadataSerializer.METADATA_PATH).contains("AtomicInteger"),
+                "the archive records the synthetic bean");
+
+        try (var loader = new java.net.URLClassLoader(new java.net.URL[] {result.outputDir().toUri().toURL()},
+                getClass().getClassLoader())) {
+            var builder = io.vidocq.vauban.core.container.VaubanContainer.builder().classLoader(loader)
+                    .scanClasspath().addBeanClass(UnprocessedBean.class).addBeanClass(StartLookupBce.class);
+            try (var container = assertDoesNotThrow(builder::build, "the start refused the lookup")) {
+                assertEquals(List.of("read"), List.copyOf(StartLookupBce.BUILT), "the invoker the start built");
+                assertEquals(7, container.select(java.util.concurrent.atomic.AtomicInteger.class).get(),
+                        "the synthetic bean the archive records");
+            }
+        }
+    }
+
     /**
      * Boots the archive {@code loader} holds. The compiled application is in the loader's unnamed module and
      * names the fixture qualifier, which a library would export: the tests' module exports it to that module.

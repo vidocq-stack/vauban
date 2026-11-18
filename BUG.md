@@ -1395,18 +1395,30 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-45 — The start checks invoker lookups without the synthetic beans of frozen or compiled extensions
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`)
 - **Module**: `vauban-core` (`VaubanContainerBuilder`, `BceProcessor.process`)
-- **Symptom** (by reading): at start, an extension that runs then builds an invoker whose argument lookup only a
-  synthetic bean of another extension satisfies, an extension frozen at build (`vidocq:generate`) or run by the
-  annotation processor of an archive: the start refuses the lookup as unsatisfied, though the call would find it.
-- **Repro**: none yet; it needs a deployment that freezes one extension and runs another at start.
-- **Cause**: `BceProcessor.process` checks the lookups among the beans discovered and the synthetic beans of the
-  extensions it ran (BUG-20261117-39). `VaubanContainerBuilder` registers the synthetic beans of the frozen
-  extensions (`registerSyntheticMetadata`) and of the archives processed at compile
+- **Symptom**: at start, an extension that runs then builds an invoker whose argument lookup only a synthetic bean
+  of another extension satisfies, an extension frozen at build (`vidocq:generate`) or run by the annotation
+  processor of an archive: the start fails with `Invoker argument lookup unsatisfied: no bean found for parameter
+  type …`, though the call finds the bean.
+- **Repro**: `FrozenExtensionsTest#anExtensionThatRunsAtStartMayLookUpTheSyntheticBeanOfAFrozenOne` in
+  `vauban-core` (one extension frozen, the other named to run at start);
+  `BceCompileTimeTest#theStartChecksALookupAmongTheSyntheticBeansTheArchiveRecords` in `vauban-processor` (an
+  archive the processor processed records the synthetic bean, an unprocessed bean makes the extensions run at start).
+- **Cause** (proved by both repros): `BceProcessor.process` checked the lookups among the beans discovered and the
+  synthetic beans of the extensions it ran (BUG-20261117-39). `VaubanContainerBuilder` registers the synthetic beans
+  of the frozen extensions (`registerSyntheticMetadata`) and of the archives processed at compile
   (`loadSyntheticMetadataFromApt`) after it.
+- **Fix**: `BceProcessor.process` takes `deferLookups`; the start sets it, and gets the invokers back in
+  `Result.invokerLookups()`, which it checks once every synthetic bean is registered, among all the descriptors. The
+  annotation processor and the build that freezes the extensions run every extension of what they see, so they check
+  in `process` as before.
+- **CDI Lite TCK**: no; the TCK runs every extension in one cycle, it neither freezes nor processes archives at
+  compile. `invokers.lookup.LookupUnsatisfiedTest` covers the unsatisfied lookup the fix keeps.
+- **Verification**: red on 4685e708, BUG-20261117-44 (`stack-l3b-red.log`, "BUG-20261117-45 red, run 2" for the
+  processed archive, "BUG-20261117-45 red, run 3" for the frozen extension, the fix set aside). Green:
+  `stack-l3b-green.log`, "BUG-20261117-45 fix: core and processor, with the frozen repro".
 - **Found by**: the review of BUG-20261117-27, checking the "every bean" of BUG-20261117-39.
-
 ## BUG-20261117-44 — The start refuses an invoker's lookup of a built-in bean the call serves
 
 - **Date**: 2026-11-17
