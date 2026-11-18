@@ -173,6 +173,8 @@ A deployment with nothing to freeze gets no record either, and the build says so
 
 The build writes no record, removes a stale one and says why, when an extension failed or reported an error: the start reports it, in the environment it belongs to.
 
+[.tag-new]#NEW# The freeze also generates the client proxy of each synthetic bean of a normal scope whose bean class is a class, as no processor sees such a bean and the container generated its proxy at every start (vauban#342). It is the class the start would have generated, byte for byte. For a bean class the build writes, the proxy goes next to it in the output. For a class of another archive, a library's jar, it goes under `META-INF/vauban/placed/` and the class is listed in `META-INF/vauban/required-opens.list`: a Vauban layer defines it into the package of the bean class, as it does the placed proxy of a produced type; on a plain class path nothing loads it and the start generates the proxy as before. The extension lists nothing. A synthetic bean whose bean class is an interface still takes its proxy from `@ClientProxies`. Build the application again after changing the jar of such a class: the proxy overrides the methods the class had at build.
+
 [.tag-new]#NEW# An extension whose work the record cannot say runs again at each start, alone, and the others stay frozen (vauban#343):
 
 * its `@Enhancement` removed annotations, which a record of additions cannot say;

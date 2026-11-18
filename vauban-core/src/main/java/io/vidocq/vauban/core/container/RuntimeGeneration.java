@@ -46,6 +46,7 @@ final class RuntimeGeneration {
     enum Kind {
         INTERCEPTED_SUBCLASS("intercepted subclass"),
         CLIENT_PROXY("client proxy"),
+        SYNTHETIC_CLIENT_PROXY("client proxy of a synthetic bean"),
         INTERFACE_PROXY("interface client proxy (java.lang.reflect.Proxy)"),
         SYNTHETIC_INTERFACE_PROXY("interface client proxy (java.lang.reflect.Proxy) of a synthetic bean");
 
@@ -131,7 +132,8 @@ final class RuntimeGeneration {
                 This fallback is exceptional: it slows the boot, may need deep access to the bean's package on the
                 module path, and cannot run ahead of time (native image, CDS).
                 """);
-        if (generated.stream().anyMatch(g -> g.kind() != Kind.SYNTHETIC_INTERFACE_PROXY)) {
+        if (generated.stream().anyMatch(g -> g.kind() != Kind.SYNTHETIC_INTERFACE_PROXY
+                && g.kind() != Kind.SYNTHETIC_CLIENT_PROXY)) {
             sb.append("""
                     A bean class compiled without the Vauban annotation processor (vauban-processor), and not processed
                     by the vauban-maven-plugin: add vauban-processor to the annotation processor path of the module
@@ -142,6 +144,13 @@ final class RuntimeGeneration {
             sb.append("""
                     A synthetic bean, which no processor sees: the extension that registers it lists the interface in
                     @io.vidocq.vauban.api.ClientProxies, on a class of a module compiled with vauban-processor.
+                    """);
+        }
+        if (generated.stream().anyMatch(g -> g.kind() == Kind.SYNTHETIC_CLIENT_PROXY)) {
+            sb.append("""
+                    A synthetic bean whose bean class is a class, which no processor sees: the build that freezes the
+                    extensions (vauban:generate with freezeExtensions, vidocq:generate) generates its client proxy,
+                    and a Vauban layer loads the proxy of a class of another jar.
                     """);
         }
         return sb.append(RULE).toString();

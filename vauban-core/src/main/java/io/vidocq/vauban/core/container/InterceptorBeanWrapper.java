@@ -522,7 +522,7 @@ final class InterceptorBeanWrapper {
                 : io.vidocq.vauban.core.proxy.RuntimeClientProxyGenerator.generate(beanClass);
         var proxyClass = defineProxyClass(site.host(), generated.className(), generated.bytecode());
         if (!preGenerated) {
-            runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, generated.className());
+            runtimeGeneration.generated(classProxyKind(bean), generated.className());
         }
 
         return proxyClass.getDeclaredConstructor(java.util.function.Supplier.class).newInstance(delegate);
@@ -647,8 +647,19 @@ final class InterceptorBeanWrapper {
         // The class the fallback will define, where it will define it; none when it cannot.
         var site = runtimeProxySite(bean, target);
         if (!isLoadable(site.host(), site.className())) {
-            runtimeGeneration.generated(RuntimeGeneration.Kind.CLIENT_PROXY, site.className());
+            runtimeGeneration.generated(classProxyKind(bean), site.className());
         }
+    }
+
+    /**
+     * The run-time class proxy of {@code bean}: a synthetic bean's apart, as no processor sees one and adding
+     * {@code vauban-processor} to the module of its class, often a jar of another project, changes nothing: the
+     * build that freezes the extensions generates it (vauban#342).
+     */
+    private static RuntimeGeneration.Kind classProxyKind(ManagedBean<?> bean) {
+        return bean.descriptor().kind() == io.vidocq.vauban.core.bean.model.BeanDescriptor.BeanKind.SYNTHETIC
+                ? RuntimeGeneration.Kind.SYNTHETIC_CLIENT_PROXY
+                : RuntimeGeneration.Kind.CLIENT_PROXY;
     }
 
     /**

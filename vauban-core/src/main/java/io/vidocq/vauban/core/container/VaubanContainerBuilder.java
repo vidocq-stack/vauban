@@ -654,6 +654,7 @@ public final class VaubanContainerBuilder {
                                     () -> build(capture))));
             var frozen = capture.frozen(startExtensions, output);
             capture.writeInvokerClasses(output);
+            capture.writeClientProxies(output);
             frozen.write(output);
             return new FrozenExtensions.Outcome(true, null, frozen.extensions(),
                     frozen.extensions().stream().filter(frozen.startExtensions()::contains).toList(),
@@ -712,6 +713,19 @@ public final class VaubanContainerBuilder {
 
         /** The classes generated for the invokers of the frozen synthetic components (BUG-20261118-37). */
         private Map<String, byte[]> invokerClasses = Map.of();
+
+        /** The client proxies of the frozen synthetic beans of a normal scope (vauban#342). */
+        private io.vidocq.vauban.core.extensions.SyntheticClientProxies clientProxies =
+                new io.vidocq.vauban.core.extensions.SyntheticClientProxies(Map.of(), new java.util.TreeSet<>());
+
+        /** Writes the client proxies {@link #frozen} generated under {@code output}. */
+        void writeClientProxies(java.nio.file.Path output) {
+            try {
+                clientProxies.write(output);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
 
         /** Writes the invoker classes {@link #frozen} generated under {@code output}, next to their bean classes. */
         void writeInvokerClasses(java.nio.file.Path output) {
@@ -806,6 +820,8 @@ public final class VaubanContainerBuilder {
                         return null;
                     });
                     invokerClasses = invokers.classes();
+                    clientProxies = io.vidocq.vauban.core.extensions.SyntheticClientProxies.of(beans,
+                            className -> java.nio.file.Files.isRegularFile(classFile(output, className)));
                     var synthetic = new java.util.Properties();
                     synthetic.load(new java.io.InputStreamReader(
                             new java.io.ByteArrayInputStream(written.toByteArray()),

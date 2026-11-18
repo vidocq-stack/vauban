@@ -167,7 +167,8 @@ application once and records what they did; the packaged application loads that 
   Noether's `EntityManager` and `EntityManagerFactory`). Put it on a class of a module compiled with
   `vauban-processor` that provides its `_VaubanComponents`: the `*-cdi-vauban` extension, or, for a
   container-neutral brick, its Vidocq runtime extension (Vidocq's `NoetherPersistenceExtension`). Public interfaces
-  only, no class, no `@Dependent` bean;
+  only, no class, no `@Dependent` bean. A synthetic bean whose bean class is a class needs no list: the freeze
+  generates its client proxy (vauban#342);
 - test both ways: the extensions run at start (TCK, another container) and frozen (the startup report says
   `cdi extensions  N extensions frozen at build`, and an invalid environment still stops the start).
 
