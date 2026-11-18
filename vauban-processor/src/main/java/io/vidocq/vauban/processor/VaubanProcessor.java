@@ -618,6 +618,9 @@ public class VaubanProcessor extends AbstractProcessor {
 
         if (!bceClasses.isEmpty()) {
             discoveryResult = runDiscoveryPhase(bceClasses, index, indexBuilder, aptClassLoader);
+            if (reported(discoveryResult.definitionErrors())) {
+                return true;
+            }
             index = indexBuilder.build();
         }
 
@@ -706,6 +709,14 @@ public class VaubanProcessor extends AbstractProcessor {
         return discoveryResult;
     }
 
+    /** Reports each of the errors of an extension phase as a compilation error; {@code true} when there is one. */
+    private boolean reported(List<String> errors) {
+        for (var err : errors) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, BCE_PREFIX + err);
+        }
+        return !errors.isEmpty();
+    }
+
     private void indexScannedClass(IndexBuilder indexBuilder, String className, byte[] bytes) {
         try {
             indexBuilder.add(ClassFileScanner.scan(bytes));
@@ -738,19 +749,8 @@ public class VaubanProcessor extends AbstractProcessor {
                         nonbindingMembers(discoveryResult))));
 
         // Report BCE errors as compilation errors
-        boolean hasErrors = false;
-        for (var err : bceResult.definitionErrors()) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                    BCE_PREFIX + err);
-            hasErrors = true;
-        }
-        for (var err : bceResult.deploymentErrors()) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                    BCE_PREFIX + err);
-            hasErrors = true;
-        }
-
-        if (hasErrors) return false;
+        boolean definitionFailed = reported(bceResult.definitionErrors());
+        if (reported(bceResult.deploymentErrors()) || definitionFailed) return false;
 
         // The bindings they add are not in the compiler's model the subclasses are decided from
         boundByEnhancement = BceProcessor.boundByEnhancement(bceResult.enhancementModifications());

@@ -2735,6 +2735,53 @@ class VetoedInterceptorCompileTimeTest {
         seen.assertEachIs(List.of("receiver CLASS vi.types.Enclosing"));
     }
 
+    /** Throws in {@code @Discovery}, as an extension that meets a problem it cannot get past. */
+    public static class ThrowingDiscovery implements BuildCompatibleExtension {
+
+        static final String CAUSE = "no configuration to discover from";
+
+        @Discovery
+        public void discover(ScannedClasses scanned) {
+            throw new IllegalStateException(CAUSE);
+        }
+    }
+
+    /**
+     * An exception a {@code @Discovery} method throws is a definition error, as CDI 4.1 treats one of a
+     * {@code BeforeBeanDiscovery} observer: the build fails, the start fails, and the freeze records nothing, so that
+     * the start runs the extension and fails again. Each names the extension and the exception (BUG-20261118-04).
+     */
+    @Test
+    @DisplayName("an exception of @Discovery fails the build, the start and the freeze")
+    void anExceptionOfDiscoveryFailsTheBuildTheStartAndTheFreeze() throws Exception {
+        var sources = withAVetoedPackage();
+        var failure = "@Discovery of " + ThrowingDiscovery.class.getName() + " failed: "
+                + IllegalStateException.class.getName() + ": " + ThrowingDiscovery.CAUSE;
+        var processor = new VaubanProcessor();
+        processor.overrideBceClasses(List.of(ThrowingDiscovery.class));
+
+        var processed = ProcessorCompiler.compile(workDir.resolve("processed"), sources, List.of(), processor);
+        var result = compile(sources);
+        registerExtension(result, ThrowingDiscovery.class);
+        try (var loader = loader(result)) {
+            var started = assertThrows(DefinitionException.class,
+                    VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "the container starts");
+            var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
+                    .freezeExtensions(result.classes());
+            var afterTheFreeze = assertThrows(DefinitionException.class,
+                    VaubanContainer.builder().classLoader(loader).scanClasspath()::build, "it starts after the freeze");
+
+            assertAll(() -> assertFalse(processed.success(), "the build fails"),
+                    () -> assertTrue(processed.messages().stream().anyMatch(m -> m.contains(failure)),
+                            () -> String.join("\n", processed.messages())),
+                    () -> assertTrue(started.getMessage().contains(failure), started.getMessage()),
+                    () -> assertEquals(ThrowingDiscovery.CAUSE, started.getCause().getMessage()),
+                    () -> assertFalse(outcome.frozen(), "the freeze records nothing"),
+                    () -> assertTrue(outcome.reason().contains(failure), outcome.reason()),
+                    () -> assertTrue(afterTheFreeze.getMessage().contains(failure), afterTheFreeze.getMessage()));
+        }
+    }
+
     // ---- helpers ----
 
     /** The classes of the beans and interceptors {@code @Registration} sees while the processor compiles them. */

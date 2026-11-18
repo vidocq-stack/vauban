@@ -28,6 +28,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.ScannedClasses;
+import jakarta.enterprise.inject.se.SeContainerInitializer;
+import jakarta.enterprise.inject.spi.DefinitionException;
 import org.junit.jupiter.api.Test;
 
 import java.lang.classfile.ClassFile;
@@ -38,13 +40,16 @@ import java.lang.constant.MethodTypeDesc;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The phases of {@link BceProcessor} that the CDI Lite specification makes non-fatal: an extension that cannot be
- * instantiated or whose discovery method throws is skipped, and members whose signature names an absent type
- * are left out.
+ * What {@link BceProcessor} tolerates and what it does not: an extension that cannot be instantiated is skipped by the
+ * enhancement of the archives, and members whose signature names an absent type are left out; an exception a
+ * {@code @Discovery} method throws is a definition error (BUG-20261118-04).
  */
 class BceProcessorFailureToleranceTest {
 
@@ -88,10 +93,24 @@ class BceProcessorFailureToleranceTest {
     }
 
     @Test
-    void aDiscoveryMethodThatThrowsLeavesItsExtensionInstantiated() {
+    void aDiscoveryMethodThatThrowsIsADefinitionError() {
         var discovery = BceProcessor.processDiscovery(List.of(FailingDiscovery.class), lookupWithTarget());
 
-        assertEquals(List.of(FailingDiscovery.class), List.copyOf(discovery.bceInstances().keySet()));
+        assertAll(() -> assertEquals(List.of(FailingDiscovery.class), List.copyOf(discovery.bceInstances().keySet())),
+                () -> assertEquals(List.of("@Discovery of " + FailingDiscovery.class.getName()
+                        + " failed: java.lang.IllegalStateException: discovery failed"), discovery.definitionErrors()),
+                () -> assertEquals("discovery failed", discovery.definitionErrorCauses().getFirst().getMessage()));
+    }
+
+    @Test
+    void aDiscoveryMethodThatThrowsFailsTheStart() {
+        var initializer = SeContainerInitializer.newInstance().disableDiscovery()
+                .addBeanClasses(FailingDiscovery.class);
+
+        var thrown = assertThrows(DefinitionException.class, initializer::initialize);
+
+        assertAll(() -> assertTrue(thrown.getMessage().contains(FailingDiscovery.class.getName()), thrown.getMessage()),
+                () -> assertInstanceOf(IllegalStateException.class, thrown.getCause()));
     }
 
     @Test

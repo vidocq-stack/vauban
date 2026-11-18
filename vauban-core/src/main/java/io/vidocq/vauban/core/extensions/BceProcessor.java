@@ -141,10 +141,17 @@ public final class BceProcessor {
             List<Throwable> deploymentErrorCauses
     ) {}
 
+    /**
+     * What {@code @Discovery} did. {@code definitionErrors} and their causes are the exceptions its methods threw: a
+     * definition error, as CDI 4.1 treats an exception of a {@code BeforeBeanDiscovery} or an
+     * {@code AfterTypeDiscovery} observer, the portable events of the same phase (BUG-20261118-04).
+     */
     public record DiscoveryResult(
             VaubanMetaAnnotations metaAnnotations,
             VaubanScannedClasses scannedClasses,
-            Map<Class<?>, Object> bceInstances
+            Map<Class<?>, Object> bceInstances,
+            List<String> definitionErrors,
+            List<Throwable> definitionErrorCauses
     ) {}
 
     @SuppressWarnings("java:S3011") // CDI spec requires reflective access
@@ -152,6 +159,8 @@ public final class BceProcessor {
         var metaAnnotations = new VaubanMetaAnnotations(lookup);
         var scannedClasses = new VaubanScannedClasses();
         var bceInstances = new LinkedHashMap<Class<?>, Object>();
+        var definitionErrors = new ArrayList<String>();
+        var definitionErrorCauses = new ArrayList<Throwable>();
 
         for (var bceClass : bceClasses) {
             try {
@@ -175,12 +184,15 @@ public final class BceProcessor {
                         method.invoke(bce, args);
                     }
                 });
-            } catch (Exception _) {
-                // Discovery phase errors are silently ignored per spec
+            } catch (Exception e) {
+                var cause = unwrapped(e);
+                definitionErrors.add("@Discovery of " + bceClass.getName() + " failed: " + cause);
+                definitionErrorCauses.add(cause);
             }
         }
 
-        return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances);
+        return new DiscoveryResult(metaAnnotations, scannedClasses, bceInstances, definitionErrors,
+                definitionErrorCauses);
     }
 
     /**
@@ -611,11 +623,16 @@ public final class BceProcessor {
                 }
             }
         } catch (Exception e) {
-            var unwrapped = e instanceof java.lang.reflect.InvocationTargetException ite
-                    ? java.util.Objects.requireNonNullElse(ite.getCause(), ite) : e;
+            var unwrapped = unwrapped(e);
             sink.errors().add("@Enhancement error: " + unwrapped.getMessage());
             sink.errorCauses().add(unwrapped);
         }
+    }
+
+    /** What an extension method threw: the cause of the {@code InvocationTargetException} of a reflective call. */
+    private static Throwable unwrapped(Exception e) {
+        return e instanceof java.lang.reflect.InvocationTargetException ite
+                ? java.util.Objects.requireNonNullElse(ite.getCause(), ite) : e;
     }
 
     /** Check if a Registration method uses InvokerFactory parameter. */

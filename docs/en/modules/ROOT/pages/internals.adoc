@@ -885,6 +885,12 @@ The `ApplicationContext` is built in memory, without opening any package.
   log it, leave the field `null` and hand the bean out, and the failure came back later as a
   `NullPointerException` in application code. `Bean#getInjectionPoints()` likewise throws rather
   than reporting no injection points.
+* An exception a `@Discovery` method throws is a definition error, as CDI 4.1 treats one of a
+  `BeforeBeanDiscovery` observer: the build fails with a compilation error, and the start with a
+  `DefinitionException` whose cause is the exception, both naming the extension
+  (`@Discovery of com.acme.Ext failed: java.lang.IllegalStateException: ...`); the freeze records
+  nothing, and the start that follows fails in turn. The container used to ignore it, and the
+  deployment went on without what the method had not registered (BUG-20261118-04).
 * The build compatible extension phase resolves a bean class across the whole deployment: the
   classes the container holds, the loader set on the builder, then the build's context loader —
   inside a Vauban layer, the layer's loader, which sees the application and the libraries it

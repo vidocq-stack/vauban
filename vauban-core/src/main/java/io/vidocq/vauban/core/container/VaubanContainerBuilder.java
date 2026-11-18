@@ -947,6 +947,10 @@ public final class VaubanContainerBuilder {
         BceProcessor.DiscoveryResult discoveryResult = bceClasses.isEmpty() ? null
                 : BceProcessor.processDiscovery(bceClasses,
                         new io.vidocq.vauban.core.langmodel.IndexLookup(indexBuilder.build()));
+        if (discoveryResult != null) {
+            failOn(discoveryResult.definitionErrors(), discoveryResult.definitionErrorCauses(), DEFINITION_FAILED,
+                    jakarta.enterprise.inject.spi.DefinitionException::new);
+        }
         // What @Discovery registered: by the extensions that just ran, by those the build froze, or both.
         var extensionDiscovery = registeredAtDiscovery(discoveryResult, frozen, discoveryClassLoader);
         var extensionAddedClasses = addExtensionScannedClasses(extensionDiscovery, discoveryClassLoader,
@@ -1441,22 +1445,33 @@ public final class VaubanContainerBuilder {
      * surface, and TCKs assert it through the cause chain (@ShouldThrowException).
      */
     private static void failOnExtensionErrors(BceProcessor.Result bceResult) {
-        if (!bceResult.definitionErrors().isEmpty()) {
-            throw new jakarta.enterprise.inject.spi.DefinitionException(
-                    failureMessage(DEFINITION_FAILED, bceResult.definitionErrors()));
+        failOn(bceResult.definitionErrors(), List.of(), DEFINITION_FAILED,
+                jakarta.enterprise.inject.spi.DefinitionException::new);
+        failOnDeploymentErrors(bceResult.deploymentErrors(), bceResult.deploymentErrorCauses());
+    }
+
+    /** Throws the {@code DeploymentException} of {@code errors}, the first of {@code causes} as its cause. */
+    private static void failOnDeploymentErrors(List<String> errors, List<Throwable> causes) {
+        failOn(errors, causes, DEPLOYMENT_FAILED, jakarta.enterprise.inject.spi.DeploymentException::new);
+    }
+
+    /**
+     * Throws the exception {@code failure} makes of the message of {@code errors} under {@code header}, the first of
+     * {@code causes} as its cause and the others suppressed; nothing when there is no error.
+     */
+    private static void failOn(List<String> errors, List<Throwable> causes, String header,
+                               java.util.function.Function<String, RuntimeException> failure) {
+        if (errors.isEmpty()) {
+            return;
         }
-        if (!bceResult.deploymentErrors().isEmpty()) {
-            var failure = new jakarta.enterprise.inject.spi.DeploymentException(
-                    failureMessage(DEPLOYMENT_FAILED, bceResult.deploymentErrors()));
-            var causes = bceResult.deploymentErrorCauses();
-            if (!causes.isEmpty()) {
-                failure.initCause(causes.getFirst());
-                for (var extra : causes.subList(1, causes.size())) {
-                    failure.addSuppressed(extra);
-                }
+        var thrown = failure.apply(failureMessage(header, errors));
+        if (!causes.isEmpty()) {
+            thrown.initCause(causes.getFirst());
+            for (var extra : causes.subList(1, causes.size())) {
+                thrown.addSuppressed(extra);
             }
-            throw failure;
         }
+        throw thrown;
     }
 
     /** Registers the synthetic beans and observers of the extensions, and merges their enhancement modifications. */

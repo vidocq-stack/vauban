@@ -5,6 +5,31 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-04 — An exception thrown in `@Discovery` is swallowed
+
+- **Date**: 2026-11-18
+- **Status**: FIXED on `fix/vauban-bug-stack`
+- **Module**: `vauban-core` (`extensions.BceProcessor.processDiscovery`, `container.VaubanContainerBuilder`),
+  `vauban-processor` (`VaubanProcessor`)
+- **Symptom**: a `@Discovery` method that throws does not fail the deployment: the build, the start and the freeze
+  go on without what it had not registered, and nothing says why. Every other phase sends its exception to the
+  deployment errors (`BceProcessor.runPhase`).
+- **Spec**: no text of CDI 4.1 tells a container to ignore it. The Javadoc of `BuildCompatibleExtension`,
+  `@Discovery` and `Messages` (cdi-api 4.1.0) names deployment problems and definition errors only; the comment
+  "silently ignored per spec" had no source. CDI 4.1 treats an exception of a `BeforeBeanDiscovery` or an
+  `AfterTypeDiscovery` observer, the portable events of the same phase, as a definition error.
+- **Repro**: `VetoedInterceptorCompileTimeTest#anExceptionOfDiscoveryFailsTheBuildTheStartAndTheFreeze` in
+  `vauban-processor`: the build, the start, the freeze and the start after it. Red without the fix
+  (`stack-l1-r2-1804.log`, "BUG-18-04 red: processor test, no fix": the start threw nothing).
+  `BceProcessorFailureToleranceTest#aDiscoveryMethodThatThrowsIsADefinitionError` and `...FailsTheStart` in
+  `vauban-core`.
+- **Cause**: `BceProcessor.processDiscovery` caught every exception and dropped it.
+- **Fix**: `DiscoveryResult` carries the definition errors and their causes, the exception the method threw
+  (`@Discovery of <extension> failed: <exception>`). The start throws them as a `DefinitionException`, the
+  exception as its cause, right after `@Discovery`; the processor reports them as compilation errors. The freeze
+  runs the start's path: it records nothing, and the start after it runs the extension and fails.
+- **Found by**: BUG-20261118-03, whose extension's `NullPointerException` vanished.
+
 ## BUG-20261118-03 — `ClassConfig.info()` is `null` for an annotation type outside the index
 
 - **Date**: 2026-11-18
