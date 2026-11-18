@@ -5,6 +5,31 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-45 — The phases after `@Enhancement` still see the annotations it removed
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, lane L4)
+- **Module**: `vauban-core` (`EnhancedClasses`, `BceProcessor.withEnhancements`)
+- **Symptom**: an `@Enhancement` method removes `@Deprecated` from `vi.Worn`, its field, its method and its parameter
+  (`removeAnnotation` on the class and the method, `removeAllAnnotations` on the field and the parameter). A
+  `@Registration` method then reads all four still `@Deprecated`, in the processor and at start. `@Synthesis` and
+  `@Validation` read the same language model.
+- **Repro**: `VetoedInterceptorCompileTimeTest#registrationDoesNotSeeTheAnnotationsEnhancementRemovedFromTheProcessorAndAtStart`.
+- **Cause** (proved): `EnhancedClasses` (BUG-20261118-42) applied the additions of `EnhancementPatchSerializer.additions`
+  only. The removals of a `VaubanClassConfig` and of its member configurations (`isAllAnnotationsRemoved`,
+  `getRemovePredicates`) reached the container's descriptors (`EnhancementApplier`), never the language model of the
+  later phases.
+- **Fix**: `EnhancedClasses.of` applies to each class, field, method and parameter the removals of every
+  configuration of it, then its additions, as `EnhancementApplier` does: a removal applies to the annotations the
+  target had. The rule "add annotations, never remove them" for a frozen deployment is unchanged: a build still refuses
+  to freeze a removal (Vidocq/vauban#288), so the extension runs again at each start, and the start sees what the
+  processor saw. The test checks that the build refuses the freeze.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l4-45-red.log`, "Red run (BUG-20261118-45)" (`class true, field true, method true,
+  parameter true` in the three runs). Green, `stack-l4-45-dev.log`, "Green run 1" (vauban-core `Bce*`, `*Enhance*`,
+  `*Frozen*`; `VetoedInterceptorCompileTimeTest`, `BceCompileTimeTest`).
+- **Found by**: the L4 review, round 4.
+
 ## BUG-20261118-44 — An `ObserverInfo` of an observer a bean inherits has no method, or none at all
 
 - **Date**: 2026-11-18

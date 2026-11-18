@@ -33,6 +33,7 @@ import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+import jakarta.enterprise.inject.build.compatible.spi.DeclarationConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.build.compatible.spi.InterceptorInfo;
@@ -2662,6 +2663,74 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * Removes {@code @Deprecated} from {@code vi.Worn}, its field, its method and its parameter, by a predicate on the
+     * class and the method, and all their annotations on the field and the parameter, and reads them back through the
+     * {@code BeanInfo} of its bean.
+     */
+    public static class UndeprecatingExtension implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Enhancement(types = Object.class, withSubtypes = true)
+        public void undeprecate(ClassConfig clazz) {
+            if (!clazz.info().name().equals("vi.Worn")) {
+                return;
+            }
+            clazz.removeAnnotation(annotation -> annotation.name().equals(Deprecated.class.getName()));
+            clazz.fields().forEach(DeclarationConfig::removeAllAnnotations);
+            clazz.methods().forEach(method -> {
+                method.removeAnnotation(annotation -> annotation.name().equals(Deprecated.class.getName()));
+                method.parameters().forEach(DeclarationConfig::removeAllAnnotations);
+            });
+        }
+
+        @Registration(types = Object.class)
+        public void read(BeanInfo bean) {
+            var worn = bean.declaringClass();
+            if (!worn.name().equals("vi.Worn")) {
+                return;
+            }
+            var method = worn.methods().stream().filter(candidate -> candidate.name().equals("act")).findFirst()
+                    .orElseThrow();
+            SEEN.add("class " + worn.hasAnnotation(Deprecated.class) + ", field "
+                    + worn.fields().iterator().next().hasAnnotation(Deprecated.class) + ", method "
+                    + method.hasAnnotation(Deprecated.class) + ", parameter "
+                    + method.parameters().getFirst().hasAnnotation(Deprecated.class) + ", scope "
+                    + worn.hasAnnotation(Dependent.class));
+        }
+    }
+
+    /**
+     * CDI 4.1 runs the phases after {@code @Enhancement} on the classes as it left them: an annotation it removed from
+     * a class, a field, a method or a parameter is gone from what {@code @Registration} reads. They read the
+     * additions only, in the processor and at start; a build refuses to freeze a removal, so the extension runs at
+     * each start (BUG-20261118-45).
+     */
+    @Test
+    @DisplayName("@Registration does not see the annotations @Enhancement removed, everywhere")
+    void registrationDoesNotSeeTheAnnotationsEnhancementRemovedFromTheProcessorAndAtStart() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Worn.java", """
+                package vi;
+                @Deprecated
+                @jakarta.enterprise.context.Dependent
+                public class Worn {
+                    @Deprecated
+                    String text;
+                    @Deprecated
+                    void act(@Deprecated String value) {
+                        // a plain method
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, UndeprecatingExtension.class, UndeprecatingExtension.SEEN,
+                (container, loader) -> assertNotNull(container), false);
+
+        seen.assertEachIs(List.of("class false, field false, method false, parameter false, scope true"));
+    }
+
+    /**
      * Records the observer method of each observer of {@code vi.Heir}: the class that declares it, its event parameter,
      * and the classes {@code declaringClass()} and {@code bean()} give.
      */
@@ -4647,6 +4716,17 @@ class VetoedInterceptorCompileTimeTest {
      */
     private SeenThreeWays seenThreeWays(Map<String, String> sources, Class<? extends BuildCompatibleExtension> extension,
                                         List<String> seen, StartedCheck check) throws Exception {
+        return seenThreeWays(sources, extension, seen, check, true);
+    }
+
+    /**
+     * {@link #seenThreeWays(Map, Class, List, StartedCheck)}; when {@code freezes} is {@code false}, the build refuses
+     * to freeze the extension, which then runs at each start: what it saw at build is what it saw while the build
+     * tried.
+     */
+    private SeenThreeWays seenThreeWays(Map<String, String> sources,
+                                        Class<? extends BuildCompatibleExtension> extension, List<String> seen,
+                                        StartedCheck check, boolean freezes) throws Exception {
         var processor = new VaubanProcessor();
         processor.overrideBceClasses(List.of(extension));
         seen.clear();
@@ -4669,9 +4749,12 @@ class VetoedInterceptorCompileTimeTest {
         try (var loader = loader(result)) {
             var outcome = VaubanContainer.builder().classLoader(loader).scanClasspath()
                     .freezeExtensions(result.classes());
-            assertTrue(outcome.frozen(), outcome.reason());
+            assertEquals(freezes, outcome.frozen(), outcome.reason());
         }
         var atBuild = sorted(seen);
+        if (!freezes) {
+            return new SeenThreeWays(inProcessor, atStart, atBuild);
+        }
         seen.clear();
         try (var loader = loader(result); var container = VaubanContainer.builder().classLoader(loader)
                 .scanClasspath().build()) {

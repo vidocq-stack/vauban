@@ -450,11 +450,11 @@ public final class BceProcessor {
     }
 
     /**
-     * {@code index} with the annotations {@code modifications} add to its classes, as the container enriches the index
-     * it discovers the beans of.
+     * {@code index} with what {@code modifications} did to its classes: the annotations they removed and those they
+     * added (BUG-20261118-45).
      */
     static VaubanIndex withEnhancements(VaubanIndex index, Map<DotName, List<VaubanClassConfig>> modifications) {
-        return EnhancedClasses.withAdditions(index, EnhancementPatchSerializer.additions(modifications));
+        return EnhancedClasses.of(index, modifications);
     }
 
     /** The modifications of {@code first}, then those of {@code second}, by class. */
