@@ -1474,7 +1474,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-33 — A type variable the language model reaches through a type has no bound
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18)
 - **Module**: `vauban-core` (`langmodel.types.TypeMapper`), as it maps the index's `TypeInfo.TypeVariable`
 - **Symptom**: `TypeVariable.bounds()` is empty for a type variable declared without a bound, when the language model
   reaches it through a type: the argument of a supertype (`Supplier<T>` above `Supplying<T>`), the type of a field, a
@@ -1491,13 +1491,26 @@ suspected cause, status. Updated on every investigation.
   (`[java.lang.Object]`) does not equal the `T` of a supertype's argument (`[]`). A substitution keyed on the
   `TypeVariable` objects, from the type parameters of a repository's supertype to the arguments it gets, misses; one
   keyed on `name()` works.
-- **Fix** (not done): `TypeMapper` cannot put `Object` back by itself: a variable the index left without bounds may
-  have bounds that are not `Object` (the `T` inside `Comparable<T>` of `T extends Comparable<T>`). It needs the type
-  parameters of the declaring class or method at hand. It changes what an extension sees of the bean types too, so it
-  is a change of its own.
-- **Already done for the receiver**: `MethodInfo.receiverType()` (BUG-20261117-53, wired in BUG-20261117-60) puts
-  `java.lang.Object` back on its top-level type arguments, the class's type parameters that declare no bound
-  (`VaubanMethodInfo.receiverType`). The fix of this bug takes that local patch in.
+- **More repros** (batch C, on 8a01240d, `stack-l2c-red.log`): "RED BUG-20261117-33 on 8a01240d",
+  `BceTypeVariableBoundsTest` at start: `B extends A extends ` for `<A, B extends A>` (the language model TCK's
+  `AnnotatedTypes` 720-723), `T extends ` for a method's `<T> T method(T)`, and the `S` inside `Comparable<S>` of
+  `<S extends Comparable<S>>` without bounds; "RED BUG-20261117-33 in the processor on 8a01240d",
+  `VetoedInterceptorCompileTimeTest#aTypeVariableReachedThroughATypeHasItsBoundsThreeWays`, the same in the processor,
+  at start and frozen.
+- **Fix**: `TypeMapper` gives a type variable the bounds the index records for it, or else those its type parameter
+  declares in the scope of the type's use (`TypeParameterScope.declaredBounds`, method then class), or else
+  `java.lang.Object`. A variable met again inside its own bounds, which the index records without bounds so that the
+  model stays finite (BUG-20261117-36), is a `VaubanTypeVariableReference`: the same type variable, whose bounds are
+  mapped when asked, equal to it, and shown by its name. A type variable hashes by its name, which equal ones share.
+  `TypeParameterScope.typeParameters` maps its parameters through `TypeMapper` too, and `VaubanMethodInfo.receiverType`
+  loses its local `Object` patch. `LangModelTypeMapper`, which turns an extension's types back into the index's, drops
+  the `Object` bound and the bounds of a variable met inside its own, so the index and the frozen record keep their
+  conventions: neither the index nor the frozen checksum change.
+- **Observable**: see `migration.adoc`; an extension that walks bounds recursively must stop at a variable it is
+  already reading, as with reflection (the processor's `BeanTypeRecorder` test helper had to).
+- **Verification**: `stack-l2c-dev.log`, "BUG-33 fix: indexer, core, processor, maven-plugin tests" and "BUG-33:
+  three-way processor test and receiver patch removed" (green);
+  `BceClassSupertypesTest#aTypeVariableOfASupertypeHasItsBound` enabled and green.
 - **Found by**: the tests of BUG-20261117-22.
 
 ## BUG-20261117-32 — An interface's `ClassInfo.superClass()` is `Object` at start and `null` in the processor

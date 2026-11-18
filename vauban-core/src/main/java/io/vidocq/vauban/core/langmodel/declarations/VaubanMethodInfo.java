@@ -39,8 +39,6 @@ import java.util.function.Predicate;
 
 public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.declarations.MethodInfo {
 
-    private static final TypeInfo OBJECT = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
-
     private final io.vidocq.vauban.indexer.model.MethodInfo indexMethod;
     private final VaubanClassInfo declaringClass;
     private final IndexLookup lookup;
@@ -103,10 +101,8 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
             return null;
         }
         var name = DotName.of(declaringClass.name());
-        var typeParameters = declaringClass.indexTypeParameters().stream()
-                .<TypeInfo>map(parameter -> parameter.bounds().isEmpty()
-                        ? new TypeInfo.TypeVariable(parameter.name(), List.of(OBJECT)) : parameter)
-                .toList();
+        // Each type variable has the bounds its parameter declares, java.lang.Object for none (BUG-20261117-33).
+        List<TypeInfo> typeParameters = List.copyOf(declaringClass.indexTypeParameters());
         var receiver = typeParameters.isEmpty() ? new TypeInfo.ClassType(name)
                 : new TypeInfo.ParameterizedType(name, typeParameters);
         return TypeMapper.map(receiver, lookup, typeUse(Target.RECEIVER, 0));

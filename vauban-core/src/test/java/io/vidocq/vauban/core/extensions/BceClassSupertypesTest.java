@@ -26,7 +26,6 @@ import jakarta.enterprise.inject.build.compatible.spi.Types;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.types.Type;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -196,12 +195,10 @@ class BceClassSupertypesTest {
 
     /**
      * {@code TypeVariable.bounds()} is never empty: a type variable the class declares without a bound has
-     * {@code java.lang.Object}, as {@code typeParameters()} gives it. As the argument of a supertype, as in the type of
-     * a member or a bean type, it has none: the index leaves the implicit bound out, and the language model's types do
-     * not put it back (BUG-20261117-33).
+     * {@code java.lang.Object}, as {@code typeParameters()} gives it, and so it has as the argument of a supertype
+     * (BUG-20261117-33).
      */
     @Test
-    @Disabled("BUG-20261117-33: a type variable the language model reaches through a type has no bound")
     @DisplayName("a type variable of a supertype has the bound the class declares")
     void aTypeVariableOfASupertypeHasItsBound() {
         BOUNDS.clear();

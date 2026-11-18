@@ -23,6 +23,7 @@ import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.VaubanAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Step;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 
 import java.util.List;
@@ -72,6 +73,11 @@ public final class TypeUse {
     /** The bound at {@code position} of the type variable {@code name}, as the type parameter in scope declares it. */
     TypeUse bound(String name, int position) {
         return scope.bound(name, position);
+    }
+
+    /** The bounds the type variable {@code name} declares where this type is used; {@code null} when unknown. */
+    List<TypeInfo> declaredBounds(String name) {
+        return scope.declaredBounds(name);
     }
 
     private TypeUse after(Step step) {

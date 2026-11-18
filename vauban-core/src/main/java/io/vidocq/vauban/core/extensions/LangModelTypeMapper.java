@@ -30,7 +30,9 @@ import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
 import jakarta.enterprise.lang.model.types.WildcardType;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Converts a CDI Lite lang-model {@link Type} (the type representation handed to
@@ -51,6 +53,11 @@ final class LangModelTypeMapper {
     private LangModelTypeMapper() {}
 
     static TypeInfo toIndexType(Type type) {
+        return toIndexType(type, Set.of());
+    }
+
+    /** The index type of {@code type}, inside the bounds of the type variables {@code reading} names. */
+    private static TypeInfo toIndexType(Type type, Set<String> reading) {
         return switch (type) {
             case PrimitiveType p -> new TypeInfo.PrimitiveType(switch (p.primitiveKind()) {
                 case BOOLEAN -> TypeInfo.PrimitiveType.Kind.BOOLEAN;
@@ -66,21 +73,19 @@ final class LangModelTypeMapper {
             case ParameterizedType pt -> {
                 var rawName = classTypeName(pt.genericClass());
                 List<TypeInfo> args = pt.typeArguments().stream()
-                        .map(LangModelTypeMapper::toIndexType)
+                        .map(argument -> toIndexType(argument, reading))
                         .toList();
                 yield new TypeInfo.ParameterizedType(rawName, args);
             }
             case ArrayType at -> {
-                var elem = toIndexType(at.componentType());
+                var elem = toIndexType(at.componentType(), reading);
                 if (elem instanceof TypeInfo.ArrayType(var innerComponent, var innerDimensions)) {
                     yield new TypeInfo.ArrayType(innerComponent, innerDimensions + 1);
                 }
                 yield new TypeInfo.ArrayType(elem, 1);
             }
-            case WildcardType wt -> wildcard(wt);
-            case TypeVariable tv -> new TypeInfo.TypeVariable(
-                    tv.name(),
-                    tv.bounds().stream().map(LangModelTypeMapper::toIndexType).toList());
+            case WildcardType wt -> wildcard(wt, reading);
+            case TypeVariable tv -> typeVariable(tv, reading);
             default -> new TypeInfo.ClassType(DotName.of(type.toString()));
         };
     }
@@ -91,10 +96,25 @@ final class LangModelTypeMapper {
      * it: a type an extension takes from the language model maps back to the type the index holds
      * (BUG-20261117-34).
      */
-    private static TypeInfo wildcard(WildcardType wildcard) {
-        var upper = wildcard.upperBound() != null ? toIndexType(wildcard.upperBound()) : null;
-        var lower = wildcard.lowerBound() != null ? toIndexType(wildcard.lowerBound()) : null;
+    private static TypeInfo wildcard(WildcardType wildcard, Set<String> reading) {
+        var upper = wildcard.upperBound() != null ? toIndexType(wildcard.upperBound(), reading) : null;
+        var lower = wildcard.lowerBound() != null ? toIndexType(wildcard.lowerBound(), reading) : null;
         return new TypeInfo.WildcardType(OBJECT.equals(upper) && lower == null ? null : upper, lower);
+    }
+
+    /**
+     * A type variable as the index records it: without the {@code java.lang.Object} bound the language model gives one
+     * that declares none, and without bounds when met again inside its own, {@code T} in
+     * {@code <T extends Comparable<T>>}, which the language model reads when asked (BUG-20261117-33).
+     */
+    private static TypeInfo typeVariable(TypeVariable variable, Set<String> reading) {
+        if (reading.contains(variable.name())) {
+            return new TypeInfo.TypeVariable(variable.name(), List.of());
+        }
+        var inner = new HashSet<>(reading);
+        inner.add(variable.name());
+        var bounds = variable.bounds().stream().map(bound -> toIndexType(bound, Set.copyOf(inner))).toList();
+        return new TypeInfo.TypeVariable(variable.name(), bounds.equals(List.of(OBJECT)) ? List.of() : bounds);
     }
 
     private static TypeInfo.ClassType classTypeToIndex(ClassType ct) {

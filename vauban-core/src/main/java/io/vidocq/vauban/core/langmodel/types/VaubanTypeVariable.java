@@ -64,12 +64,16 @@ public record VaubanTypeVariable(String name, List<Type> bounds, List<Annotation
     public boolean equals(Object o) {
         return this == o
                 || (o instanceof VaubanTypeVariable(var otherName, var otherBounds, _)
-                        && name.equals(otherName) && bounds.equals(otherBounds));
+                        && name.equals(otherName) && bounds.equals(otherBounds))
+                || (o instanceof VaubanTypeVariableReference reference && reference.equals(asTypeVariable()));
     }
 
-    // The hash the class had before it became a record: same values, same iteration orders.
+    /**
+     * The hash of the name alone: a type variable met again inside its own bounds equals the one it stands for, and
+     * the hash of its bounds would not end (BUG-20261117-33).
+     */
     @Override
     public int hashCode() {
-        return Objects.hash(name, bounds);
+        return name.hashCode();
     }
 }

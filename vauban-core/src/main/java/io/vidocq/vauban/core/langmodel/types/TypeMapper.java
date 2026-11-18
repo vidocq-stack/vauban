@@ -26,7 +26,9 @@ import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.IntFunction;
 
 /**
@@ -51,6 +53,14 @@ public final class TypeMapper {
      * (BUG-20261117-60).
      */
     public static Type map(TypeInfo typeInfo, IndexLookup lookup, TypeUse use) {
+        return map(typeInfo, lookup, use, Map.of());
+    }
+
+    /**
+     * The type {@code typeInfo}, inside the bounds of the type variables {@code reading} names, which are being mapped,
+     * each with the bounds it is mapped with.
+     */
+    private static Type map(TypeInfo typeInfo, IndexLookup lookup, TypeUse use, Map<String, List<TypeInfo>> reading) {
         return switch (typeInfo) {
             case TypeInfo.VoidType _ -> VaubanVoidType.INSTANCE;
             case TypeInfo.PrimitiveType p -> new VaubanPrimitiveType(p, use.annotations(lookup));
@@ -65,22 +75,45 @@ public final class TypeMapper {
                     instanceof TypeInfo.PrimitiveType primitive ->
                     new VaubanPrimitiveType(primitive, use.annotations(lookup));
             case TypeInfo.ClassType(var name) -> new VaubanClassType(name, lookup, use.annotations(lookup));
-            case TypeInfo.ArrayType a -> mapArray(a, lookup, use);
+            case TypeInfo.ArrayType a -> mapArray(a, lookup, use, reading);
             case TypeInfo.ParameterizedType(var rawType, var typeArguments) -> new VaubanParameterizedType(
-                    rawType, mapAll(typeArguments, use::typeArgument, lookup), lookup,
+                    rawType, mapAll(typeArguments, use::typeArgument, lookup, reading), lookup,
                     use.annotations(lookup));
-            case TypeInfo.TypeVariable(var name, var bounds) -> new VaubanTypeVariable(
-                    name, mapAll(bounds, position -> use.bound(name, position), lookup), use.annotations(lookup));
+            case TypeInfo.TypeVariable(var name, var bounds) -> typeVariable(name, bounds, lookup, use, reading);
             case TypeInfo.WildcardType(var upperBound, var lowerBound) ->
-                    wildcard(upperBound, lowerBound, lookup, use);
+                    wildcard(upperBound, lowerBound, lookup, use, reading);
         };
     }
 
+    /**
+     * A type variable with the bounds its type parameter declares, {@code java.lang.Object} when it declares none, as
+     * the language model asks: "never {@code null} or empty" (BUG-20261117-33). The index records a type variable met
+     * again inside its own bounds, or one of an enclosing declaration, without bounds, so that its model stays finite:
+     * those come from the type parameters where the type is used. Met again inside its own bounds, {@code T} in
+     * {@code <T extends Comparable<T>>}, it is the same type variable, whose bounds are mapped when asked.
+     */
+    private static Type typeVariable(String name, List<TypeInfo> recorded, IndexLookup lookup, TypeUse use,
+            Map<String, List<TypeInfo>> reading) {
+        var annotations = use.annotations(lookup);
+        var outer = reading.get(name);
+        if (recorded.isEmpty() && outer != null) {
+            return new VaubanTypeVariableReference(name, outer, () -> mapAll(outer,
+                    position -> use.bound(name, position), lookup, reading), annotations);
+        }
+        var declared = recorded.isEmpty() ? use.declaredBounds(name) : recorded;
+        var bounds = declared == null || declared.isEmpty() ? List.of(OBJECT) : declared;
+        var inner = new HashMap<>(reading);
+        inner.put(name, bounds);
+        return new VaubanTypeVariable(name, mapAll(bounds, position -> use.bound(name, position), lookup,
+                Map.copyOf(inner)), annotations);
+    }
+
     /** Each of {@code types}, used where {@code uses} says for its position. */
-    private static List<Type> mapAll(List<TypeInfo> types, IntFunction<TypeUse> uses, IndexLookup lookup) {
+    private static List<Type> mapAll(List<TypeInfo> types, IntFunction<TypeUse> uses, IndexLookup lookup,
+            Map<String, List<TypeInfo>> reading) {
         var mapped = new ArrayList<Type>(types.size());
         for (int i = 0; i < types.size(); i++) {
-            mapped.add(map(types.get(i), lookup, uses.apply(i)));
+            mapped.add(map(types.get(i), lookup, uses.apply(i), reading));
         }
         return mapped;
     }
@@ -90,11 +123,12 @@ public final class TypeMapper {
      * as such": the index records {@code ?} without bounds, as the class files and reflection read it, and the
      * language model gives it {@code java.lang.Object} as its upper bound (BUG-20261117-34).
      */
-    private static Type wildcard(TypeInfo upperBound, TypeInfo lowerBound, IndexLookup lookup, TypeUse use) {
+    private static Type wildcard(TypeInfo upperBound, TypeInfo lowerBound, IndexLookup lookup, TypeUse use,
+            Map<String, List<TypeInfo>> reading) {
         var upper = upperBound == null && lowerBound == null ? OBJECT : upperBound;
         var bound = use.wildcardBound();
-        return new VaubanWildcardType(upper != null ? map(upper, lookup, bound) : null,
-                lowerBound != null ? map(lowerBound, lookup, bound) : null, use.annotations(lookup));
+        return new VaubanWildcardType(upper != null ? map(upper, lookup, bound, reading) : null,
+                lowerBound != null ? map(lowerBound, lookup, bound, reading) : null, use.annotations(lookup));
     }
 
     /**
@@ -103,13 +137,14 @@ public final class TypeMapper {
      * nested component types. For example, {@code int[][]} (dimensions=2) becomes
      * {@code ArrayType(ArrayType(int))}. The outermost array is the first a type annotation's path steps into.
      */
-    private static Type mapArray(TypeInfo.ArrayType arrayType, IndexLookup lookup, TypeUse use) {
+    private static Type mapArray(TypeInfo.ArrayType arrayType, IndexLookup lookup, TypeUse use,
+            Map<String, List<TypeInfo>> reading) {
         var uses = new ArrayList<TypeUse>(arrayType.dimensions() + 1);
         uses.add(use);
         for (int i = 0; i < arrayType.dimensions(); i++) {
             uses.add(uses.getLast().component());
         }
-        Type result = map(arrayType.componentType(), lookup, uses.getLast());
+        Type result = map(arrayType.componentType(), lookup, uses.getLast(), reading);
         for (int i = arrayType.dimensions() - 1; i >= 0; i--) {
             result = new VaubanArrayType(result, uses.get(i).annotations(lookup));
         }

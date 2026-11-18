@@ -20,11 +20,9 @@
 package io.vidocq.vauban.core.langmodel.types;
 
 import io.vidocq.vauban.core.langmodel.IndexLookup;
-import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo;
 import io.vidocq.vauban.indexer.model.TypeAnnotationInfo.Target;
 import io.vidocq.vauban.indexer.model.TypeInfo;
-import jakarta.enterprise.lang.model.types.Type;
 import jakarta.enterprise.lang.model.types.TypeVariable;
 
 import java.util.ArrayList;
@@ -40,8 +38,6 @@ public final class TypeParameterScope {
 
     /** No type parameter, no annotation. */
     public static final TypeParameterScope EMPTY = new TypeParameterScope(List.of(), List.of(), null);
-
-    private static final TypeInfo OBJECT = new TypeInfo.ClassType(DotName.of("java.lang.Object"));
 
     private final List<TypeInfo.TypeVariable> parameters;
     private final List<TypeAnnotationInfo> annotations;
@@ -75,16 +71,22 @@ public final class TypeParameterScope {
     public List<TypeVariable> typeParameters(IndexLookup lookup) {
         var result = new ArrayList<TypeVariable>(parameters.size());
         for (int i = 0; i < parameters.size(); i++) {
-            var parameter = parameters.get(i);
-            var bounds = parameter.bounds().isEmpty() ? List.of(OBJECT) : parameter.bounds();
-            var mapped = new ArrayList<Type>(bounds.size());
-            for (int position = 0; position < bounds.size(); position++) {
-                mapped.add(TypeMapper.map(bounds.get(position), lookup, bound(i, position)));
-            }
-            result.add(new VaubanTypeVariable(parameter.name(), mapped,
-                    use(Target.TYPE_PARAMETER, i).annotations(lookup)));
+            result.add(TypeMapper.map(parameters.get(i), lookup, use(Target.TYPE_PARAMETER, i)).asTypeVariable());
         }
         return result;
+    }
+
+    /**
+     * The bounds the type variable {@code name} declares, as the index records them, in this scope or an enclosing
+     * one; {@code null} when no scope declares it (BUG-20261117-33).
+     */
+    List<TypeInfo> declaredBounds(String name) {
+        for (var parameter : parameters) {
+            if (parameter.name().equals(name)) {
+                return parameter.bounds();
+            }
+        }
+        return enclosing == null ? null : enclosing.declaredBounds(name);
     }
 
     /** The bound at {@code position} of the type variable {@code name}, in this scope or an enclosing one. */

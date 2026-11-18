@@ -2231,24 +2231,38 @@ class VetoedInterceptorCompileTimeTest {
         }
 
         private static String nameOf(Type type) {
+            return nameOf(type, Set.of());
+        }
+
+        /**
+         * The name of {@code type}; a type variable met again inside its own bounds, which has them as reflection
+         * gives them (BUG-20261117-33), by its name alone, as the processor writes it.
+         */
+        private static String nameOf(Type type, Set<String> reading) {
             if (type.isParameterizedType()) {
                 var parameterized = type.asParameterizedType();
                 return parameterized.genericClass().declaration().name() + parameterized.typeArguments().stream()
-                        .map(BeanTypeRecorder::nameOf).collect(Collectors.joining(", ", "<", ">"));
+                        .map(argument -> nameOf(argument, reading)).collect(Collectors.joining(", ", "<", ">"));
             }
             if (type.isWildcardType()) {
                 // ? extends Object is ?, as reflection names it (reflectedName) and as the language model gives ?
                 var wildcard = type.asWildcardType();
-                var upperBound = wildcard.upperBound() == null ? "java.lang.Object" : nameOf(wildcard.upperBound());
+                var upperBound = wildcard.upperBound() == null ? "java.lang.Object"
+                        : nameOf(wildcard.upperBound(), reading);
                 if (!upperBound.equals("java.lang.Object")) {
                     return "? extends " + upperBound;
                 }
-                return wildcard.lowerBound() != null ? "? super " + nameOf(wildcard.lowerBound()) : "?";
+                return wildcard.lowerBound() != null ? "? super " + nameOf(wildcard.lowerBound(), reading) : "?";
             }
             if (type.isTypeVariable()) {
                 var variable = type.asTypeVariable();
-                var bounds = variable.bounds().stream().map(BeanTypeRecorder::nameOf)
-                        .collect(Collectors.joining(" & "));
+                if (reading.contains(variable.name())) {
+                    return variable.name();
+                }
+                var inner = new java.util.HashSet<>(reading);
+                inner.add(variable.name());
+                var bounds = variable.bounds().stream().map(bound -> nameOf(bound, Set.copyOf(inner)))
+                        .filter(bound -> !bound.equals("java.lang.Object")).collect(Collectors.joining(" & "));
                 return bounds.isEmpty() ? variable.name() : variable.name() + " extends " + bounds;
             }
             return ObserverRecorder.nameOf(type);
@@ -2450,6 +2464,62 @@ class VetoedInterceptorCompileTimeTest {
         var seen = seenThreeWays(sources, SupertypeRecorder.class, SupertypeRecorder.SEEN);
 
         seen.assertEachIs(expected);
+    }
+
+    /**
+     * A type variable the language model reaches through a type has the bounds its type parameter declares,
+     * {@code java.lang.Object} for none, in the processor, at start and frozen alike: the bound of another type
+     * variable, the type of a field, a method's own type variable as its parameter and return types, and a variable
+     * met again inside its own bound, which has the bound too (BUG-20261117-33).
+     */
+    @Test
+    @DisplayName("a type variable reached through a type has its bounds in the processor, at start and frozen")
+    void aTypeVariableReachedThroughATypeHasItsBoundsThreeWays() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Bounded", DEPENDENT + """
+                public class Bounded<A, B extends A, S extends Comparable<S>> {
+                    B chained;
+                    S selfBounded;
+                    <T> T method(T value) {
+                        return value;
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, BoundsRecorder.class, BoundsRecorder.SEEN);
+
+        seen.assertEachIs(List.of("chained B extends A extends java.lang.Object",
+                "method T extends java.lang.Object (T extends java.lang.Object)",
+                "selfBounded S extends java.lang.Comparable<S extends java.lang.Comparable<S>>"));
+    }
+
+    /** Records the bounds of the type variables {@code vi.types.Bounded}'s members are typed by. */
+    public static class BoundsRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Synthesis
+        public void bounds(Types types) {
+            var bounded = types.ofClass(TYPES + "Bounded").declaration();
+            bounded.fields().forEach(field -> SEEN.add(field.name() + " " + of(field.type(), 2)));
+            bounded.methods().stream().filter(method -> method.name().equals("method"))
+                    .forEach(method -> SEEN.add(method.name() + " " + of(method.returnType(), 2) + " ("
+                            + of(method.parameters().getFirst().type(), 2) + ")"));
+        }
+
+        /** A type, with the bounds of its type variables down to {@code depth} of them, then their names. */
+        private static String of(Type type, int depth) {
+            if (type.isParameterizedType()) {
+                return type.asParameterizedType().genericClass().declaration().name() + type.asParameterizedType()
+                        .typeArguments().stream().map(argument -> of(argument, depth))
+                        .collect(Collectors.joining(", ", "<", ">"));
+            }
+            if (type.isTypeVariable()) {
+                var variable = type.asTypeVariable();
+                return depth == 0 ? variable.name() : variable.name() + " extends " + variable.bounds().stream()
+                        .map(bound -> of(bound, depth - 1)).collect(Collectors.joining(" & "));
+            }
+            return type.asClass().declaration().name();
+        }
     }
 
     /**
