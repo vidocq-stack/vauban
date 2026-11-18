@@ -623,7 +623,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-01 — An inner class's constructor has no receiver type
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, review of batch C, round 1, item 3)
 - **Module**: `vauban-indexer` (`model.ClassInfo`, `scanner.ClassFileScanner`), `vauban-processor`
   (`apt.ElementScanner`), `vauban-core` (`langmodel.declarations.VaubanMethodInfo`)
 - **Symptom**: for `class Enclosing { class Inner { Inner() {} } }`, `MethodInfo.receiverType()` of `Inner`'s
@@ -639,11 +639,33 @@ suspected cause, status. Updated on every investigation.
   both in its `InnerClasses` attribute (the `static` flag is not in the class's own access flags), which
   `ClassFileScanner` reads for the simple name only; `ElementScanner` reads neither. BUG-20261117-53's
   `receiverType()` answers `null` for every constructor.
-- **Fix idea**: an additive slot on the index's `ClassInfo`, the enclosing class of an inner member class, read from
-  the `InnerClasses` entry (`ACC_STATIC` clear, an outer class named) and from the compiler's `NestingKind.MEMBER`
-  without `static`. It changes the index model that lane L2 (type annotations) changes too, and goes with the start's
-  synthetic outer-instance parameter of the same constructors, which the processor does not show (as BUG-20261117-43
-  and the enum constructors of the TCK's group 10): left for a commit of its own.
+- **Second symptom**: a type variable of the enclosing class used in an inner member class, `T` of
+  `Enclosing<T extends Number>` in `T value` of `Inner`, is `T extends java.lang.Object` at start and frozen, where
+  the processor shows `T extends java.lang.Number`: no type parameter scope holds the enclosing class's
+  (`TypeMapper`, BUG-20261117-33's `declaredBounds`).
+- **Red** (lane L2, batch C, on c0ad3a9e, `stack-l2c-red.log`, "RED BUG-20261118-01 on c0ad3a9e"):
+  `#anExtensionSeesTheReceiverTypeOfAnInnerClassConstructor`, enabled, and
+  `#anInnerClassSeesItsEnclosingClassTypeVariables`, both three ways: `receiver null`, `value T extends
+  java.lang.Object` at start and frozen.
+- **Fix**: an additive slot `ClassInfo.enclosingClass`, read from the class's own `InnerClasses` entry (an outer class
+  named, `ACC_STATIC` clear) and from the compiler's `NestingKind.MEMBER` without `static`; the processor's constructor
+  of such a class has its outer instance first (BUG-20261118-33). `VaubanClassInfo.typeParameterScope` encloses the
+  enclosing class's scope, so its type variables have their bounds; `VaubanMethodInfo.receiverType` gives the
+  enclosing class, parameterized by its type variables, for the constructor of an inner member class.
+  `ClassChecksums` counts the enclosing class where there is one: any other class keeps its checksum. A local class's
+  constructor keeps a `null` receiver type, as reflection gives it.
+- **What remains** (review round 2): a local class sees no type variable of the method that declares it, nor of that
+  method's class: `T` of `<T extends Number> Object make()` used in a local class is `T extends java.lang.Object` at
+  start and frozen. The index records the enclosing class of an inner member class only; a local class needs its
+  `EnclosingMethod` (class, name and descriptor) and that method's type parameters in its scope. The processor does
+  not reach a local class at all, and the language model TCK does not either.
+- **Verification**: `stack-l2c-dev.log`, "BUG-20261118-01 wip: indexer, core, processor, maven-plugin tests" (green)
+  and "BUG-20261118-01: ClassChecksumsTest" (`#theEnclosingClassCounts`).
+- **Fix idea** (the one done): an additive slot on the index's `ClassInfo`, the enclosing class of an inner member
+  class, read from the `InnerClasses` entry (`ACC_STATIC` clear, an outer class named) and from the compiler's
+  `NestingKind.MEMBER` without `static`. It changes the index model that lane L2 (type annotations) changes too, and
+  goes with the start's synthetic outer-instance parameter of the same constructors, which the processor does not show
+  (as BUG-20261117-43 and the enum constructors of the TCK's group 10): left for a commit of its own.
 - **Found by**: the review of the API for BUG-20261117-53.
 
 ## BUG-20261117-60 — The language model shows no annotation on a type

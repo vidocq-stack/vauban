@@ -135,6 +135,22 @@ class ClassChecksumsTest {
     }
 
     /**
+     * The class enclosing an inner member class counts, as the extensions see a receiver type of its constructors
+     * from it (BUG-20261118-01); a class without one keeps its checksum.
+     */
+    @Test
+    @DisplayName("the enclosing class of an inner member class counts")
+    void theEnclosingClassCounts() {
+        var plain = type(List.of(), List.of(), List.of());
+        var inner = new ClassInfo(A, DotName.of("java.lang.Object"), List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, null, null, null, B);
+        assertEquals(ClassChecksums.ofModel(plain), ClassChecksums.ofModel(new ClassInfo(A,
+                DotName.of("java.lang.Object"), List.of(), 1, List.of(), List.of(), List.of(),
+                ClassInfo.ClassKind.CLASS, "A", List.of(), true, null, null, null, null)));
+        assertNotEquals(ClassChecksums.ofModel(plain), ClassChecksums.ofModel(inner));
+    }
+
+    /**
      * The supertypes as the class declares them count where they carry type arguments, which the extensions see
      * (BUG-20261117-22); a class without any keeps the checksum it had before the index read them, the one of a model
      * built from the raw names alone, so the record of a build by an earlier Vauban stays valid for it.

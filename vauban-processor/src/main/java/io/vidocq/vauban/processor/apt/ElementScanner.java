@@ -149,7 +149,16 @@ public final class ElementScanner {
 
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind,
                 typeElement.getSimpleName().toString(), typeParameters.typeParameters(), false, genericSuperclass,
-                genericInterfaces, typeAnnotations.found());
+                genericInterfaces, typeAnnotations.found(), enclosingClass(typeElement));
+    }
+
+    /**
+     * The class that encloses an inner member class, not {@code static}; {@code null} for any other class, as the
+     * bytecode scan reads it from the {@code InnerClasses} attribute (BUG-20261118-01).
+     */
+    private DotName enclosingClass(TypeElement type) {
+        return type.getNestingKind() == NestingKind.MEMBER && !type.getModifiers().contains(Modifier.STATIC)
+                && type.getEnclosingElement() instanceof TypeElement enclosing ? binaryName(enclosing) : null;
     }
 
     private MirrorTypeAnnotations typeAnnotations() {
@@ -289,15 +298,9 @@ public final class ElementScanner {
      * class, as its descriptor names it; {@code null} for any other method.
      */
     private TypeInfo outerInstance(ExecutableElement method) {
-        if (method.getKind() != ElementKind.CONSTRUCTOR
-                || !(method.getEnclosingElement() instanceof TypeElement type)
-                || type.getNestingKind() != NestingKind.MEMBER
-                || type.getModifiers().contains(Modifier.STATIC) || !type.getKind().isClass()
-                || type.getKind() == ElementKind.ENUM || type.getKind() == ElementKind.RECORD
-                || !(type.getEnclosingElement() instanceof TypeElement enclosing)) {
-            return null;
-        }
-        return new TypeInfo.ClassType(binaryName(enclosing));
+        var enclosing = method.getKind() == ElementKind.CONSTRUCTOR
+                && method.getEnclosingElement() instanceof TypeElement type ? enclosingClass(type) : null;
+        return enclosing == null ? null : new TypeInfo.ClassType(enclosing);
     }
 
     private List<AnnotationInfo> scanAnnotations(Element element) {

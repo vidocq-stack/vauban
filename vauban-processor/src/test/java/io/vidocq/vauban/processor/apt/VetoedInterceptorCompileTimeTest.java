@@ -3316,12 +3316,10 @@ class VetoedInterceptorCompileTimeTest {
 
     /**
      * The constructor of an inner class may declare a receiver parameter, of the class that encloses it: its
-     * {@code receiverType()} is that class, as {@code Constructor.getAnnotatedReceiverType()} gives it. It is
-     * {@code null}: the index does not record which classes are inner, nor the class that encloses them
-     * (BUG-20261118-01).
+     * {@code receiverType()} is that class, as {@code Constructor.getAnnotatedReceiverType()} gives it, in the
+     * processor, at start and frozen (BUG-20261118-01).
      */
     @Test
-    @Disabled("BUG-20261118-01: an inner class's constructor has no receiver type")
     @DisplayName("an extension sees the receiver type of an inner class's constructor")
     void anExtensionSeesTheReceiverTypeOfAnInnerClassConstructor() throws Exception {
         var sources = withAVetoedPackage();
@@ -3336,6 +3334,48 @@ class VetoedInterceptorCompileTimeTest {
         var seen = seenThreeWays(sources, InnerReceiverRecorder.class, InnerReceiverRecorder.SEEN);
 
         seen.assertEachIs(List.of("receiver CLASS vi.types.Enclosing"));
+    }
+
+    /**
+     * An inner class sees the type variables of the class that encloses it with the bounds they declare, and its
+     * constructor's receiver type is the enclosing class, parameterized by them, in the processor, at start and
+     * frozen (BUG-20261118-01).
+     */
+    @Test
+    @DisplayName("an inner class sees its enclosing class's type variables with their bounds, three ways")
+    void anInnerClassSeesItsEnclosingClassTypeVariables() throws Exception {
+        var sources = withAVetoedPackage();
+        putType(sources, "Enclosing", """
+                public class Enclosing<T extends Number> {
+                    public class Inner {
+                        T value;
+                        public Inner() {
+                        }
+                    }
+                }""");
+
+        var seen = seenThreeWays(sources, EnclosingVariableRecorder.class, EnclosingVariableRecorder.SEEN);
+
+        seen.assertEachIs(List.of("receiver vi.types.Enclosing<T extends java.lang.Number>",
+                "value T extends java.lang.Number"));
+    }
+
+    /** Records the type of {@link #INNER}'s field and the receiver type of its constructor. */
+    public static class EnclosingVariableRecorder implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Discovery
+        public void discovery(ScannedClasses classes) {
+            classes.add(INNER);
+        }
+
+        @Synthesis
+        public void enclosingVariables(Types types) {
+            var inner = types.ofClass(INNER).declaration();
+            inner.fields().forEach(field -> SEEN.add(field.name() + " " + field.type()));
+            inner.constructors().forEach(constructor -> SEEN.add("receiver " + constructor.receiverType()));
+        }
     }
 
     /** Throws in {@code @Discovery}, as an extension that meets a problem it cannot get past. */

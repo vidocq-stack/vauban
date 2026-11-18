@@ -151,6 +151,12 @@ final class ClassChecksums {
                 list(type.genericInterfaces(), this::type);
             }
             typeAnnotations(type.typeAnnotations());
+            // The class enclosing an inner member class, whose constructors the extensions now see a receiver type
+            // of (BUG-20261118-01): any other class keeps its checksum.
+            if (type.enclosingClass() != null) {
+                text.append('O');
+                name(type.enclosingClass());
+            }
         }
 
         /**

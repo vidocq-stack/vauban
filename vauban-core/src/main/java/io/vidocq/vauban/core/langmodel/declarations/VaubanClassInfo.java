@@ -32,6 +32,7 @@ import jakarta.enterprise.lang.model.types.TypeVariable;
 import java.lang.annotation.Annotation;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.IntStream;
 
@@ -112,11 +113,20 @@ public final class VaubanClassInfo implements jakarta.enterprise.lang.model.decl
 
     /**
      * The type parameters of the class, with the annotations on the types the class declares (BUG-20261117-60): the
-     * scope its members' types are read in.
+     * scope its members' types are read in, within that of the class enclosing an inner member class, whose type
+     * variables it sees (BUG-20261118-01).
      */
     public TypeParameterScope typeParameterScope() {
         var described = indexClass();
-        return TypeParameterScope.of(described.typeParameters(), described.typeAnnotations(), null);
+        return TypeParameterScope.of(described.typeParameters(), described.typeAnnotations(),
+                enclosingClass().map(VaubanClassInfo::typeParameterScope).orElse(null));
+    }
+
+    /** The class that encloses this inner member class, as the index records it and the language model finds it. */
+    Optional<VaubanClassInfo> enclosingClass() {
+        var enclosing = indexClass().enclosingClass();
+        return enclosing == null || lookup == null ? Optional.empty()
+                : lookup.find(enclosing).map(found -> new VaubanClassInfo(found, lookup));
     }
 
     /**

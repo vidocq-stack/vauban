@@ -68,6 +68,7 @@ public final class ClassFileScanner {
         var methods = new ArrayList<MethodInfo>();
         var annotations = new ArrayList<AnnotationInfo>();
         String simpleName = null;
+        DotName enclosingClass = null;
         // Read first: the fields and methods resolve their type variables against the class's.
         var signature = classSignature(cm);
         var classParameters = signature.map(ClassSignature::typeParameters).orElse(List.of());
@@ -84,7 +85,10 @@ public final class ClassFileScanner {
                 case MethodModel mm -> methods.add(buildMethodInfo(mm, members));
                 case RuntimeVisibleAnnotationsAttribute rvaa ->
                         rvaa.annotations().forEach(a -> annotations.add(buildAnnotationInfo(a)));
-                case InnerClassesAttribute ica -> simpleName = innerSimpleName(cm, ica);
+                case InnerClassesAttribute ica -> {
+                    simpleName = innerSimpleName(cm, ica);
+                    enclosingClass = enclosingClass(cm, ica);
+                }
                 default -> {
                     // other class elements carry nothing the index records
                 }
@@ -103,7 +107,8 @@ public final class ClassFileScanner {
                 supertypes.interfaces() == null ? interfaces.stream().<TypeInfo>map(ClassType::new).toList()
                         : supertypes.interfaces());
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName,
-                typeParameters, true, supertypes.superclass(), supertypes.interfaces(), typeAnnotations);
+                typeParameters, true, supertypes.superclass(), supertypes.interfaces(), typeAnnotations,
+                enclosingClass);
     }
 
     /**
@@ -156,6 +161,22 @@ public final class ClassFileScanner {
         for (var inner : attribute.classes()) {
             if (inner.innerClass().asInternalName().equals(self)) {
                 return inner.innerName().map(Utf8Entry::stringValue).orElse("");
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The class that encloses an inner member class, from its own entry of the {@code InnerClasses} attribute: an
+     * outer class named, {@code ACC_STATIC} clear (the class's own access flags do not keep it). {@code null} for a
+     * top-level, a static nested, a local or an anonymous class (BUG-20261118-01).
+     */
+    private static DotName enclosingClass(ClassModel cm, InnerClassesAttribute attribute) {
+        var self = cm.thisClass().asInternalName();
+        for (var inner : attribute.classes()) {
+            if (inner.innerClass().asInternalName().equals(self)) {
+                return (inner.flagsMask() & ClassFile.ACC_STATIC) != 0 ? null
+                        : inner.outerClass().map(outer -> DotName.fromInternal(outer.asInternalName())).orElse(null);
             }
         }
         return null;

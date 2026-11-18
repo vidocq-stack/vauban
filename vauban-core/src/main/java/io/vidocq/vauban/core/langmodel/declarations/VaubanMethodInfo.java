@@ -91,18 +91,21 @@ public final class VaubanMethodInfo implements jakarta.enterprise.lang.model.dec
     /**
      * The type of the declaring class, the type of the receiver parameter an instance method may declare: for a
      * generic class, parameterized by its own type variables, as reflection gives it. {@code null} for a static method
-     * and for a constructor (BUG-20261117-53). A constructor of an inner class may declare a receiver parameter too,
-     * of its enclosing class: the index does not record which classes are inner, and it is {@code null} as well
-     * (BUG-20261118-01).
+     * and for a constructor (BUG-20261117-53), but that of an inner member class, whose receiver parameter is of the
+     * class that encloses it, as {@code Constructor.getAnnotatedReceiverType()} gives it (BUG-20261118-01).
      */
     @Override
     public Type receiverType() {
-        if (indexMethod.isStatic() || indexMethod.isConstructor()) {
+        if (indexMethod.isStatic()) {
             return null;
         }
-        var name = DotName.of(declaringClass.name());
+        var receiving = indexMethod.isConstructor() ? declaringClass.enclosingClass().orElse(null) : declaringClass;
+        if (receiving == null) {
+            return null;
+        }
+        var name = DotName.of(receiving.name());
         // Each type variable has the bounds its parameter declares, java.lang.Object for none (BUG-20261117-33).
-        List<TypeInfo> typeParameters = List.copyOf(declaringClass.indexTypeParameters());
+        List<TypeInfo> typeParameters = List.copyOf(receiving.indexTypeParameters());
         var receiver = typeParameters.isEmpty() ? new TypeInfo.ClassType(name)
                 : new TypeInfo.ParameterizedType(name, typeParameters);
         return TypeMapper.map(receiver, lookup, typeUse(Target.RECEIVER, 0));

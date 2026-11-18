@@ -37,7 +37,8 @@ public record ClassInfo(
         boolean genericMembers,
         TypeInfo genericSuperclass,
         List<TypeInfo> genericInterfaces,
-        List<TypeAnnotationInfo> typeAnnotations
+        List<TypeAnnotationInfo> typeAnnotations,
+        DotName enclosingClass
 ) {
 
     public enum ClassKind {
@@ -68,6 +69,9 @@ public record ClassInfo(
      *                          gives each of {@code interfaces} raw (BUG-20261117-22).
      * @param typeAnnotations   the runtime-retained annotations on the types the class declares: its supertypes,
      *                          its type parameters and their bounds (BUG-20261117-60). {@code null} means none.
+     * @param enclosingClass    the class that encloses an inner member class, which is not {@code static}: its
+     *                          constructors take an instance of it first, and its type variables are in scope in the
+     *                          class (BUG-20261118-01). {@code null} for any other class.
      * @throws IllegalArgumentException when {@code genericSuperclass} is given without a {@code superName}, or when
      *                                  {@code genericInterfaces} does not name as many interfaces as
      *                                  {@code interfaces}: each says how the class declares a supertype the class
@@ -93,6 +97,16 @@ public record ClassInfo(
                     + genericInterfaces.size());
         }
         typeAnnotations = TypeAnnotationInfo.canonical(typeAnnotations);
+    }
+
+    /** A class info that no class encloses as an inner member class. */
+    public ClassInfo(DotName name, DotName superName, List<DotName> interfaces, int accessFlags,
+                     List<FieldInfo> fields, List<MethodInfo> methods, List<AnnotationInfo> annotations,
+                     ClassKind kind, String simpleName, List<TypeInfo.TypeVariable> typeParameters,
+                     boolean genericMembers, TypeInfo genericSuperclass, List<TypeInfo> genericInterfaces,
+                     List<TypeAnnotationInfo> typeAnnotations) {
+        this(name, superName, interfaces, accessFlags, fields, methods, annotations, kind, simpleName, typeParameters,
+                genericMembers, genericSuperclass, genericInterfaces, typeAnnotations, null);
     }
 
     /** A class info whose types carry no annotation. */
@@ -138,7 +152,8 @@ public record ClassInfo(
     /** The same class with other annotations, as an enrichment step adds them. */
     public ClassInfo withAnnotations(List<AnnotationInfo> newAnnotations) {
         return new ClassInfo(name, superName, interfaces, accessFlags, fields, methods, newAnnotations, kind,
-                simpleName, typeParameters, genericMembers, genericSuperclass, genericInterfaces, typeAnnotations);
+                simpleName, typeParameters, genericMembers, genericSuperclass, genericInterfaces, typeAnnotations,
+                enclosingClass);
     }
 
     private static List<TypeInfo> raw(List<DotName> interfaces) {
