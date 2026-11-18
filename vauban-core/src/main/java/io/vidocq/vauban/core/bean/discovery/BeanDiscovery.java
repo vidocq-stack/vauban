@@ -1093,20 +1093,22 @@ public final class BeanDiscovery {
 
         var compiled = CompiledSupertypes.of(producerType);
         if (compiled.isPresent() || !addReflectedSupertypes(producerType, types)) {
-            var rawName = switch (producerType) {
-                case TypeInfo.ClassType(var name) -> name;
-                case TypeInfo.ParameterizedType(var rawType, _, _) -> rawType;
-                default -> null;
-            };
-            if (rawName != null) {
-                collectBeanTypes(rawName, types);
-            }
+            rawClassName(producerType).ifPresent(rawName -> collectBeanTypes(rawName, types));
             types.addAll(compiled.orElse(List.of()));
             dropRawFormsOfParameterizedTypes(types);
         }
 
         types.add(new TypeInfo.ClassType(DotName.of(JAVA_LANG_OBJECT)));
         return legalBeanTypes(types, typeVariableNames(producerType));
+    }
+
+    /** The class of a class or parameterized type, {@code Box} for {@code Box<Integer>}; empty for any other type. */
+    private static Optional<DotName> rawClassName(TypeInfo type) {
+        return switch (type) {
+            case TypeInfo.ClassType(var name) -> Optional.of(name);
+            case TypeInfo.ParameterizedType(var rawType, _, _) -> Optional.of(rawType);
+            default -> Optional.empty();
+        };
     }
 
     /**
