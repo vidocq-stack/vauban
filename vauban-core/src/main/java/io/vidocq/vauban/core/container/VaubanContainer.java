@@ -142,6 +142,39 @@ public final class VaubanContainer implements AutoCloseable {
         return componentProviders;
     }
 
+    /** The proxy class the build generated for an interface a frozen synthetic bean is reached through, by names. */
+    private final Map<String, String> frozenInterfaceProxies;
+
+    /**
+     * Reads, from the frozen synthetic metadata, the proxy classes of the interfaces (vauban#342); {@code synthetic}
+     * is {@code null} when the start uses no record.
+     */
+    private static Map<String, String> frozenInterfaceProxies(java.util.Properties synthetic) {
+        if (synthetic == null) {
+            return Map.of();
+        }
+        var proxies = new java.util.HashMap<String, String>();
+        String prefix = io.vidocq.vauban.core.extensions.SyntheticClientProxies.INTERFACE_KEY;
+        for (String key : synthetic.stringPropertyNames()) {
+            if (key.startsWith(prefix)) {
+                proxies.put(key.substring(prefix.length()), synthetic.getProperty(key));
+            }
+        }
+        return Map.copyOf(proxies);
+    }
+
+    /** The proxy class the build generated for {@code type}, or {@code null}. */
+    String frozenInterfaceProxy(Class<?> type) {
+        return frozenInterfaceProxies.get(type.getName());
+    }
+
+    /** A class of the deployment the container manages from now on: one the build generated in a provider's package. */
+    void manage(Class<?> generated) {
+        if (moduleLookups != null) {
+            moduleLookups.addManagedClass(generated);
+        }
+    }
+
     /** The deployment's ModuleLookups registration, withdrawn when this container closes. */
     void withdrawOnClose(io.vidocq.vauban.core.access.ModuleLookups.Registration registration) {
         this.moduleLookups = registration;
@@ -200,8 +233,10 @@ public final class VaubanContainer implements AutoCloseable {
                             java.util.function.BiFunction<String, byte[], Class<?>> classDefiner,
                             VaubanLookup vaubanLookup,
                             ComponentProviders componentProviders,
-                            io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher) {
+                            io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher,
+                            java.util.Properties frozenSynthetic) {
         this.classLoader = classLoader;
+        this.frozenInterfaceProxies = frozenInterfaceProxies(frozenSynthetic);
         this.index = index;
         this.qualifierMatcher = qualifierMatcher;
         this.managedDescriptors = descriptors.stream()

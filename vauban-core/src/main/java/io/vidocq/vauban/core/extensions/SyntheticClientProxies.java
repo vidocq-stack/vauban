@@ -31,7 +31,9 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.SortedMap;
 import java.util.SortedSet;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Predicate;
 
@@ -47,12 +49,22 @@ import java.util.function.Predicate;
  * the placed proxy of a produced type. Without such a layer nothing loads it, and the start generates the proxy as
  * before.
  *
- * <p>A bean class that is an interface gets no class here: its proxy is the one {@code @ClientProxies} declares.
+ * <p>A bean class that is an interface needs no particular package: its proxy implements public interfaces. It goes
+ * to a package of the output that holds a generated {@code _VaubanComponents}, whose lookup lets the start
+ * instantiate it with no {@code opens}, and the record names it, as no naming rule leads the start there. An output
+ * without such a package gets none: the start builds the {@code java.lang.reflect.Proxy} it built before, unless
+ * {@code @ClientProxies} lists the interface.
  *
- * @param files  the files to write, by their path under the output of the build
- * @param placed the bean classes whose proxy is placed, by binary name
+ * @param files      the files to write, by their path under the output of the build
+ * @param placed     the bean classes whose proxy is placed, by binary name
+ * @param interfaces the proxy class of each bean class that is an interface, by binary names
  */
-public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String> placed) {
+public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String> placed,
+        SortedMap<String, String> interfaces) {
+
+    /** The key of the frozen synthetic metadata that names the proxy class of an interface: this, then its name. */
+    public static final String INTERFACE_KEY = "clientProxy.";
+    private static final String PROVIDER_FILE = "_VaubanComponents.class";
 
     /** Where the proxy of a class of another archive ships: {@code VaubanClassLoader.PLACED_PREFIX}. */
     public static final String PLACED_PREFIX = "META-INF/vauban/placed/";
@@ -64,21 +76,38 @@ public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String
     public SyntheticClientProxies {
         files = Collections.unmodifiableMap(new LinkedHashMap<>(files));
         placed = Collections.unmodifiableSortedSet(new TreeSet<>(placed));
+        interfaces = Collections.unmodifiableSortedMap(new TreeMap<>(interfaces));
+    }
+
+    /** No proxy. */
+    public static SyntheticClientProxies none() {
+        return new SyntheticClientProxies(Map.of(), new TreeSet<>(), new TreeMap<>());
     }
 
     /**
-     * The client proxies of {@code beans}: one for each normal-scoped bean whose bean class is a class of the
-     * deployment that has no proxy yet. A class no proxy can be generated for gets none: the start says why.
+     * The client proxies of {@code beans}: one for each normal-scoped bean of the deployment that has no proxy
+     * yet. A class no proxy can be generated for gets none: the start says why.
      *
-     * @param compiled whether the build writes the class file of the named bean class
+     * @param output where the build writes the classes of the application
      */
-    public static SyntheticClientProxies of(Collection<VaubanSyntheticBeanBuilder<?>> beans,
-                                            Predicate<String> compiled) {
+    public static SyntheticClientProxies of(Collection<VaubanSyntheticBeanBuilder<?>> beans, Path output) {
+        Predicate<String> compiled =
+                className -> Files.isRegularFile(output.resolve(className.replace('.', '/') + CLASS_FILE));
         var files = new LinkedHashMap<String, byte[]>();
         var placed = new TreeSet<String>();
+        var interfaces = new TreeMap<String, String>();
+        String host = null;
         for (var bean : beans) {
             Class<?> beanClass = bean.getBeanClass();
-            if (!proxied(bean, beanClass) || hasProxy(beanClass)) {
+            if (!proxied(bean, beanClass)) {
+                continue;
+            }
+            if (beanClass.isInterface()) {
+                host = host != null ? host : providerPackage(output);
+                interfaceProxy(bean, beanClass, host, files, interfaces);
+                continue;
+            }
+            if (hasProxy(beanClass)) {
                 continue;
             }
             RuntimeClientProxyGenerator.GeneratedProxy generated;
@@ -95,12 +124,54 @@ public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String
                 placed.add(beanClass.getName());
             }
         }
-        return new SyntheticClientProxies(files, placed);
+        return new SyntheticClientProxies(files, placed, interfaces);
     }
 
-    /** Whether {@code bean} is reached through a client proxy that subclasses {@code beanClass}. */
+    /** Marks an output without a package to host the proxy of an interface. */
+    private static final String NO_HOST = "-";
+
+    /**
+     * The first package of {@code output}, by name, that holds a generated component provider, as a path with its
+     * trailing slash; {@link #NO_HOST} when none does.
+     */
+    private static String providerPackage(Path output) {
+        if (!Files.isDirectory(output)) {
+            return NO_HOST;
+        }
+        try (var walked = Files.walk(output)) {
+            return walked.filter(file -> file.getFileName() != null
+                            && PROVIDER_FILE.equals(file.getFileName().toString()))
+                    .map(file -> output.relativize(file.getParent()).toString().replace('\\', '/'))
+                    .filter(directory -> !directory.isEmpty() && !directory.startsWith("META-INF"))
+                    .sorted().findFirst().map(directory -> directory + "/").orElse(NO_HOST);
+        } catch (IOException _) {
+            return NO_HOST;
+        }
+    }
+
+    /**
+     * Adds the proxy of the interface {@code beanClass} to {@code files} and {@code interfaces}, in the package
+     * {@code host}; none for an interface that is not public.
+     */
+    private static void interfaceProxy(VaubanSyntheticBeanBuilder<?> bean, Class<?> beanClass, String host,
+            Map<String, byte[]> files, Map<String, String> interfaces) {
+        if (NO_HOST.equals(host) || interfaces.containsKey(beanClass.getName())) {
+            return;
+        }
+        String name = io.vidocq.vauban.core.proxy.ClientProxyShape.producerProxyName(
+                host.substring(0, host.length() - 1).replace('/', '.'), beanClass.getName());
+        try {
+            var generated = RuntimeClientProxyGenerator.generateInterfaceProxyAt(beanClass, bean.getTypes(), name);
+            files.put(name.replace('.', '/') + CLASS_FILE, generated.bytecode());
+            interfaces.put(beanClass.getName(), name);
+        } catch (RuntimeException | LinkageError _) {
+            // No proxy for this one: the start builds its own
+        }
+    }
+
+    /** Whether {@code bean} is reached through a client proxy of {@code beanClass}. */
     private static boolean proxied(VaubanSyntheticBeanBuilder<?> bean, Class<?> beanClass) {
-        if (beanClass == null || beanClass.isInterface() || beanClass.isArray() || beanClass.isPrimitive()
+        if (beanClass == null || beanClass.isArray() || beanClass.isPrimitive()
                 || beanClass.getClassLoader() == null || bean.getScopeAnnotation() == null) {
             return false;
         }

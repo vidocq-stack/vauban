@@ -404,6 +404,11 @@ final class InterceptorBeanWrapper {
             return providedIface;
         }
 
+        Object frozen = frozenInterfaceProxy(beanClass, delegate);
+        if (frozen != null) {
+            return frozen;
+        }
+
         // Fallback: collect all interface types from the bean to implement via reflect.Proxy
         runtimeGeneration.generated(interfaceProxyKind(bean), beanClass.getName());
         java.util.Set<Class<?>> ifaceSet = new java.util.LinkedHashSet<>();
@@ -595,6 +600,44 @@ final class InterceptorBeanWrapper {
                 || bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD;
     }
 
+    /** The class the freeze generated for the interface {@code beanClass}, or {@code null} (vauban#342). */
+    private Class<?> frozenInterfaceProxyClass(Class<?> beanClass) {
+        String name = container.frozenInterfaceProxy(beanClass);
+        if (name == null) {
+            return null;
+        }
+        try {
+            var proxyClass = io.vidocq.vauban.core.loading.DeploymentClasses.load(name, container.classLoader());
+            return beanClass.isAssignableFrom(proxyClass) ? proxyClass : null;
+        } catch (ClassNotFoundException | LinkageError _) {
+            return null;
+        }
+    }
+
+    /**
+     * An instance of the proxy the freeze generated for the interface {@code beanClass}, or {@code null} when it
+     * generated none or the class cannot be reached: through the lookup the component provider of its package
+     * grants, which needs no {@code opens}, else as a public class.
+     */
+    @SuppressWarnings("java:S1181") // a constructor handle throws Throwable; an Error is rethrown as it is
+    private Object frozenInterfaceProxy(Class<?> beanClass, java.util.function.Supplier<?> delegate) {
+        Class<?> proxyClass = frozenInterfaceProxyClass(beanClass);
+        if (proxyClass == null) {
+            return null;
+        }
+        container.manage(proxyClass);
+        var lookup = io.vidocq.vauban.core.access.ModuleLookups.lookupFor(proxyClass)
+                .orElse(java.lang.invoke.MethodHandles.publicLookup());
+        try {
+            return lookup.findConstructor(proxyClass, java.lang.invoke.MethodType.methodType(void.class,
+                    java.util.function.Supplier.class)).invoke(delegate);
+        } catch (Error e) {
+            throw e;
+        } catch (Throwable _) {
+            return null;
+        }
+    }
+
     /** Whether {@code className} loads, uninitialized, from {@code beanClass}'s loader: a class the build generated. */
     private static boolean isLoadable(Class<?> beanClass, String className) {
         try {
@@ -641,7 +684,9 @@ final class InterceptorBeanWrapper {
             return;
         }
         if (target.isInterface()) {
-            runtimeGeneration.generated(interfaceProxyKind(bean), target.getName());
+            if (frozenInterfaceProxyClass(target) == null) {
+                runtimeGeneration.generated(interfaceProxyKind(bean), target.getName());
+            }
             return;
         }
         // The class the fallback will define, where it will define it; none when it cannot.

@@ -108,6 +108,46 @@ class FrozenSyntheticClientProxyTest {
         }
     }
 
+    // ---- a bean reached through an interface ----
+
+    public interface Ledger {
+        String entry();
+
+        default String twice() {
+            return entry() + entry();
+        }
+    }
+
+    public interface Audited {
+        String auditor();
+    }
+
+    public static class LedgerCreator implements SyntheticBeanCreator<Ledger> {
+        @Override
+        public Ledger create(Instance<Object> lookup, Parameters params) {
+            class Book implements Ledger, Audited {
+                @Override
+                public String entry() {
+                    return "e";
+                }
+
+                @Override
+                public String auditor() {
+                    return "a";
+                }
+            }
+            return new Book();
+        }
+    }
+
+    public static class LedgerExtension implements BuildCompatibleExtension {
+        @Synthesis
+        public void ledger(SyntheticComponents components) {
+            components.addBean(Ledger.class).type(Ledger.class).type(Audited.class).scope(ApplicationScoped.class)
+                    .createWith(LedgerCreator.class);
+        }
+    }
+
     private static final String DIRECT = FrozenSyntheticClientProxyTest.class.getName() + "$Direct";
 
     /** Defines the {@code Direct*} classes itself, from the output, as the loader of an application would. */
@@ -186,6 +226,56 @@ class FrozenSyntheticClientProxyTest {
             assertEquals("direct", proxy.name());
             assertEquals(RuntimeClientProxyGenerator.proxyClassName(service), proxy.getClass().getName());
             assertEquals(java.util.Set.of(), container.runtimeGeneration().announced(), "nothing generated later");
+        }
+    }
+
+    @Test
+    @DisplayName("an interface: the proxy goes to a package that has a component provider, and the start uses it")
+    void theProxyOfAnInterfaceLivesNextToAComponentProvider() throws Exception {
+        Files.createDirectories(output.resolve("zoo/app"));
+        Files.createDirectories(output.resolve("acme/app"));
+        Files.write(output.resolve("zoo/app/_VaubanComponents.class"), new byte[0]);
+        Files.write(output.resolve("acme/app/_VaubanComponents.class"), new byte[0]);
+
+        try (var loader = new OutputFirst(output)) {
+            assertTrue(VaubanContainer.builder().classLoader(loader).addBeanClass(LedgerExtension.class)
+                    .freezeExtensions(output).frozen());
+        }
+        String proxyName = io.vidocq.vauban.core.proxy.ClientProxyShape.producerProxyName("acme.app",
+                Ledger.class.getName());
+        assertTrue(Files.isRegularFile(output.resolve(proxyName.replace('.', '/') + ".class")), proxyName);
+
+        try (var loader = new OutputFirst(output);
+                VaubanContainer container = VaubanContainer.builder().classLoader(loader)
+                        .addBeanClass(LedgerExtension.class).build()) {
+            assertTrue(container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
+            assertEquals(List.of(), container.runtimeGeneration().recordedAtBoot());
+
+            Ledger ledger = container.select(Ledger.class);
+            assertEquals(proxyName, ledger.getClass().getName());
+            assertEquals("e", ledger.entry());
+            assertEquals("ee", ledger.twice(), "a default method goes to the bean");
+            assertEquals("a", ((Audited) ledger).auditor(), "the other interface among the bean types");
+            assertEquals(java.util.Set.of(), container.runtimeGeneration().announced());
+        }
+    }
+
+    @Test
+    @DisplayName("an interface, and no component provider in the output: no proxy, the start builds its own")
+    void anInterfaceWithoutAComponentProviderKeepsTheStartProxy() throws Exception {
+        try (var loader = new OutputFirst(output)) {
+            assertTrue(VaubanContainer.builder().classLoader(loader).addBeanClass(LedgerExtension.class)
+                    .freezeExtensions(output).frozen());
+        }
+        try (var files = Files.walk(output)) {
+            assertEquals(List.of(), files.filter(file -> file.toString().endsWith("_ClientProxy.class")).toList());
+        }
+        try (var loader = new OutputFirst(output);
+                VaubanContainer container = VaubanContainer.builder().classLoader(loader)
+                        .addBeanClass(LedgerExtension.class).build()) {
+            assertEquals(List.of(new Generated(Kind.SYNTHETIC_INTERFACE_PROXY, Ledger.class.getName())),
+                    container.runtimeGeneration().recordedAtBoot());
+            assertEquals("e", container.select(Ledger.class).entry());
         }
     }
 

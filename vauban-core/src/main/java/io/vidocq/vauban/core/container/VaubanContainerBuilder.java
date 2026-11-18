@@ -716,7 +716,7 @@ public final class VaubanContainerBuilder {
 
         /** The client proxies of the frozen synthetic beans of a normal scope (vauban#342). */
         private io.vidocq.vauban.core.extensions.SyntheticClientProxies clientProxies =
-                new io.vidocq.vauban.core.extensions.SyntheticClientProxies(Map.of(), new java.util.TreeSet<>());
+                io.vidocq.vauban.core.extensions.SyntheticClientProxies.none();
 
         /** Writes the client proxies {@link #frozen} generated under {@code output}. */
         void writeClientProxies(java.nio.file.Path output) {
@@ -820,12 +820,14 @@ public final class VaubanContainerBuilder {
                         return null;
                     });
                     invokerClasses = invokers.classes();
-                    clientProxies = io.vidocq.vauban.core.extensions.SyntheticClientProxies.of(beans,
-                            className -> java.nio.file.Files.isRegularFile(classFile(output, className)));
+                    clientProxies = io.vidocq.vauban.core.extensions.SyntheticClientProxies.of(beans, output);
+                    var proxies = clientProxies;
                     var synthetic = new java.util.Properties();
                     synthetic.load(new java.io.InputStreamReader(
                             new java.io.ByteArrayInputStream(written.toByteArray()),
                             java.nio.charset.StandardCharsets.UTF_8));
+                    proxies.interfaces().forEach((type, proxy) -> synthetic.setProperty(
+                            io.vidocq.vauban.core.extensions.SyntheticClientProxies.INTERFACE_KEY + type, proxy));
                     return synthetic;
                 } catch (IllegalArgumentException e) {
                     String reason = "a synthetic component cannot be written (" + e.getMessage() + ")";
@@ -1259,7 +1261,8 @@ public final class VaubanContainerBuilder {
 
             var beanClassLoader = discoveryClassLoader;
             var vaubanLookup = getBuilderLookup();
-            var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders, qualifierMatcher);
+            var container = new VaubanContainer(index, descriptors, observers, interceptors, disposers, factories, syntheticDisposers, beanClassLoader, classDefiner, vaubanLookup, componentProviders, qualifierMatcher,
+                    frozen != null ? frozen.synthetic() : null);
             container.suppliedFactories(suppliedFactories);
 
             installContexts(container, contextRegistrations(discoveryResult,

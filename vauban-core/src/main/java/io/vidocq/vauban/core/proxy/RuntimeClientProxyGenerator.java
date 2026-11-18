@@ -81,6 +81,46 @@ public final class RuntimeClientProxyGenerator {
         return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
     }
 
+    /**
+     * Generate the client proxy of a bean whose bean class is the public interface {@code beanClass}, at
+     * {@code proxyBinaryName}: a class that extends {@code Object}, implements {@code beanClass} and the other
+     * public interfaces among {@code beanTypes}, by name, as the {@code java.lang.reflect.Proxy} of the start does,
+     * and forwards each of their methods through the interface that declares it (vauban#342). It needs no
+     * particular package.
+     *
+     * @param beanClass       the interface the bean is looked up through
+     * @param beanTypes       the bean types
+     * @param proxyBinaryName the binary name of the generated proxy
+     * @throws IllegalArgumentException when {@code beanClass} is not a public interface
+     */
+    public static GeneratedProxy generateInterfaceProxyAt(Class<?> beanClass,
+            java.util.Collection<java.lang.reflect.Type> beanTypes, String proxyBinaryName) {
+        if (!beanClass.isInterface() || !Modifier.isPublic(beanClass.getModifiers())) {
+            throw new IllegalArgumentException(beanClass.getName() + " is not a public interface");
+        }
+        var others = new java.util.TreeMap<String, Class<?>>();
+        for (var type : beanTypes) {
+            Class<?> raw = type instanceof Class<?> plain ? plain
+                    : type instanceof java.lang.reflect.ParameterizedType parameterized
+                            && parameterized.getRawType() instanceof Class<?> rawType ? rawType : null;
+            if (raw != null && raw.isInterface() && raw != beanClass && Modifier.isPublic(raw.getModifiers())) {
+                others.put(raw.getName(), raw);
+            }
+        }
+        var interfaces = new ArrayList<Class<?>>();
+        interfaces.add(beanClass);
+        interfaces.addAll(others.values());
+        var methods = new ArrayList<ProxyMethodShape>();
+        var declared = new java.util.HashSet<String>();
+        var implemented = new ArrayList<TypeRef>();
+        for (var type : interfaces) {
+            implemented.add(TypeRef.fromClass(type));
+            addInterfaceMethods(type, declared, methods);
+        }
+        var shape = new ClientProxyShape(Object.class.getName(), List.of(), methods, List.of(), false, implemented);
+        return new GeneratedProxy(proxyBinaryName, ClientProxyEmitter.emitAt(shape, proxyBinaryName));
+    }
+
     /** The shape {@link #generateProducerProxyAt} emits: the walk placed where {@code proxyBinaryName} lives. */
     public static ClientProxyShape producerShapeAt(Class<?> producedType, String proxyBinaryName) {
         return shapeAt(producedType, false, placementOf(producedType, proxyBinaryName));
