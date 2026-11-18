@@ -20,18 +20,15 @@
 package io.vidocq.vauban.core.bean.discovery;
 
 import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
-import io.vidocq.vauban.core.bean.validation.IndexClassValidator;
 import io.vidocq.vauban.indexer.model.ClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
 import io.vidocq.vauban.indexer.model.MethodInfo;
 import io.vidocq.vauban.indexer.model.TypeInfo;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -42,7 +39,6 @@ import java.util.function.Function;
  */
 final class ObserverInjectionPoints {
 
-    private static final DotName OBJECT = DotName.of("java.lang.Object");
     private static final DotName EVENT_METADATA = DotName.of("jakarta.enterprise.inject.spi.EventMetadata");
 
     private final BeanDiscovery host;
@@ -64,61 +60,25 @@ final class ObserverInjectionPoints {
      */
     List<InjectionPointInfo> of(ClassInfo beanClass) {
         var points = new ArrayList<InjectionPointInfo>();
-        var signatures = new HashSet<String>();
         for (var method : beanClass.methods()) {
-            signatures.add(signature(method, Map.of()));
             if (method.isStatic() && isObserver(method)) {
                 addParameters(beanClass, method, Map.of(), points);
             }
         }
-        Map<String, TypeInfo> given = Map.of();
-        var below = beanClass;
-        boolean own = true;
-        for (var superName = beanClass.superName(); superName != null && !superName.equals(OBJECT);
-                superName = below.superName()) {
-            var name = superName;
-            var superClass = host.index.getClassByName(name).or(() -> outside.apply(name)).orElse(null);
-            if (superClass == null) {
-                break;
+        for (var inherited : InheritedMethods.methods(beanClass,
+                name -> host.index.getClassByName(name).or(() -> outside.apply(name)))) {
+            if (isObserver(inherited.method())) {
+                addParameters(beanClass, inherited.method(), inherited.given(), points);
             }
-            given = IndexClassValidator.typeArguments(superClass, below.genericSuperclass(), given, own);
-            own = false;
-            addInherited(beanClass, superClass, given, signatures, points);
-            below = superClass;
         }
         return points;
-    }
-
-    private void addInherited(ClassInfo beanClass, ClassInfo superClass, Map<String, TypeInfo> given,
-            Set<String> signatures, List<InjectionPointInfo> points) {
-        for (var method : superClass.methods()) {
-            if (!method.isPrivate() && !method.isStatic() && !method.isConstructor()
-                    && signatures.add(signature(method, given))
-                    && isObserver(method)) {
-                addParameters(beanClass, method, given, points);
-            }
-        }
-    }
-
-    /**
-     * The name and erased parameter types of {@code method}, its class's type variables replaced by what the bean
-     * class gives them, as the compiler compares an override. The start compares the declared methods' erasures,
-     * javac's bridges among them: {@code on(Pung, Tool)} overriding {@code Base<Tool>.on(Pung, T)} has the bridge
-     * {@code on(Pung, Object)}. The compiler's elements have no bridge, so the build substitutes before erasing.
-     */
-    private static String signature(MethodInfo method, Map<String, TypeInfo> given) {
-        var signature = new StringBuilder(method.name()).append(':');
-        for (var parameter : method.parameters()) {
-            signature.append(BeanDiscovery.erasedName(given(parameter.type(), given))).append(',');
-        }
-        return signature.toString();
     }
 
     private void addParameters(ClassInfo beanClass, MethodInfo method, Map<String, TypeInfo> given,
             List<InjectionPointInfo> points) {
         var parameters = method.parameters();
         for (int i = 0; i < parameters.size(); i++) {
-            var type = given(parameters.get(i).type(), given);
+            var type = InheritedMethods.given(parameters.get(i).type(), given);
             if (!BeanDiscovery.hasObserverAnnotation(parameters.get(i).annotations()) && !hasTypeVariable(type)
                     && !(type instanceof TypeInfo.ClassType(var name) && name.equals(EVENT_METADATA))) {
                 points.add(host.parameterInjectionPoint(beanClass, method, method.name(), i, type,
@@ -130,21 +90,6 @@ final class ObserverInjectionPoints {
     private static boolean isObserver(MethodInfo method) {
         return !method.isConstructor()
                 && method.parameters().stream().anyMatch(p -> BeanDiscovery.hasObserverAnnotation(p.annotations()));
-    }
-
-    /** {@code type} with the type variables {@code given} names replaced by what they are given. */
-    static TypeInfo given(TypeInfo type, Map<String, TypeInfo> given) {
-        return switch (type) {
-            case TypeInfo.TypeVariable(var name, _) -> given.getOrDefault(name, type);
-            case TypeInfo.ParameterizedType(var raw, var arguments, var owner) -> new TypeInfo.ParameterizedType(raw,
-                    arguments.stream().map(argument -> given(argument, given)).toList(),
-                    owner == null ? null : given(owner, given));
-            case TypeInfo.ArrayType(var component, var dimensions) ->
-                    new TypeInfo.ArrayType(given(component, given), dimensions);
-            case TypeInfo.WildcardType(var upper, var lower) -> new TypeInfo.WildcardType(
-                    upper == null ? null : given(upper, given), lower == null ? null : given(lower, given));
-            default -> type;
-        };
     }
 
     private static boolean hasTypeVariable(TypeInfo type) {

@@ -5,6 +5,24 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-53 — The build walks the inherited observers twice, each walk with its own rules
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes)
+- **Module**: `vauban-core` (`ObserverDisposerDiscovery`, `ObserverInjectionPoints`)
+- **Symptom**: none yet. `ObserverDisposerDiscovery.discoverIndexedInheritedObservers` (the observers a bean
+  inherits, BUG-20261118-44) and `ObserverInjectionPoints.of` (their injection points, BUG-20261118-11) each walked
+  the superclasses, with a `signature` helper and a superclass lookup of their own: a fix to one walk, as
+  BUG-20261118-51 had to make in both, could miss the other, and the build would then resolve the parameters of an
+  observer it does not register, or the reverse.
+- **Cause**: two copies of one walk.
+- **Fix**: `InheritedMethods` walks the superclasses with what the bean class gives their type variables, and gives the
+  methods a bean class inherits; both use it, behaviour unchanged.
+- **Verification**: `stack-l2d-ff-53.log`, "BUG-53 refactor": `ObserverInjectionPointsTest` and the observer tests of
+  `VetoedInterceptorCompileTimeTest` green (the one red there is the item-2 test of BUG-20261118-50, not committed
+  then); the full build of the final fixes.
+- **Found by**: the final whole-branch review of the stack.
+
 ## BUG-20261118-49 — An invoker's looked-up argument loses the owner of its type
 
 - **Date**: 2026-11-18
