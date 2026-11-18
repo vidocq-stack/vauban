@@ -810,7 +810,7 @@ public final class BceProcessor {
                     if (!BceTypeMatcher.matchesObserverTypes(registration.types(), observer, lookup, classLoader)) {
                         continue;
                     }
-                    var observerInfo = new VaubanBceObserverInfo(observer, lookup);
+                    var observerInfo = new VaubanBceObserverInfo(observer, declaringBean(observer, beans), lookup);
                     invokeRegistrationMethodWithObserver(method, bce, observerInfo, types, errors);
                 }
                 continue;
@@ -870,6 +870,20 @@ public final class BceProcessor {
             }
         }
         return targets;
+    }
+
+    /**
+     * The managed bean whose class declares {@code observer}, among {@code beans}; {@code null} for none. CDI 4.1 gives
+     * an {@code ObserverInfo} that bean, which it had not (BUG-20261117-09).
+     */
+    private static BeanDescriptor declaringBean(ObserverDescriptor observer, List<BeanDescriptor> beans) {
+        if (observer.isSynthetic()) {
+            return null;
+        }
+        return beans.stream()
+                .filter(bean -> bean.kind() == BeanDescriptor.BeanKind.MANAGED
+                        && bean.beanClass().equals(observer.declaringClass()))
+                .findFirst().orElse(null);
     }
 
     /** An interceptor, and its class as the managed bean it would be, or {@code null} when it cannot be one. */

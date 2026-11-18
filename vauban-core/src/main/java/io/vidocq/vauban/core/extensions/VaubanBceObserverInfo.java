@@ -19,9 +19,12 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.bean.discovery.BeanDiscovery;
+import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.ObserverDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
+import io.vidocq.vauban.core.langmodel.declarations.VaubanMethodInfo;
 import io.vidocq.vauban.core.langmodel.types.TypeMapper;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
@@ -34,15 +37,27 @@ import jakarta.enterprise.lang.model.declarations.ParameterInfo;
 import jakarta.enterprise.lang.model.types.Type;
 
 import java.util.Collection;
-import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 public final class VaubanBceObserverInfo implements ObserverInfo {
 
+    private static final String OBSERVES = "jakarta.enterprise.event.Observes";
+    private static final String OBSERVES_ASYNC = "jakarta.enterprise.event.ObservesAsync";
+
     private final ObserverDescriptor descriptor;
     private final IndexLookup lookup;
+    /** The bean that declares the observer method, or {@code null} when none does. */
+    private final BeanDescriptor bean;
 
     public VaubanBceObserverInfo(ObserverDescriptor descriptor, IndexLookup lookup) {
+        this(descriptor, null, lookup);
+    }
+
+    /** @param bean the managed bean that declares the observer method, or {@code null} for none */
+    public VaubanBceObserverInfo(ObserverDescriptor descriptor, BeanDescriptor bean, IndexLookup lookup) {
         this.descriptor = descriptor;
+        this.bean = bean;
         this.lookup = lookup;
     }
 
@@ -51,9 +66,20 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
         return TypeMapper.map(descriptor.eventType(), lookup);
     }
 
+    /**
+     * The qualifiers the event parameter declares; those the descriptor names when the method is not found. It gave
+     * none (BUG-20261117-09).
+     */
     @Override
     public Collection<AnnotationInfo> qualifiers() {
-        return List.of();
+        var parameter = eventParameter();
+        if (parameter == null) {
+            return descriptor.qualifiers().stream()
+                    .map(q -> (AnnotationInfo) new SimpleAnnotationInfo(q.annotationName().value(), java.util.Map.of()))
+                    .toList();
+        }
+        return parameter.annotations(annotation -> annotation.name().equals(jakarta.inject.Named.class.getName())
+                || annotation.declaration().hasAnnotation(jakarta.inject.Qualifier.class));
     }
 
     @Override
@@ -65,24 +91,76 @@ public final class VaubanBceObserverInfo implements ObserverInfo {
         return null;
     }
 
+    /**
+     * The observer method: the method of the declaring class with the descriptor's name and an {@code @Observes} or
+     * {@code @ObservesAsync} parameter of the observed event type, its erasure when no type is equal; {@code null} for
+     * a synthetic observer. It was {@code null} for every observer (BUG-20261117-09).
+     */
     @Override
     public MethodInfo observerMethod() {
-        return null;
+        return observed().map(Observed::method).orElse(null);
     }
 
+    /** The parameter of the observer method that carries {@code @Observes} or {@code @ObservesAsync}. */
     @Override
     public ParameterInfo eventParameter() {
-        return null;
+        return observed().map(observed -> observed.method().parameters().get(observed.position())).orElse(null);
     }
 
+    /** The bean that declares the observer method; {@code null} for a synthetic observer (BUG-20261117-09). */
     @Override
     public BeanInfo bean() {
-        return null;
+        return bean == null ? null : new VaubanBceBeanInfo(bean, lookup);
     }
 
     @Override
     public boolean isSynthetic() {
-        return false;
+        return descriptor.isSynthetic();
+    }
+
+    /** An observer method of the index, and the position of its event parameter. */
+    private record Observed(MethodInfo method, int position) {
+    }
+
+    private Optional<Observed> observed() {
+        var declaring = descriptor.isSynthetic() ? null : lookup.getClass(descriptor.declaringClass()).orElse(null);
+        if (declaring == null) {
+            return Optional.empty();
+        }
+        var declaringInfo = new VaubanClassInfo(declaring, lookup);
+        Observed erasedMatch = null;
+        var erasedEvent = BeanDiscovery.erasedName(descriptor.eventType());
+        for (var method : declaring.methods()) {
+            int position = method.name().equals(descriptor.methodName()) ? observedPosition(method) : -1;
+            if (position < 0) {
+                continue;
+            }
+            var type = method.parameters().get(position).type();
+            var candidate = new Observed(new VaubanMethodInfo(method, declaringInfo, lookup), position);
+            if (type.equals(descriptor.eventType())) {
+                return Optional.of(candidate);
+            }
+            if (erasedMatch == null && Objects.equals(erasedEvent, BeanDiscovery.erasedName(type))) {
+                erasedMatch = candidate;
+            }
+        }
+        return Optional.ofNullable(erasedMatch);
+    }
+
+    /** The position of the {@code @Observes} or {@code @ObservesAsync} parameter of {@code method}; -1 for none. */
+    private static int observedPosition(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        var parameters = method.parameters();
+        for (int i = 0; i < parameters.size(); i++) {
+            if (isObserved(parameters.get(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isObserved(io.vidocq.vauban.indexer.model.ParameterInfo parameter) {
+        return parameter.annotations().stream().map(annotation -> annotation.name().value())
+                .anyMatch(name -> name.equals(OBSERVES) || name.equals(OBSERVES_ASYNC));
     }
 
     @Override

@@ -3247,7 +3247,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-09 — An `ObserverInfo` has no observer method, no event parameter, no bean and no qualifier
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-core` (`VaubanBceObserverInfo`)
 - **Symptom**: the `ObserverInfo` a `@Registration` method gets answers `null` from `observerMethod()`,
   `eventParameter()` and `bean()`, and an empty `qualifiers()`, for an observer method of a bean. CDI 4.1 gives the
@@ -3263,6 +3263,21 @@ suspected cause, status. Updated on every investigation.
   find the `MethodInfo` through the index, and give the declaring class's managed bean as `bean()`. No brick of the
   workspace declares an `ObserverInfo` `@Registration`.
 - **Found by**: the review of BUG-20261117-05.
+- **Cause** (proved): `VaubanBceObserverInfo` returned `null` from `observerMethod()`, `eventParameter()` and `bean()`,
+  and `List.of()` from `qualifiers()`, on the three paths; `BceProcessor` built it from the `ObserverDescriptor`
+  alone.
+- **Fix**: `VaubanBceObserverInfo` finds, in the index's declaring class, the method of the descriptor's name with an
+  `@Observes` or `@ObservesAsync` parameter whose type is the observed event type, its erasure when no type is equal:
+  an overload of another event type is told apart without a new component in `ObserverDescriptor`. The event
+  parameter is that parameter, the qualifiers are those it declares (the descriptor's names when the method is not
+  found), and `BceProcessor` hands it the managed bean of the declaring class (`declaringBean`). `isSynthetic()` reads
+  the descriptor. Left: two overloads of one name that observe the same event type are not told apart; the first is
+  given.
+- **TCK**: `RegistrationTest` reads `declaringClass()` of an `ObserverInfo` only.
+- **Verification**: red, `stack-l4-09-red.log`: "Red run 1" (at start, the `NullPointerException` of
+  `observerMethod()`) and "Red run 2" (`VetoedInterceptorCompileTimeTest#anObserverInfoGivesItsMethodParameterBeanAndQualifiersFromTheProcessorAtStartAndFrozen`
+  on the code of the BUG-20261117-04 commit: the processor fails the compilation with that exception). Green,
+  `stack-l4-09-dev.log`: "Dev run 1", "Dev run 2", "Dev run 3" (vauban-core, vauban-processor, vauban-maven-plugin).
 
 ## BUG-20261117-08 — The container calls an `@Enhancement` method twice for each type, at start and when the build freezes
 

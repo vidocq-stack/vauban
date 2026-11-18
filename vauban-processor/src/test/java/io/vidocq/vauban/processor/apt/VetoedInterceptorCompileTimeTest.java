@@ -2337,6 +2337,61 @@ class VetoedInterceptorCompileTimeTest {
                 "serializable producer of java.lang.String[]", SERIALIZABLE + LOGGER));
     }
 
+    /** Records the method, the event parameter, the bean and the qualifiers of each observer of {@code vi.Hearer}. */
+    public static class ObserverDescriber implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void observers(ObserverInfo observer) {
+            if (!observer.declaringClass().name().equals("vi.Hearer")) {
+                return;
+            }
+            SEEN.add(observer.observerMethod().name() + " "
+                    + ObserverRecorder.nameOf(observer.eventParameter().type()) + " position "
+                    + observer.eventParameter().declaringMethod().parameters().indexOf(observer.eventParameter())
+                    + " bean " + observer.bean().declaringClass().name() + " " + observer.qualifiers().stream()
+                    .map(AnnotationInfo::name).toList());
+        }
+    }
+
+    /**
+     * CDI 4.1 gives an {@code ObserverInfo} its method, its event parameter, the bean that declares it and the
+     * qualifiers of the observed event. The container gave none, in the processor, at start and frozen alike: an
+     * extension that read them threw {@code NullPointerException} (BUG-20261117-09). An overload of the same name
+     * that observes another event type is told apart by its event type.
+     */
+    @Test
+    @DisplayName("an ObserverInfo gives its method, event parameter, bean and qualifiers, everywhere")
+    void anObserverInfoGivesItsMethodParameterBeanAndQualifiersFromTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Loud.java", """
+                package vi;
+                @jakarta.inject.Qualifier
+                @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+                public @interface Loud {
+                }
+                """);
+        sources.put("vi/Hearer.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Hearer {
+                    void hear(@jakarta.enterprise.event.Observes @Loud String text) {
+                        // a qualified observer
+                    }
+                    void hear(jakarta.enterprise.inject.spi.BeanManager manager,
+                            @jakarta.enterprise.event.Observes Integer number) {
+                        // an overload of another event type, its event parameter second
+                    }
+                }
+                """);
+
+        var seen = seenThreeWays(sources, ObserverDescriber.class, ObserverDescriber.SEEN);
+
+        seen.assertEachIs(List.of("hear java.lang.Integer position 1 bean vi.Hearer []",
+                "hear java.lang.String position 0 bean vi.Hearer [vi.Loud]"));
+    }
+
     /** Records the bean types, the qualifiers and the injection points of the interceptor {@code vi.Logger}. */
     public static class InterceptorDescriber implements BuildCompatibleExtension {
 

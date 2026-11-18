@@ -25,11 +25,14 @@ import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ObserverInfo;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.se.SeContainerInitializer;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.Serializable;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -44,6 +47,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class BceRegistrationObserverInfoTest {
 
     public static class Ping implements Serializable {
+    }
+
+    @jakarta.inject.Qualifier
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target({ElementType.PARAMETER, ElementType.FIELD, ElementType.METHOD, ElementType.TYPE})
+    public @interface Loud {
+    }
+
+    /** Observes a {@code Ping} twice: once with a qualifier, once overloaded with another event type. */
+    @ApplicationScoped
+    public static class Shouter {
+
+        void onPing(@Observes @Loud Ping ping) {
+            // a qualified observer
+        }
+
+        void onPing(@Observes CharSequence text) {
+            // an overload of another event type
+        }
     }
 
     @ApplicationScoped
@@ -90,7 +112,9 @@ class BceRegistrationObserverInfoTest {
         @Registration(types = Ping.class)
         public void pings(ObserverInfo observer) {
             SEEN.add(observer.observerMethod().name() + " " + observer.eventParameter().declaringMethod().name()
-                    + " " + observer.bean().declaringClass().name());
+                    + " " + observer.eventParameter().type().asClass().declaration().simpleName()
+                    + " " + observer.bean().declaringClass().simpleName() + " " + observer.qualifiers().stream()
+                    .map(qualifier -> qualifier.declaration().simpleName()).toList());
         }
     }
 
@@ -99,14 +123,14 @@ class BceRegistrationObserverInfoTest {
      * declares it; the container gives {@code null} for each (BUG-20261117-09).
      */
     @Test
-    @Disabled("BUG-20261117-09: an ObserverInfo has no observer method, no event parameter and no bean")
     @DisplayName("an ObserverInfo gives the observer method, its event parameter and its bean")
     void anObserverInfoGivesItsMethodItsEventParameterAndItsBean() {
         ObserverDescriber.SEEN.clear();
 
         try (var _ = SeContainerInitializer.newInstance()
-                .addBeanClasses(Listener.class, ObserverDescriber.class).initialize()) {
-            assertEquals(List.of("onPing onPing " + Listener.class.getName()), List.copyOf(ObserverDescriber.SEEN));
+                .addBeanClasses(Listener.class, Shouter.class, ObserverDescriber.class).initialize()) {
+            assertEquals(List.of("onPing onPing Ping Listener []", "onPing onPing Ping Shouter [Loud]"),
+                    ObserverDescriber.SEEN.stream().sorted().toList());
         }
     }
 }
