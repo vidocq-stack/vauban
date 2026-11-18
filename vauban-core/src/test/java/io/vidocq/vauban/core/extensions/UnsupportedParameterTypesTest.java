@@ -46,8 +46,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Each of the five phases reports a parameter of a type its Javadoc does not list before the call, as a definition
- * error naming the extension, the method and the type, and never calls the method with {@code null}. The types match
+ * Each of the five phases reports a parameter of a type its Javadoc does not list before the call, naming the
+ * extension, the method and the type, and never calls the method with {@code null}: a deployment problem, as the
+ * Javadoc of {@code BuildCompatibleExtension} says (BUG-20261118-58), where it was a definition error. A method without
+ * its one target parameter stays a definition error, as the CDI TCK expects. The types match
  * exactly: an extension's own subtype of a listed type is not one. An error a {@code @Discovery} method reports
  * through {@code Messages} is a deployment problem, as the Javadoc of {@code Messages} says (BUG-20261118-22).
  */
@@ -111,29 +113,29 @@ class UnsupportedParameterTypesTest {
     }
 
     @Test
-    void anEnhancementParameterOfAnUnsupportedTypeIsADefinitionError() {
-        assertDefinitionError(EnhancementWithBeanInfo.class, "@Enhancement method", "enhance", BeanInfo.class);
+    void anEnhancementParameterOfAnUnsupportedTypeIsADeploymentProblem() {
+        assertDeploymentProblem(EnhancementWithBeanInfo.class, "@Enhancement method", "enhance", BeanInfo.class);
     }
 
     @Test
-    void aRegistrationParameterOfAnUnsupportedTypeIsADefinitionError() {
-        assertDefinitionError(RegistrationWithScannedClasses.class, "@Registration method", "register",
+    void aRegistrationParameterOfAnUnsupportedTypeIsADeploymentProblem() {
+        assertDeploymentProblem(RegistrationWithScannedClasses.class, "@Registration method", "register",
                 ScannedClasses.class);
     }
 
     @Test
-    void aSynthesisParameterOfAnUnsupportedTypeIsADefinitionError() {
-        assertDefinitionError(SynthesisWithBeanInfo.class, "@Synthesis method", "synthesize", BeanInfo.class);
+    void aSynthesisParameterOfAnUnsupportedTypeIsADeploymentProblem() {
+        assertDeploymentProblem(SynthesisWithBeanInfo.class, "@Synthesis method", "synthesize", BeanInfo.class);
     }
 
     @Test
-    void aValidationParameterOfAnUnsupportedTypeIsADefinitionError() {
-        assertDefinitionError(ValidationWithBeanInfo.class, "@Validation method", "validate", BeanInfo.class);
+    void aValidationParameterOfAnUnsupportedTypeIsADeploymentProblem() {
+        assertDeploymentProblem(ValidationWithBeanInfo.class, "@Validation method", "validate", BeanInfo.class);
     }
 
     @Test
     void aSubtypeOfAListedTypeIsNotOne() {
-        assertDefinitionError(DiscoveryWithItsOwnType.class, "@Discovery method", "discover",
+        assertDeploymentProblem(DiscoveryWithItsOwnType.class, "@Discovery method", "discover",
                 OwnScannedClasses.class);
     }
 
@@ -147,12 +149,30 @@ class UnsupportedParameterTypesTest {
         assertTrue(thrown.getMessage().contains(DiscoveryReportingAnError.ERROR), thrown.getMessage());
     }
 
-    private static void assertDefinitionError(Class<?> extension, String phase, String method, Class<?> type) {
+    /** Declares no target parameter: the {@code @Enhancement} method takes its {@code Messages} alone. */
+    public static class EnhancementWithoutTarget implements BuildCompatibleExtension {
+        @Enhancement(types = Object.class)
+        public void enhance(Messages messages) {
+            CALLED.add("enhance " + messages);
+        }
+    }
+
+    @Test
+    void aMethodWithoutItsTargetParameterStaysADefinitionError() {
+        var initializer = SeContainerInitializer.newInstance().disableDiscovery()
+                .addBeanClasses(EnhancementWithoutTarget.class);
+
+        var thrown = assertThrows(DefinitionException.class, initializer::initialize);
+
+        assertTrue(thrown.getMessage().contains("must have exactly one"), thrown.getMessage());
+    }
+
+    private static void assertDeploymentProblem(Class<?> extension, String phase, String method, Class<?> type) {
         var initializer = SeContainerInitializer.newInstance().disableDiscovery().addBeanClasses(extension);
         var expected = phase + " " + extension.getName() + "." + method + " has invalid parameter type: "
                 + type.getName();
 
-        var thrown = assertThrows(DefinitionException.class, initializer::initialize);
+        var thrown = assertThrows(DeploymentException.class, initializer::initialize);
 
         List<String> called = CALLED;
         assertAll(() -> assertTrue(thrown.getMessage().contains(expected), thrown.getMessage()),

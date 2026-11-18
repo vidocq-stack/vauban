@@ -142,7 +142,9 @@ class BceProcessorFailureToleranceTest {
         var invalid = "@Discovery method " + UnsupportedDiscoveryParameter.class.getName()
                 + ".discover has invalid parameter type: " + Types.class.getName();
         List<String> called = UnsupportedDiscoveryParameter.CALLED;
-        assertAll(() -> assertEquals(List.of(invalid), discovery.definitionErrors()),
+        // A deployment problem, as the Javadoc of BuildCompatibleExtension says (BUG-20261118-58)
+        assertAll(() -> assertEquals(List.of(invalid), discovery.deploymentErrors()),
+                () -> assertEquals(List.of(), discovery.definitionErrors()),
                 () -> assertEquals(List.of(), called, "the method is not called"));
     }
 
@@ -205,6 +207,34 @@ class BceProcessorFailureToleranceTest {
                 () -> assertEquals(1, result.deploymentErrors().size(), () -> result.deploymentErrors().toString()),
                 () -> assertInstanceOf(jakarta.enterprise.inject.spi.DeploymentException.class,
                         result.deploymentErrorCauses().getFirst()));
+    }
+
+    /** An {@code @Enhancement} method with a parameter of an unsupported type and without its one target. */
+    public static class UnsupportedTypeAndNoTarget implements BuildCompatibleExtension {
+        @jakarta.enterprise.inject.build.compatible.spi.Enhancement(types = Object.class)
+        public void enhance(jakarta.enterprise.inject.build.compatible.spi.BeanInfo bean) {
+            throw new IllegalStateException("called with " + bean);
+        }
+    }
+
+    /**
+     * A method with both faults reports both: the unsupported type as a deployment problem, the missing target as a
+     * definition error, where the first hid the second (BUG-20261118-58).
+     */
+    @Test
+    void anUnsupportedTypeDoesNotHideAMissingTarget() {
+        var lookup = lookupWithTarget();
+        var prefix = "@Enhancement method " + UnsupportedTypeAndNoTarget.class.getName() + ".enhance ";
+
+        var result = BceProcessor.process(List.of(UnsupportedTypeAndNoTarget.class), List.of(), lookup.index(),
+                getClass().getClassLoader(), Map.of(), List.of());
+
+        assertAll(() -> assertEquals(List.of(prefix + "has invalid parameter type: "
+                        + jakarta.enterprise.inject.build.compatible.spi.BeanInfo.class.getName()),
+                        result.deploymentErrors()),
+                () -> assertEquals(1, result.definitionErrors().size(), () -> result.definitionErrors().toString()),
+                () -> assertTrue(result.definitionErrors().getFirst().startsWith(prefix + "must have exactly one"),
+                        result.definitionErrors().getFirst()));
     }
 
     @Test

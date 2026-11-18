@@ -4928,8 +4928,9 @@ class VetoedInterceptorCompileTimeTest {
 
     /**
      * A {@code @Discovery} parameter of a type the phase does not support is reported before the call, naming the
-     * extension, the method and the type, as the other phases report theirs: a definition error. The method is not
-     * called with {@code null} (BUG-20261118-22).
+     * extension, the method and the type, as the other phases report theirs: a deployment problem, as the Javadoc of
+     * {@code BuildCompatibleExtension} says (BUG-20261118-58). The method is not called with {@code null}
+     * (BUG-20261118-22).
      */
     @Test
     @DisplayName("a @Discovery parameter of an unsupported type fails the build, the start and the freeze")
@@ -4938,7 +4939,7 @@ class VetoedInterceptorCompileTimeTest {
                 + ".discover has invalid parameter type: " + Types.class.getName();
         UnsupportedDiscoveryParameter.CALLED.clear();
 
-        discoveryFailsThreeWays(UnsupportedDiscoveryParameter.class, failure);
+        failsThreeWays(withAVetoedPackage(), UnsupportedDiscoveryParameter.class, failure, DeploymentException.class);
 
         List<String> called = UnsupportedDiscoveryParameter.CALLED;
         assertEquals(List.of(), called, "the method is not called");
@@ -5105,6 +5106,41 @@ class VetoedInterceptorCompileTimeTest {
                 DeploymentException.class);
 
         assertEquals(PHASE_CAUSE, started.getCause().getMessage());
+    }
+
+    /** Declares an {@code @Enhancement} parameter of a type the phase does not list, beside its target. */
+    public static class UnsupportedEnhancementParameter implements BuildCompatibleExtension {
+
+        @Enhancement(types = java.util.EventListener.class, withSubtypes = true, withAnnotations = Dependent.class)
+        public void listeners(ClassInfo type, BeanInfo bean) {
+            throw new IllegalStateException("called with " + bean);
+        }
+    }
+
+    /** Declares a {@code @Registration} parameter of a type the phase does not list, beside its target. */
+    public static class UnsupportedRegistrationParameter implements BuildCompatibleExtension {
+
+        @Registration(types = java.util.EventListener.class)
+        public void listeners(BeanInfo bean, ScannedClasses scanned) {
+            throw new IllegalStateException("called with " + scanned);
+        }
+    }
+
+    /**
+     * An {@code @Enhancement} or {@code @Registration} parameter of a type the phase does not list is a deployment
+     * problem before the call, in the build, the start and the freeze, as the Javadoc of
+     * {@code BuildCompatibleExtension} says (BUG-20261118-58).
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"Enhancement", "Registration"})
+    @DisplayName("an unsupported parameter of @Enhancement or @Registration is a deployment problem three ways")
+    void anUnsupportedParameterIsADeploymentProblem(String phase) throws Exception {
+        var extension = phase.equals("Enhancement") ? UnsupportedEnhancementParameter.class
+                : UnsupportedRegistrationParameter.class;
+        var type = phase.equals("Enhancement") ? BeanInfo.class : ScannedClasses.class;
+
+        failsThreeWays(withListenerSubtypes(), extension, "@" + phase + " method " + extension.getName()
+                + ".listeners has invalid parameter type: " + type.getName(), DeploymentException.class);
     }
 
     /** {@link #failsThreeWays} for an extension that fails in {@code @Discovery}, with a definition error. */

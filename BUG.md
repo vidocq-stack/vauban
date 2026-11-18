@@ -53,6 +53,35 @@ suspected cause, status. Updated on every investigation.
   - 2026-11-18: the comment of `isOuterInstance` said only class files older than Java 21 lack the attribute. Every
     class of a `--strip-debug` image lacks it.
 
+## BUG-20261118-58 — An extension parameter of an unsupported type is a definition error
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18)
+- **Module**: `vauban-core` (`extensions.ExtensionMethodValidator`, `extensions.BceProcessor`)
+- **Symptom**: a method of any of the five phases that declares a parameter of a type its phase does not list fails
+  the start, the start after a freeze and `vauban:generate` with a `DefinitionException` (BUG-20261118-22).
+- **Spec**: the Javadoc of `BuildCompatibleExtension` (cdi-api 4.1.0): a parameter of a type unsupported in the phase
+  is a deployment problem. The CDI TCK's `build/compatible/extensions/invalid/*` tests, which expect a
+  `DefinitionException`, declare a method without its one target parameter, or with two: none declares a type the
+  phase does not list.
+- **Repro**: `UnsupportedParameterTypesTest` (one test per phase, the subtype, and a method without its target that
+  stays a definition error) and `BceProcessorFailureToleranceTest#aDiscoveryParameterOfAnUnsupportedTypeIsReportedBeforeTheCall`
+  in `vauban-core`; `BceRuntimeReplayTest$EnhancementFailures#anUnsupportedParameterOf*` (the replay, the unprocessed
+  archive); `VetoedInterceptorCompileTimeTest#aDiscoveryParameterOfAnUnsupportedTypeFailsTheBuildTheStartAndTheFreeze`
+  in `vauban-processor`; `EnhancementFailureGenerationTest#anUnsupportedParameterOfEnhancementFailsTheGeneration` in
+  `vauban-maven-plugin`.
+- **Cause**: `ExtensionMethodValidator` sent the unsupported type to the same list as a wrong count of target
+  parameters, the definition errors; and it stopped at the unsupported type, which hid a wrong count of the same
+  method (round 3: `BceProcessorFailureToleranceTest#anUnsupportedTypeDoesNotHideAMissingTarget`, `phase-r3.log`,
+  "R3 red").
+- **Fix**: the validator reports an unsupported type to the deployment problems and a count other than one to the
+  definition errors; `process` stops before the phases on either, and the paths that run `@Enhancement` alone throw
+  through `PhaseFailures`. `@Discovery` reports it to `DiscoveryResult.deploymentErrors`.
+- **Verification**: red, `phase-r2-58.log`, "BUG-58 red: an unsupported parameter type is a deployment problem, no
+  fix" (8 failures: a `DefinitionException` where a `DeploymentException` was expected). Green, same log, "BUG-58
+  green".
+- **Found by**: the review of BUG-20261118-57.
+
 ## BUG-20261118-57 — An exception of `@Enhancement`, `@Registration` or `@Synthesis` is a deployment problem
 
 - **Date**: 2026-11-18

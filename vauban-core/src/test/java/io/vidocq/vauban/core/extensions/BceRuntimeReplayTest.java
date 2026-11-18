@@ -323,12 +323,12 @@ class BceRuntimeReplayTest {
         }
 
         /**
-         * An {@code @Enhancement} parameter of an unsupported type is a definition error before the call, on the replay
-         * as in the full cycle (BUG-20261118-22).
+         * An {@code @Enhancement} parameter of an unsupported type is a deployment problem before the call, on the
+         * replay as in the full cycle (BUG-20261118-22, BUG-20261118-58).
          */
         @Test
         @DisplayName("an unsupported parameter, replayed for a pre-processed jar")
-        void anUnsupportedParameterOfAReplayedEnhancementIsADefinitionError() throws Exception {
+        void anUnsupportedParameterOfAReplayedEnhancementIsADeploymentProblem() throws Exception {
             var jar = buildPreProcessedJar(tempDir.resolve("resource.jar"), "app.TestResourceB",
                     List.of("app.TestResourceB"), List.of(InvalidParameterBce.class.getName() + ";app.TestResourceB"),
                     InvalidParameterBce.class, InvalidParameterBce.class);
@@ -339,7 +339,7 @@ class BceRuntimeReplayTest {
         /** As above, over an unprocessed archive, the extension reached through the replay list alone. */
         @Test
         @DisplayName("an unsupported parameter, run over an unprocessed archive")
-        void anUnsupportedParameterOfAnEnhancementOfAnUnprocessedArchiveIsADefinitionError() throws Exception {
+        void anUnsupportedParameterOfAnEnhancementOfAnUnprocessedArchiveIsADeploymentProblem() throws Exception {
             var jarA = buildPreProcessedJar(tempDir.resolve("resA.jar"), "app.TestResourceA",
                     List.of("app.TestResourceA"), List.of(InvalidParameterBce.class.getName() + ";app.TestResourceA"),
                     InvalidParameterBce.class, null);
@@ -353,7 +353,7 @@ class BceRuntimeReplayTest {
             var expected = "@Enhancement method " + InvalidParameterBce.class.getName()
                     + ".addScope has invalid parameter type: jakarta.enterprise.inject.build.compatible.spi.BeanInfo";
 
-            var thrown = startFails(jakarta.enterprise.inject.spi.DefinitionException.class, path, jars);
+            var thrown = startFails(jakarta.enterprise.inject.spi.DeploymentException.class, path, jars);
 
             List<String> called = InvalidParameterBce.CALLED;
             assertAll(() -> assertTrue(thrown.getMessage().contains(expected), thrown.getMessage()),

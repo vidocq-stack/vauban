@@ -25,6 +25,7 @@ import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.spi.DefinitionException;
+import jakarta.enterprise.inject.spi.DeploymentException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -91,7 +92,7 @@ class EnhancementFailureGenerationTest {
 
     /**
      * An {@code @Enhancement} parameter of an unsupported type fails {@code vauban:generate} before the call, with the
-     * definition error the start reports (BUG-20261118-22).
+     * deployment problem the start reports (BUG-20261118-22, BUG-20261118-58).
      */
     @Test
     @DisplayName("an unsupported @Enhancement parameter fails vauban:generate before the call")
@@ -102,7 +103,7 @@ class EnhancementFailureGenerationTest {
         try (var loader = loaderFor(InvalidParameter.class)) {
             var config = configWith(loader);
 
-            var thrown = assertThrows(DefinitionException.class, () -> VaubanGenerator.generate(config));
+            var thrown = assertThrows(DeploymentException.class, () -> VaubanGenerator.generate(config));
 
             List<String> called = InvalidParameter.CALLED;
             assertAll(() -> assertTrue(thrown.getMessage().contains(expected), thrown.getMessage()),

@@ -56,12 +56,13 @@ public final class BceProcessor {
      * @param index          the current VaubanIndex
      * @param classLoader    ClassLoader for type resolution
      * @return enhancement modifications keyed by class DotName
-     * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method has a parameter
-     *         of an unsupported type, reported before any call (BUG-20261118-22)
+     * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method lacks its one
+     *         target parameter, reported before any call (BUG-20261118-22)
      * @throws jakarta.enterprise.inject.spi.DefinitionException when an extension threw, at start as under
      *         {@code vauban:generate} (BUG-20261118-05, BUG-20261118-57)
      * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension reported an error through
-     *         {@code Messages}
+     *         {@code Messages}, or an {@code @Enhancement} method has a parameter of an unsupported type, reported
+     *         before any call (BUG-20261118-58)
      */
     public static Map<DotName, List<VaubanClassConfig>> processEnhancementOnly(
             List<Class<?>> bceClasses,
@@ -117,12 +118,13 @@ public final class BceProcessor {
      * @param replayPairs ordered list of (bceClass, targetClass) pairs
      * @param index       current VaubanIndex (must contain {@code targetClass})
      * @return enhancement modifications keyed by target DotName
-     * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method has a parameter
-     *         of an unsupported type, reported before any call (BUG-20261118-22)
+     * @throws jakarta.enterprise.inject.spi.DefinitionException when an {@code @Enhancement} method lacks its one
+     *         target parameter, reported before any call (BUG-20261118-22)
      * @throws jakarta.enterprise.inject.spi.DefinitionException when an extension threw (BUG-20261118-05,
      *         BUG-20261118-57)
      * @throws jakarta.enterprise.inject.spi.DeploymentException when an extension reported an error through
-     *         {@code Messages}
+     *         {@code Messages}, or an {@code @Enhancement} method has a parameter of an unsupported type, reported
+     *         before any call (BUG-20261118-58)
      */
     public static Map<DotName, List<VaubanClassConfig>> replayEnhancementForTargets(
             List<Map.Entry<Class<?>, Class<?>>> replayPairs,
@@ -155,15 +157,18 @@ public final class BceProcessor {
     }
 
     /**
-     * Throws the {@code DefinitionException} of the {@code @Enhancement} methods of {@code bceClasses} whose parameters
-     * the phase does not support, before any of them is called, as the full cycle does (BUG-20261118-22).
+     * Throws the failure of the {@code @Enhancement} methods of {@code bceClasses} whose parameters the phase does not
+     * support, before any of them is called, as the full cycle does (BUG-20261118-22): a {@code DefinitionException}
+     * for a method without its one target, a {@code DeploymentException} for a parameter of a type the phase does not
+     * list (BUG-20261118-58).
      */
     private static void failOnInvalidEnhancementMethods(List<Class<?>> bceClasses) {
-        var definitionErrors = new ArrayList<String>();
+        var failures = new PhaseFailures();
         for (var bceClass : bceClasses) {
-            ExtensionMethodValidator.validateEnhancementMethods(bceClass, definitionErrors);
+            ExtensionMethodValidator.validateEnhancementMethods(bceClass, failures.definitionErrors(),
+                    failures.deploymentErrors());
         }
-        DeploymentFailures.failOnDefinitionErrors(definitionErrors);
+        failures.failOnErrors();
     }
 
     /**
@@ -284,7 +289,8 @@ public final class BceProcessor {
      * {@code AfterTypeDiscovery} observer, the portable events of the same phase (BUG-20261118-04), except a
      * {@code DeploymentException}, which joins the deployment problems (BUG-20261118-57).
      * {@code deploymentErrors} are those its methods reported through {@code Messages}: a deployment problem, as the
-     * Javadoc of {@code Messages} says (BUG-20261118-22).
+     * Javadoc of {@code Messages} says (BUG-20261118-22); and its parameters of a type the phase does not list, as the
+     * Javadoc of {@code BuildCompatibleExtension} says (BUG-20261118-58).
      */
     public record DiscoveryResult(
             VaubanMetaAnnotations metaAnnotations,
@@ -313,7 +319,7 @@ public final class BceProcessor {
                     bceInstances.put(bceClass, bce);
                     for (var method : getDeclaredMethodsSafe(bceClass)) {
                         if (method.getAnnotation(Discovery.class) != null
-                                && ExtensionMethodValidator.validDiscoveryMethod(bceClass, method, definitionErrors)) {
+                                && ExtensionMethodValidator.validDiscoveryMethod(bceClass, method, deploymentErrors)) {
                             invokeDiscovery(method, bce, metaAnnotations, scannedClasses, deploymentErrors);
                         }
                     }
@@ -448,9 +454,9 @@ public final class BceProcessor {
 
         for (var bceClass : bceClasses) {
             // Validate method signatures before processing
-            ExtensionMethodValidator.validateExtensionMethods(bceClass, definitionErrors);
+            ExtensionMethodValidator.validateExtensionMethods(bceClass, definitionErrors, deploymentErrors);
         }
-        if (!definitionErrors.isEmpty()) {
+        if (!definitionErrors.isEmpty() || !deploymentErrors.isEmpty()) {
             return result(failures, allSyntheticBeans, allSyntheticObservers, allEnhancementMods,
                     InvokerLookups.NONE);
         }

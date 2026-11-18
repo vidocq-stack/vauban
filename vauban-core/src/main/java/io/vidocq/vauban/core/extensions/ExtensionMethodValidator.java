@@ -50,8 +50,8 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Validation of BCE method signatures (the parameter types of each of the five phases
- * → DefinitionException) and of registered invoker argument lookups
+ * Validation of BCE method signatures (a method without its one target parameter → DefinitionException, a parameter
+ * of a type its phase does not list → DeploymentException) and of registered invoker argument lookups
  * (unsatisfied / ambiguous → DeploymentException). Extracted from {@link BceProcessor}
  * (which stays the facade).
  */
@@ -91,49 +91,56 @@ final class ExtensionMethodValidator {
     );
 
     /**
-     * Validate BCE method signatures. Invalid signatures → DefinitionException. A parameter type matches exactly one
-     * the Javadoc of the phase lists: an extension's own subtype of one is not one (BUG-20261118-22).
+     * Validate BCE method signatures. A method without its one target parameter joins {@code definitionErrors}, as
+     * the CDI TCK expects. A parameter of a type the phase does not list joins {@code deploymentErrors}, as the Javadoc
+     * of {@code BuildCompatibleExtension} says (BUG-20261118-58). A parameter type matches exactly one the Javadoc of
+     * the phase lists: an extension's own subtype of one is not one (BUG-20261118-22).
      */
-    static void validateExtensionMethods(Class<?> bceClass, List<String> errors) {
+    static void validateExtensionMethods(Class<?> bceClass, List<String> definitionErrors,
+                                         List<String> deploymentErrors) {
         for (var method : BceProcessor.getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Enhancement.class) != null) {
-                validateEnhancementMethod(bceClass, method, errors);
+                validateEnhancementMethod(bceClass, method, definitionErrors, deploymentErrors);
             }
             if (method.getAnnotation(Registration.class) != null) {
                 validateCountedMethod(bceClass, method, "@Registration", REGISTRATION_PRIMARY_TYPES,
-                        REGISTRATION_OPTIONAL_TYPES, "BeanInfo/InterceptorInfo/ObserverInfo", errors);
+                        REGISTRATION_OPTIONAL_TYPES, "BeanInfo/InterceptorInfo/ObserverInfo", definitionErrors,
+                        deploymentErrors);
             }
             if (method.getAnnotation(Synthesis.class) != null) {
-                validParameters(bceClass, method, "@Synthesis", SYNTHESIS_TYPES, errors);
+                validParameters(bceClass, method, "@Synthesis", SYNTHESIS_TYPES, deploymentErrors);
             }
             if (method.getAnnotation(Validation.class) != null) {
-                validParameters(bceClass, method, "@Validation", VALIDATION_TYPES, errors);
+                validParameters(bceClass, method, "@Validation", VALIDATION_TYPES, deploymentErrors);
             }
         }
     }
 
     /**
-     * Checks the {@code @Enhancement} methods of {@code bceClass}; each one with a parameter the phase does not
-     * support joins {@code errors}. For the paths that run {@code @Enhancement} alone, the enhancement of an archive
+     * Checks the {@code @Enhancement} methods of {@code bceClass}, as {@link #validateExtensionMethods} does. For the
+     * paths that run {@code @Enhancement} alone, the enhancement of an archive
      * the processor did not see and the replay for a pre-processed jar, which check as the full cycle does.
      */
-    static void validateEnhancementMethods(Class<?> bceClass, List<String> errors) {
+    static void validateEnhancementMethods(Class<?> bceClass, List<String> definitionErrors,
+                                           List<String> deploymentErrors) {
         for (var method : BceProcessor.getDeclaredMethodsSafe(bceClass)) {
             if (method.getAnnotation(Enhancement.class) != null) {
-                validateEnhancementMethod(bceClass, method, errors);
+                validateEnhancementMethod(bceClass, method, definitionErrors, deploymentErrors);
             }
         }
     }
 
-    private static void validateEnhancementMethod(Class<?> bceClass, Method method, List<String> errors) {
+    private static void validateEnhancementMethod(Class<?> bceClass, Method method, List<String> definitionErrors,
+                                                  List<String> deploymentErrors) {
         validateCountedMethod(bceClass, method, "@Enhancement", ENHANCEMENT_CONFIG_TYPES, ENHANCEMENT_OPTIONAL_TYPES,
-                "ClassConfig/ClassInfo, MethodConfig/MethodInfo or FieldConfig/FieldInfo", errors);
+                "ClassConfig/ClassInfo, MethodConfig/MethodInfo or FieldConfig/FieldInfo", definitionErrors,
+                deploymentErrors);
     }
 
     /**
      * Whether every parameter of the {@code @Discovery} {@code method} of {@code bceClass} has a type the phase
      * supports; the first one that does not joins {@code errors}, so that the method is not called with {@code null}
-     * (BUG-20261118-22). A definition error, as in the other phases.
+     * (BUG-20261118-22). A deployment problem, as in the other phases (BUG-20261118-58).
      */
     static boolean validDiscoveryMethod(Class<?> bceClass, Method method, List<String> errors) {
         return validParameters(bceClass, method, "@Discovery", DISCOVERY_TYPES, errors);
@@ -156,21 +163,24 @@ final class ExtensionMethodValidator {
 
     /**
      * Checks a method that takes exactly one parameter of a {@code primary} type, its target, and any of the
-     * {@code optional} types.
+     * {@code optional} types: each parameter of another type joins {@code deploymentErrors}, and a count other than
+     * one {@code definitionErrors}, both when the method has both faults.
      */
+    @SuppressWarnings("java:S107") // the method, its phase, its types and the two lists it reports to
     private static void validateCountedMethod(Class<?> bceClass, Method method, String phase, Set<Class<?>> primary,
-                                              Set<Class<?>> optional, String primaryNames, List<String> errors) {
+                                              Set<Class<?>> optional, String primaryNames,
+                                              List<String> definitionErrors, List<String> deploymentErrors) {
         int primaryCount = 0;
         for (var p : method.getParameterTypes()) {
             if (primary.contains(p)) {
                 primaryCount++;
             } else if (!optional.contains(p)) {
-                errors.add(invalidParameter(bceClass, method, phase, p));
-                return;
+                // Reported, and the count is still checked: the one does not hide the other (BUG-20261118-58)
+                deploymentErrors.add(invalidParameter(bceClass, method, phase, p));
             }
         }
         if (primaryCount != 1) {
-            errors.add(phase + " method " + bceClass.getName() + "." + method.getName() + " must have exactly one "
+            definitionErrors.add(phase + " method " + bceClass.getName() + "." + method.getName() + " must have exactly one "
                     + primaryNames + " parameter, found " + primaryCount);
         }
     }
