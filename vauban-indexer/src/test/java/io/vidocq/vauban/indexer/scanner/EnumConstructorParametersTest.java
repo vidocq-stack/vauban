@@ -101,6 +101,29 @@ class EnumConstructorParametersTest {
                 described(constructor(ClassFileScanner.scan(bytes))));
     }
 
+    /**
+     * BUG-20261118-31: a parameter whose name the class file does not give is named {@code argN}, {@code N} its
+     * position among the parameters the source declares, as the language model asks: javac 25 writes a
+     * {@code MethodParameters} attribute without names for an enum's constructor, compiled without
+     * {@code -parameters}, and javac before 21 none.
+     */
+    @Test
+    @DisplayName("a parameter without a name in the class file is argN, by its declared position")
+    void unnamedParametersAreArgN() throws IOException {
+        try (var in = Level.class.getResourceAsStream("EnumConstructorParametersTest$Level.class")) {
+            assertEquals(List.of("arg0", "arg1"), constructor(ClassFileScanner.scan(in.readAllBytes())).parameters()
+                    .stream().map(ParameterInfo::name).toList());
+        }
+        var level = ClassDesc.of("p.Level");
+        var bytes = ClassFile.of().build(level, type -> type
+                .withFlags(AccessFlag.FINAL, AccessFlag.SUPER, AccessFlag.ENUM)
+                .withSuperclass(ClassDesc.of("java.lang.Enum"))
+                .withMethod(ConstantDescs.INIT_NAME, MethodTypeDesc.of(ConstantDescs.CD_void, ConstantDescs.CD_String,
+                        ConstantDescs.CD_int, ConstantDescs.CD_String), ClassFile.ACC_PRIVATE, _ -> { }));
+        assertEquals(List.of("arg0"), constructor(ClassFileScanner.scan(bytes)).parameters().stream()
+                .map(ParameterInfo::name).toList());
+    }
+
     private static MethodInfo constructor(io.vidocq.vauban.indexer.model.ClassInfo type) {
         return type.methods().stream().filter(MethodInfo::isConstructor).findFirst().orElseThrow();
     }

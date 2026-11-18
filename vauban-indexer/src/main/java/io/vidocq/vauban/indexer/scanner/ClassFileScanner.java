@@ -347,7 +347,10 @@ public final class ClassFileScanner {
             var type = generic == null || i < synthetic
                     ? parseTypeFromDesc(methodType.parameterType(i))
                     : generic.get(i - synthetic);
-            var paramName = i < paramNames.size() ? paramNames.get(i) : "arg" + i;
+            // A name the class file does not give is argN, N the position among the declared parameters, as the
+            // language model asks: a MethodParameters attribute may give flags without names (BUG-20261118-31).
+            var named = i < paramNames.size() ? paramNames.get(i) : null;
+            var paramName = named != null ? named : "arg" + (i - dropped);
             var annots = i >= unannotated ? paramAnnotations.get(i - unannotated) : List.<AnnotationInfo>of();
             params.add(new ParameterInfo(paramName, type, annots));
         }

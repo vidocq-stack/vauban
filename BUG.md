@@ -5,6 +5,28 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-31 — At start, a parameter the class file gives flags but no name for is named `null`
+
+- **Date**: 2026-11-18
+- **Status**: FIXED
+- **Module**: `vauban-indexer` (`scanner.ClassFileScanner`)
+- **Symptom**: at start and frozen, `ParameterInfo.name()` is `null` for the parameters of a constructor whose
+  `MethodParameters` attribute gives flags without names: javac 25 writes one for an enum's constructor and an inner
+  class's, compiled without `-parameters`, to mark the synthetic and mandated parameters. The language model says
+  "never `null`": a name it does not know is `argN`, `N` the zero-based position in the method declaration.
+- **Repro**: `EnumConstructorParametersTest#unnamedParametersAreArgN` in `vauban-indexer`, red on 31d44610
+  (`stack-l2c-red.log`, "RED BUG-20261118-31 on 31d44610"): `[null, null]` for `[arg0, arg1]`.
+- **Cause**: `ClassFileScanner.buildParameters` took the attribute's name, absent, as the parameter's, and fell back
+  to `argN` only past the attribute's end, `N` the descriptor position.
+- **Fix**: a parameter without a name in the class file is `argN`, `N` its position among the parameters the index
+  records, after an enum constructor's synthetic ones (BUG-20261117-58). The processor reads the names from the
+  source: compiled without `-parameters`, a class read at start keeps `argN` where the processor shows the source's
+  names, as before for every method.
+- **Verification**: `stack-l2c-dev.log`, "BUG-20261118-31 fix: indexer, core, processor, maven-plugin tests" (green).
+- **Found by**: the tests of BUG-20261117-58.
+
+---
+
 ## BUG-20261118-24 — A normal-scoped producer of a JDK class with package-private methods is refused; Weld deploys it
 
 - **Date**: 2026-11-18
