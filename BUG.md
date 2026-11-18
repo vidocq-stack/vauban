@@ -5,6 +5,32 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-54 — The owner of an inherited observer's parameter type keeps the superclass's type variable
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes)
+- **Module**: `vauban-core` (`ObserverInjectionPoints`, `ManagedBean`)
+- **Symptom**: `OwnerListenerBase<X>` declares `void on(@Observes Pung, Outer<X>.Inner<String> inner)`, where
+  `Inner<I>` is an inner class of `Outer<O>`. With `OwnerListener extends OwnerListenerBase<String>` and a producer of
+  `Outer<String>.Inner<String>`, the build accepts the deployment and the start refuses it, run and frozen:
+  _unsatisfied dependency for parameter arg1 of type vi.types.Outer<X>$Inner<java.lang.String>_. With
+  `OwnerListener<Y> extends OwnerListenerBase<Y>`, the build reports _Unsatisfied dependency: parameter 1 of
+  OwnerListener.on()_ itself, where it leaves `Holder<Y>` to the start.
+- **Repro**: `VetoedInterceptorCompileTimeTest#theOwnerOfAnInheritedObserversParameterTypeIsTheOneTheBeanClassGives`,
+  `#anInheritedObserversParameterWithATypeVariableInItsOwnerIsLeftToTheStart`;
+  `ObserverInjectionPointsTest#aTypeVariableLeftInTheOwnerIsNone`.
+- **Cause** (proved): `ManagedBean.resolveType` and `substituteTypeVariables` substituted the type arguments of a
+  parameterized type and kept its owner as declared, `Outer<X>`. `ObserverInjectionPoints.hasTypeVariable` looked at
+  the type arguments only, so an owner left a type variable made an injection point the build resolved.
+- **Fix**: both substitutions resolve a parameterized owner too, and `ResolvedParameterizedType.toString()` writes it
+  as the JDK does (`Outer<String>$Inner<String>`); `hasTypeVariable` checks the owner. `BeanInjector` and
+  `EventDispatcher` go through `resolveType` too; only the observer check is tested.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l2d-ff-54.log`, "BUG-54 red: unit test" (`owner left`) and "BUG-54 red: processor,
+  start, frozen" (the start's _Outer<X>$Inner_ refusal, the build's _Unsatisfied dependency_). Green, same log,
+  "BUG-54 green: owner checked, substituted, written".
+- **Found by**: the final whole-branch review of the stack.
+
 ## BUG-20261118-51 — A bean inherits the static observer methods of its superclass
 
 - **Date**: 2026-11-18

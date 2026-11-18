@@ -1576,6 +1576,73 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * The owner of an inherited observer's parameter type is read as the bean class gives its superclass's type
+     * variables: {@code OwnerListener extends OwnerListenerBase<String>} inherits
+     * {@code on(@Observes Pung, Outer<X>.Inner<String>)}, which is {@code Outer<String>.Inner<String>}, the type
+     * {@code InnerMaker} produces. The start kept {@code Outer<X>} and refused the deployment (BUG-20261118-54).
+     */
+    @Test
+    @DisplayName("the owner of an inherited observer's parameter type is the one the bean class gives")
+    void theOwnerOfAnInheritedObserversParameterTypeIsTheOneTheBeanClassGives() throws Exception {
+        var sources = withAnOwnerListenerBase("public class OwnerListener extends OwnerListenerBase<String> {\n}");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN);
+        assertTrue(seen.start().stream().anyMatch(type -> type.contains("OwnerListener")), seen.start()::toString);
+    }
+
+    /**
+     * The build leaves to the start an inherited observer's parameter the bean class leaves a type variable in, the
+     * owner of its type included: {@code OwnerListener<Y>} inherits {@code on(@Observes Pung, Outer<X>.Inner<String>)},
+     * and the build resolved {@code Outer<Y>.Inner<String>} where it leaves {@code Holder<Y>} to the start
+     * (BUG-20261118-54). The start refuses it: no bean has a type variable in that place.
+     */
+    @Test
+    @DisplayName("an inherited observer's parameter with a type variable in its owner is left to the start")
+    void anInheritedObserversParameterWithATypeVariableInItsOwnerIsLeftToTheStart() throws Exception {
+        var sources = withAnOwnerListenerBase("public class OwnerListener<Y> extends OwnerListenerBase<Y> {\n}");
+
+        var built = ProcessorCompiler.compile(workDir.resolve("validated"), sources);
+        assertTrue(built.success(), () -> String.join("\n", built.messages()));
+        assertTrue(built.messages().stream().noneMatch(m -> m.startsWith("ERROR") || m.startsWith("WARNING")),
+                () -> String.join("\n", built.messages()));
+        for (var refusal : startRefusalsRunAndFrozen(sources)) {
+            assertTrue(refusal.contains("unsatisfied dependency for parameter arg1 of type vi.types.Outer<Y>$Inner"
+                    + "<java.lang.String>"), refusal);
+        }
+    }
+
+    /**
+     * {@link #withAVetoedPackage()}, with {@code Outer<O>} and its inner class {@code Inner<I>}, {@code InnerMaker}
+     * producing an {@code Outer<String>.Inner<String>}, {@code OwnerListenerBase<X>} observing {@code Pung} with an
+     * {@code Outer<X>.Inner<String>} parameter, and {@code listener}, the bean {@code OwnerListener}.
+     */
+    private static Map<String, String> withAnOwnerListenerBase(String listener) {
+        var sources = withAVetoedPackage();
+        putType(sources, "Pung", "public class Pung {\n}");
+        putType(sources, "Outer", """
+                public class Outer<O> {
+                    public class Inner<I> {
+                    }
+                }""");
+        putType(sources, "InnerMaker", DEPENDENT + """
+                public class InnerMaker {
+                    @jakarta.enterprise.inject.Produces
+                    Outer<String>.Inner<String> text() {
+                        return new Outer<String>().new Inner<String>();
+                    }
+                }""");
+        putType(sources, "OwnerListenerBase", """
+                public abstract class OwnerListenerBase<X> {
+                    void on(@jakarta.enterprise.event.Observes Pung pung, Outer<X>.Inner<String> inner) {
+                    }
+                }""");
+        putType(sources, "OwnerListener", DEPENDENT + listener);
+        return sources;
+    }
+
+    /**
      * Compiles {@code sources}, the build's deployment validation off, and lists {@link BeanTypeRecorder} as their
      * extension: the start refuses the deployment with a {@code DeploymentException}, with the extension run at
      * start, and after the build froze it.

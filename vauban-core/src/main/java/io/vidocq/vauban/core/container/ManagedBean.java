@@ -663,8 +663,10 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
                     newArgs[i] = substituteTypeVariables(args[i], mapping);
                     if (newArgs[i] != args[i]) changed = true;
                 }
-                yield changed
-                        ? new ResolvedParameterizedType((Class<?>) pt.getRawType(), newArgs, pt.getOwnerType())
+                var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType generic
+                        ? substituteTypeVariables(generic, mapping) : pt.getOwnerType();
+                yield changed || owner != pt.getOwnerType()
+                        ? new ResolvedParameterizedType((Class<?>) pt.getRawType(), newArgs, owner)
                         : type;
             }
             case java.lang.reflect.GenericArrayType gat -> {
@@ -1023,8 +1025,11 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
                     resolvedArgs[i] = resolveType(args[i], mapping);
                     if (resolvedArgs[i] != args[i]) changed = true;
                 }
-                yield changed
-                        ? new ResolvedParameterizedType((Class<?>) pt.getRawType(), resolvedArgs, pt.getOwnerType())
+                // Outer<X>.Inner<String>: the owner's type variables too (BUG-20261118-54)
+                var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType generic
+                        ? resolveType(generic, mapping) : pt.getOwnerType();
+                yield changed || owner != pt.getOwnerType()
+                        ? new ResolvedParameterizedType((Class<?>) pt.getRawType(), resolvedArgs, owner)
                         : type;
             }
             case java.lang.reflect.GenericArrayType gat -> {
@@ -1065,7 +1070,9 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
 
         @Override
         public String toString() {
-            var sb = new StringBuilder(rawType.getName());
+            // As the JDK writes a member type of a generic owner: p.Outer<X>$Inner<String>
+            var sb = new StringBuilder(ownerType instanceof java.lang.reflect.ParameterizedType generic
+                    ? generic.getTypeName() + "$" + rawType.getSimpleName() : rawType.getName());
             if (typeArguments.length > 0) {
                 sb.append('<');
                 for (int i = 0; i < typeArguments.length; i++) {

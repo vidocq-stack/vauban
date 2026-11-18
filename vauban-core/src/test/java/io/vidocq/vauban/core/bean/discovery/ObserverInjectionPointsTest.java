@@ -113,6 +113,27 @@ class ObserverInjectionPointsTest {
         }
     }
 
+    @SuppressWarnings("unused") // the owner of Inner, which carries a type argument
+    public static class Outer<O> {
+        public class Inner<I> {
+        }
+    }
+
+    @SuppressWarnings("java:S1172") // the parameter is the shape under test
+    public abstract static class OwnerBase<X> {
+        void on(@Observes String event, Outer<X>.Inner<String> inner) {
+            // no behaviour needed
+        }
+    }
+
+    @Dependent
+    public static class OwnerSub extends OwnerBase<Integer> {
+    }
+
+    @Dependent
+    public static class OwnerGenericSub<Y> extends OwnerBase<Y> {
+    }
+
     private static ClassInfo scan(Class<?> clazz) throws IOException {
         try (var in = clazz.getResourceAsStream("/" + clazz.getName().replace('.', '/') + ".class")) {
             assertNotNull(in);
@@ -155,6 +176,21 @@ class ObserverInjectionPointsTest {
     void aLeftTypeVariableOrAnOverriddenObserverIsNone() throws IOException {
         assertTrue(points(GenericSub.class, true).isEmpty(), "type variables left");
         assertTrue(points(Overriding.class, true).isEmpty(), "overridden observer");
+    }
+
+    /**
+     * A type variable the bean class leaves in the owner of a parameter's type, {@code Outer<Y>.Inner<String>}, is one
+     * left as well: the build checked the type arguments of the member type only, and resolved that parameter, which
+     * the start leaves to its own rules (BUG-20261118-54).
+     */
+    @Test
+    @DisplayName("a type variable left in the owner of a parameter's type is none, a given one is read")
+    void aTypeVariableLeftInTheOwnerIsNone() {
+        var inner = new TypeInfo.ParameterizedType(DotName.of(Outer.Inner.class.getName()),
+                List.of(new TypeInfo.ClassType(DotName.of(String.class.getName()))),
+                new TypeInfo.ParameterizedType(DotName.of(Outer.class.getName()), List.of(INTEGER)));
+        assertAll(() -> assertEquals(List.of(inner), points(OwnerSub.class, OwnerBase.class, true), "owner given"),
+                () -> assertTrue(points(OwnerGenericSub.class, OwnerBase.class, true).isEmpty(), "owner left"));
     }
 
     /**

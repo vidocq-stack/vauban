@@ -150,8 +150,9 @@ final class ObserverInjectionPoints {
     private static boolean hasTypeVariable(TypeInfo type) {
         return switch (type) {
             case TypeInfo.TypeVariable _ -> true;
-            case TypeInfo.ParameterizedType(_, var arguments, _) ->
-                    arguments.stream().anyMatch(ObserverInjectionPoints::hasTypeVariable);
+            case TypeInfo.ParameterizedType(_, var arguments, var owner) ->
+                    arguments.stream().anyMatch(ObserverInjectionPoints::hasTypeVariable)
+                            || boundHasTypeVariable(owner);
             case TypeInfo.ArrayType(var component, _) -> hasTypeVariable(component);
             case TypeInfo.WildcardType(var upper, var lower) ->
                     boundHasTypeVariable(upper) || boundHasTypeVariable(lower);
@@ -159,7 +160,7 @@ final class ObserverInjectionPoints {
         };
     }
 
-    /** A wildcard's bound, {@code null} when it has none. */
+    /** A wildcard's bound or a member type's owner, {@code null} when it has none (BUG-20261118-54). */
     private static boolean boundHasTypeVariable(TypeInfo bound) {
         return bound != null && hasTypeVariable(bound);
     }
