@@ -278,6 +278,8 @@ class DeploymentValidatorReflectionChecksTest {
 
     static Stream<Arguments> interceptedBeanArguments() {
         return Stream.of(
+                // ? and ? extends Object, as the index gives both (BUG-20261117-34, BUG-20261117-41)
+                Arguments.of(new TypeInfo.WildcardType(null, null), false),
                 Arguments.of(new TypeInfo.WildcardType(cls(OBJECT), null), false),
                 Arguments.of(cls(OBJECT), false),
                 Arguments.of(new TypeInfo.WildcardType(cls("java.lang.String"), null), true),

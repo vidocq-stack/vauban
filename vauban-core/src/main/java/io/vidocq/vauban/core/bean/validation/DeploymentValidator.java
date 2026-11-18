@@ -47,6 +47,7 @@ public final class DeploymentValidator {
     private static final String JAVA_LANG_OBJECT = "java.lang.Object";
     private static final String PREFIX_NORMAL_SCOPED = "Normal-scoped bean ";
     private static final String BEAN_TYPE_NAME = "jakarta.enterprise.inject.spi.Bean";
+    private static final DotName INTERCEPTOR_ANNOTATION = DotName.of("jakarta.interceptor.Interceptor");
     private static final String MSG_UNPROXYABLE_CTOR =
             " must have a non-private no-arg constructor, or declare a non-private constructor"
             + " taking " + ClientProxyShape.PROXY_LINK_CLASS
@@ -192,10 +193,17 @@ public final class DeploymentValidator {
         return loadTimeWoven.contains(className) || loadTimeUnwoven.contains(className);
     }
 
-    /** Whether a managed bean's class, loaded from the deployment, is an interceptor. */
-    private static boolean isInterceptorBean(BeanDescriptor bean) {
+    /**
+     * Whether a managed bean's class is an interceptor: read from the index first, which holds a class the processor
+     * compiles and cannot load (BUG-20261117-41), else from the class loaded from the deployment.
+     */
+    private boolean isInterceptorBean(BeanDescriptor bean) {
         if (bean.kind() != BeanDescriptor.BeanKind.MANAGED) {
             return false;
+        }
+        if (index != null && index.getClassByName(bean.beanClass())
+                .filter(indexed -> indexed.hasAnnotation(INTERCEPTOR_ANNOTATION)).isPresent()) {
+            return true;
         }
         try {
             var clazz = DeploymentClasses.load(bean.beanClass().value());
@@ -653,8 +661,8 @@ public final class DeploymentValidator {
                 var arg = typeArgs.getFirst();
                 // Only Bean<?> (unbounded wildcard) or Bean<Object> is legal
                 if (arg instanceof TypeInfo.WildcardType(var upperBound, var lowerBound)) {
-                    // Unbounded wildcard: upperBound=Object, lowerBound=null
-                    return lowerBound != null || !isObjectType(upperBound);
+                    // ? and ? extends Object have no bound in the index (BUG-20261117-34); an Object bound is the same
+                    return lowerBound != null || (upperBound != null && !isObjectType(upperBound));
                 }
                 if (arg instanceof TypeInfo.ClassType(var argName)) {
                     return !argName.value().equals(JAVA_LANG_OBJECT);

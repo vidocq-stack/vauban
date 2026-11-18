@@ -1528,59 +1528,41 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-41 — An interceptor that injects `@Intercepted Bean<?>` is refused
 
 - **Date**: 2026-11-17
-- **Status**: OPEN. To fix after BUG-20261117-47; a fix of its first two causes is parked on the local branch
-  `fix/intercepted-bean-metadata`.
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`), before BUG-20261117-47: each is testable
+  alone, this one by a deployment that calls no intercepted bean.
 - **Module**: `vauban-core` (`bean.validation.DeploymentValidator`, which the processor runs too)
 - **Symptom**: an interceptor that injects the bean it intercepts, `@Inject @Intercepted Bean<?> intercepted`, or the
   same type written `Bean<? extends Object>`, is refused as a definition error, everywhere: "Illegal injection of
   built-in metadata type with type variable or raw type: field Watcher.intercepted of type
   ParameterizedType[rawType=jakarta.enterprise.inject.spi.Bean, typeArguments=[WildcardType[upperBound=null,
   lowerBound=null]]]". The container refuses it at start and frozen (`DefinitionException`); the processor reports it
-  as an error, and the compilation fails. CDI 4.1, 5.5.8, in CDI Lite, lets any interceptor inject it.
-- **Repro**:
-  `VetoedInterceptorCompileTimeTest#anInterceptorThatInjectsTheBeanItInterceptsDeploysInTheProcessorAtStartAndFrozen`
-  in `vauban-processor`, disabled, for `?` and for `? extends Object`. It checks each place apart: what the processor
-  reports, and that a container started on classes compiled with the processor's validation off, its extensions run
-  at start, then frozen, answers `Watcher(vi.WatchedService: hello)` from `vi.WatchedService`. The container then
-  creates the interceptor, which reads `intercepted.getBeanClass()`: the test stays red until BUG-20261117-47 and this
-  one are both fixed. The parked branch adds the row of a wildcard without bounds to
-  `DeploymentValidatorReflectionChecksTest#interceptedBeanMetadata` in `vauban-core`.
+  as an error, and the compilation fails. The processor refuses `Interceptor<Itself>` in an interceptor too. CDI 4.1,
+  5.5.8, in CDI Lite, lets any interceptor inject both.
+- **Repro**: in `vauban-processor`, `VetoedInterceptorCompileTimeTest`:
+  - `#anInterceptorThatInjectsTheBeanItInterceptsDeploysInTheProcessorAtStartAndFrozen`, for `?` and for
+    `? extends Object`;
+  - `#anInterceptorThatInjectsItsOwnMetadataDeploysInTheProcessorAtStartAndFrozen`, `Interceptor<Introspector>`.
 
-  Red, in `vauban-b22-red.log`, both forms refused in all three places, on both commits:
-  - 455067f5, the base of BUG-20261117-22 ("Fix round 2 red run 2", and "Fix round 2 red run 5" with the final
-    tests): the processor read `?` as `(null, null)` and `? extends Object` as `(Object, null)`, and refused both;
-    the start and frozen refused both;
-  - 63cce2fc, BUG-20261117-22 with BUG-20261117-34 ("Fix round 2 red run 1", and "Fix round 2 red run 4" with the
-    final tests): the processor read both as `(null, null)`, and all three places refused both.
-
-  The row of `DeploymentValidatorReflectionChecksTest` is red in runs 4 and 5. "Fix round 2 red run 3", on 63cce2fc
-  with the first cause fixed only: the start and frozen deploy both forms, the processor still refuses both, and
-  creating the interceptor fails (third cause). Runs 1 to 5 predate the call to `vi.WatchedService`: every place
-  refused before anything was created, which the call does not change ("Round 4: BUG-47 repros run once", on
-  02b24e3d, with the call). "Round 4: repro with the parked fix", on 02b24e3d with the parked fix: the processor
-  accepts both forms; at start and frozen, `CreationException: Failed to create interceptor: vi.Watcher`, caused by
-  `UnsatisfiedResolutionException: No bean found for type: jakarta.enterprise.inject.spi.Bean`.
-- **Cause**: three.
-  - In `DeploymentValidator.isIllegalMetadataInjection`, the wildcard of `@Intercepted Bean<X>` is legal with an upper
-    bound `Object` only (`lowerBound != null || !isObjectType(upperBound)`, and `isObjectType(null)` is false). The
-    index records `?` and `? extends Object` without bounds: the bytecode scan and the reflective reading always did,
-    and the compiler's elements do since BUG-20261117-34. So the container never deployed such an interceptor.
-  - `@Intercepted Bean<X>` is legal in an interceptor only, and the validator tells an interceptor by loading its class
-    (`DeploymentClasses.load`) to read `@Interceptor`. The processor cannot load a class it compiles: it takes every
-    interceptor for a plain bean, and refuses `@Intercepted Bean<X>` whatever `X`. So it refused
-    `Bean<? extends Object>`, which it read as `(Object, null)`, before BUG-20261117-34 as well: BUG-20261117-34
-    changes the bound the message prints, not the verdict. `Interceptor<X>` in an interceptor meets the same.
-  - Past the check, the container provides no `@Intercepted Bean`: BUG-20261117-47.
-- **Fix order**: BUG-20261117-47 first, which provides the bean; then this one, to accept `Bean<?>` and
-  `Bean<? extends Object>`, starting from the parked branch.
-- **Parked**: the local branch `fix/intercepted-bean-metadata`, a WIP commit on top of BUG-20261117-22. It carries
-  both fixes in `DeploymentValidator`: a wildcard with no lower bound, and no upper bound or `Object`, is `?`; the
-  validator reads `@Interceptor` from the index first, which holds the classes the processor compiles, and loads the
-  class only when the index does not hold it, as its proxyability checks do (`@Interceptor` is not `@Inherited`, so
-  both give the same answer for a class the index holds). With them, the unit row and the test, enabled. That test
-  predates the call to `vi.WatchedService`: it checks that the container deploys and serves `vi.LoggedService`,
-  without creating the interceptor. Its code is that of the "Fix round 2 full build" and "Fix round 2 TCK" runs
-  (3329b5be): green, CDI Lite TCK 774/774.
+  Each checks what the processor reports, and that a container started on classes compiled with the processor's
+  validation off, its extensions run at start, then frozen, starts. No call creates the interceptor: providing the
+  metadata is BUG-20261117-47, whose repros call the bean. In `vauban-core`, the row of a wildcard without bounds in
+  `DeploymentValidatorReflectionChecksTest#interceptedBeanMetadata`.
+- **Cause** (proved, "BUG-20261117-41/47 red" and "BUG-20261117-41 red" below): two.
+  - In `DeploymentValidator.isIllegalMetadataInjection`, the wildcard of `@Intercepted Bean<X>` was legal with an
+    upper bound `Object` only (`lowerBound != null || !isObjectType(upperBound)`, and `isObjectType(null)` is false).
+    The index records `?` and `? extends Object` without bounds: the bytecode scan and the reflective reading always
+    did, and the compiler's elements do since BUG-20261117-34. So the container never deployed such an interceptor.
+  - `@Intercepted Bean<X>` and `Interceptor<X>` are legal in an interceptor only, and the validator told an
+    interceptor by loading its class (`DeploymentClasses.load`) to read `@Interceptor`. The processor cannot load a
+    class it compiles: it took every interceptor for a plain bean, and refused both whatever `X`.
+- **Fix**: from the parked branch `fix/intercepted-bean-metadata` (3dac4ef4), read and ported, not cherry-picked. A
+  wildcard with no lower bound, and no upper bound or `Object`, is `?`. The validator reads `@Interceptor` from the
+  index first, which holds the classes the processor compiles; when the index does not say so, it loads the class as
+  before (`@Interceptor` is not `@Inherited`, so both give the same answer for a class the index holds).
+- **CDI Lite TCK**: the Lite tests of `implementation.builtin.metadata.broken` (`typeparam.interceptor.*`,
+  `injection.intercepted.*`, `injection.BuiltinInterceptorInjectionTest`) expect a definition error for the illegal
+  forms, which the fix keeps; none injects the legal ones.
+  `full.implementation.builtin.metadata.BuiltinMetadataBeanTest` does, in the CDI Full part the runner leaves out.
 - **Other readers of a wildcard's bounds**, outside the language model, checked for the same assumption (that `?`
   has the upper bound `Object`): none has it. They read a missing bound as `Object` or as no constraint, test the kind
   only, or read another type:
@@ -1602,8 +1584,12 @@ suspected cause, status. Updated on every investigation.
     `ParameterizedSupertypes` gives `(null, null)` for both forms, as `BeanDiscovery` does for the reflective types;
   - `TypeHierarchyResolver`, `ReflectionValidator`, `ManagedBean`, `VaubanBeanManager`, `EventImpl` and
     `DisposerInvoker` read `java.lang.reflect.WildcardType`, whose `?` always has the upper bound `Object`.
+- **Verification**: red on 92622b2d, BUG-20261117-45 (`stack-l3b-red.log`, "BUG-20261117-41/47 red, on 92622b2d"
+  with the four serving repros, "BUG-20261117-41 red, on 92622b2d" with the deploy-only ones: the processor refused
+  all three types, the start and frozen refused both wildcards). Green: `stack-l3b-green.log`, "BUG-20261117-41 fix:
+  core and processor". The earlier runs, in `vauban-b22-red.log`, are those of the parked attempt ("Fix round 2 red
+  run 1" to 5, "Round 4: repro with the parked fix").
 - **Found by**: the review of 63cce2fc (BUG-20261117-22), by reading.
-
 ## BUG-20261117-39 — The start checks an invoker's argument lookups before the synthetic beans exist
 
 - **Date**: 2026-11-17

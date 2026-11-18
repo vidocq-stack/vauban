@@ -181,6 +181,8 @@ class VetoedInterceptorCompileTimeTest {
     private static final String WATCHED_HELLO = "Watcher(vi.WatchedService: hello)";
     /** Why the repros of the bean metadata of CDI 4.1, 5.5.8, are disabled. */
     private static final String NO_BEAN_METADATA = "BUG-20261117-47: the container provides no bean metadata bean";
+    /** What {@link #startedAnswer} gives of a container it only starts, without calling a bean. */
+    private static final String DEPLOYED = "deployed";
     /** Mansart's repository interface, above two interfaces no annotation brings into the index (BUG-20261117-31). */
     private static final String ARCHIVE = "Archive";
     private static final String PLAIN = "Plain";
@@ -2812,19 +2814,32 @@ class VetoedInterceptorCompileTimeTest {
 
     /**
      * An interceptor may inject the bean it intercepts as {@code @Intercepted Bean<?>}, which the source may write
-     * {@code Bean<? extends Object>}, the same type: the processor should report nothing of either, and the container
-     * deploy both and give the interceptor that bean, its extensions run at start as frozen. All three refuse both
-     * (BUG-20261117-41, open): the check of built-in metadata reads the wildcard without bounds the index gives both
-     * forms (BUG-20261117-34) as a bounded one, and the processor, which cannot load a class it compiles, does not see
-     * the interceptor. Past the check, the container provides no bean metadata (BUG-20261117-47).
+     * {@code Bean<? extends Object>}, the same type: the processor reports nothing of either, and the container deploys
+     * both, its extensions run at start as frozen. All three refused both (BUG-20261117-41): the check of built-in
+     * metadata read the wildcard without bounds the index gives both forms (BUG-20261117-34) as a bounded one, and the
+     * processor, which cannot load a class it compiles, did not see the interceptor. The container starts without a
+     * call, which would create the interceptor (BUG-20261117-47).
      */
-    @Disabled("BUG-20261117-41: @Intercepted Bean<?> is refused; BUG-20261117-47: no bean metadata bean")
     @ParameterizedTest(name = "@Intercepted Bean<{0}>")
     @ValueSource(strings = {"?", "? extends Object"})
     @DisplayName("an interceptor that injects @Intercepted Bean<?> deploys in the processor, at start and frozen")
     void anInterceptorThatInjectsTheBeanItInterceptsDeploysInTheProcessorAtStartAndFrozen(String argument)
             throws Exception {
-        assertEachPlaceServes(withAWatcher(argument), WATCHED_SERVICE, WATCHED_HELLO);
+        assertEachPlaceServes(withAWatcher(argument), null, DEPLOYED);
+    }
+
+    /**
+     * An interceptor may inject its own metadata, {@code Interceptor<Itself>}: the processor, which cannot load a class
+     * it compiles, did not see the interceptor and refused it (BUG-20261117-41). The container starts without a call.
+     */
+    @Test
+    @DisplayName("an interceptor that injects its Interceptor metadata deploys in the processor, at start and frozen")
+    void anInterceptorThatInjectsItsOwnMetadataDeploysInTheProcessorAtStartAndFrozen() throws Exception {
+        var sources = new LinkedHashMap<String, String>();
+        putMetadataInterceptor(sources, "Introspector", "Introspected",
+                "jakarta.enterprise.inject.spi.Interceptor<Introspector>");
+
+        assertEachPlaceServes(sources, null, DEPLOYED);
     }
 
     /**
@@ -2923,8 +2938,8 @@ class VetoedInterceptorCompileTimeTest {
     /**
      * Checks each place on {@code sources}: the processor reports nothing of built-in metadata and compiles them, and
      * a container started on them, its extensions run at start, then frozen, answers {@code expected} from
-     * {@code beanClass}. The container starts on classes compiled with the processor's validation off, so that each
-     * place gives its own verdict.
+     * {@code beanClass}, or only starts when {@code beanClass} is {@code null} ({@link #DEPLOYED}). The container
+     * starts on classes compiled with the processor's validation off, so that each place gives its own verdict.
      */
     private void assertEachPlaceServes(Map<String, String> sources, String beanClass, String expected)
             throws IOException {
@@ -2958,7 +2973,7 @@ class VetoedInterceptorCompileTimeTest {
         try (var loader = loader(result); var container = VaubanContainer.builder().classLoader(loader)
                 .scanClasspath().build()) {
             assertEquals(frozen, container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
-            return hello(container, loader.loadClass(beanClass));
+            return beanClass == null ? DEPLOYED : hello(container, loader.loadClass(beanClass));
         }
     }
 
