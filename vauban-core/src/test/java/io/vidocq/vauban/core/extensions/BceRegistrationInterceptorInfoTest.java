@@ -43,7 +43,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * CDI 4.1 calls a {@code @Registration} method with an {@code InterceptorInfo} parameter once for each interceptor
@@ -197,6 +196,7 @@ class BceRegistrationInterceptorInfoTest {
         @Registration(types = Object.class)
         public void interceptors(InterceptorInfo interceptor) {
             interceptor.types().forEach(type -> SEEN.add("type " + nameOf(type)));
+            interceptor.qualifiers().forEach(qualifier -> SEEN.add("qualifier " + qualifier.name()));
             interceptor.injectionPoints().forEach(point -> SEEN.add("injection point " + nameOf(point.type())));
         }
 
@@ -211,7 +211,6 @@ class BceRegistrationInterceptorInfoTest {
      * misses those of an interceptor (BUG-20261117-04).
      */
     @Test
-    @Disabled("BUG-20261117-04: an InterceptorInfo has no bean type and no injection point")
     @DisplayName("an InterceptorInfo gives the interceptor's bean types and injection points")
     void anInterceptorInfoGivesTheBeanTypesAndInjectionPoints() {
         InterceptorDescriber.SEEN.clear();
@@ -222,8 +221,10 @@ class BceRegistrationInterceptorInfoTest {
             assertEquals("hello", container.select(TracedService.class).get().hello());
         }
 
-        var seen = List.copyOf(InterceptorDescriber.SEEN);
-        assertTrue(seen.contains("type " + TimingTracer.class.getName()), seen::toString);
-        assertTrue(seen.contains("injection point " + Clock.class.getName()), seen::toString);
+        assertEquals(List.of("injection point " + Clock.class.getName(),
+                        "qualifier jakarta.enterprise.inject.Any", "qualifier jakarta.enterprise.inject.Default",
+                        "type " + TimingTracer.class.getName(),
+                        "type java.lang.Object"),
+                InterceptorDescriber.SEEN.stream().sorted().toList());
     }
 }

@@ -2337,6 +2337,56 @@ class VetoedInterceptorCompileTimeTest {
                 "serializable producer of java.lang.String[]", SERIALIZABLE + LOGGER));
     }
 
+    /** Records the bean types, the qualifiers and the injection points of the interceptor {@code vi.Logger}. */
+    public static class InterceptorDescriber implements BuildCompatibleExtension {
+
+        static final List<String> SEEN = new CopyOnWriteArrayList<>();
+
+        @Registration(types = Object.class)
+        public void interceptors(InterceptorInfo interceptor) {
+            if (!interceptor.declaringClass().name().equals(LOGGER)) {
+                return;
+            }
+            interceptor.types().forEach(type -> SEEN.add("type " + ObserverRecorder.nameOf(type)));
+            interceptor.qualifiers().forEach(qualifier -> SEEN.add("qualifier " + qualifier.name()));
+            interceptor.injectionPoints().forEach(point -> SEEN.add("injection point "
+                    + ObserverRecorder.nameOf(point.type())));
+        }
+    }
+
+    /**
+     * CDI 4.1 gives an interceptor's {@code BeanInfo} the bean types, the qualifiers and the injection points of its
+     * class, as a bean's. The container gave none, in the processor, at start and frozen alike (BUG-20261117-04).
+     */
+    @Test
+    @DisplayName("an InterceptorInfo gives the bean types, qualifiers and injection points of its class, everywhere")
+    void anInterceptorInfoGivesItsTypesQualifiersAndInjectionPointsFromTheProcessorAtStartAndFrozen()
+            throws Exception {
+        var sources = withASerializableInterceptor();
+        sources.put("vi/Clock.java", """
+                package vi;
+                @jakarta.enterprise.context.Dependent
+                public class Clock {
+                }
+                """);
+        sources.compute("vi/Logger.java", (_, source) -> withInjectedClock(source));
+
+        var seen = seenThreeWays(sources, InterceptorDescriber.class, InterceptorDescriber.SEEN);
+
+        seen.assertEachIs(List.of("injection point vi.Clock", "qualifier jakarta.enterprise.inject.Any",
+                "qualifier jakarta.enterprise.inject.Default", "type java.io.Serializable", "type java.lang.Object",
+                "type vi.Logger", "type vi.Wrapping"));
+    }
+
+    /** {@code source}, the class of which gets an {@code @Inject vi.Clock clock} field. */
+    private static String withInjectedClock(String source) {
+        assertNotNull(source, "no source of vi.Logger");
+        var injected = source.replace("    @jakarta.interceptor.AroundInvoke",
+                "    @jakarta.inject.Inject\n    vi.Clock clock;\n    @jakarta.interceptor.AroundInvoke");
+        assertNotEquals(source, injected, () -> "no @AroundInvoke in:\n" + source);
+        return injected;
+    }
+
     /** Records the member, the disposer and the stereotypes of each bean of {@code vi.Stock} and {@code vi.Shown}. */
     public static class MemberRecorder implements BuildCompatibleExtension {
 

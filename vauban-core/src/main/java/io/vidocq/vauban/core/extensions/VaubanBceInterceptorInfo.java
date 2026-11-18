@@ -19,6 +19,7 @@
  */
 package io.vidocq.vauban.core.extensions;
 
+import io.vidocq.vauban.core.bean.model.BeanDescriptor;
 import io.vidocq.vauban.core.bean.model.InterceptorDescriptor;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
@@ -42,10 +43,21 @@ public final class VaubanBceInterceptorInfo implements InterceptorInfo {
 
     private final InterceptorDescriptor descriptor;
     private final IndexLookup lookup;
+    /** The interceptor class described as a managed bean, for its bean types, qualifiers and injection points. */
+    private final VaubanBceBeanInfo asBean;
 
     public VaubanBceInterceptorInfo(InterceptorDescriptor descriptor, IndexLookup lookup) {
+        this(descriptor, null, lookup);
+    }
+
+    /**
+     * @param asBean the interceptor class as the managed bean it would be, which gives the interceptor its bean types,
+     *               qualifiers and injection points (BUG-20261117-04); {@code null} when it cannot be one: none
+     */
+    public VaubanBceInterceptorInfo(InterceptorDescriptor descriptor, BeanDescriptor asBean, IndexLookup lookup) {
         this.descriptor = descriptor;
         this.lookup = lookup;
+        this.asBean = asBean == null ? null : new VaubanBceBeanInfo(asBean, lookup);
     }
 
     @Override
@@ -72,14 +84,16 @@ public final class VaubanBceInterceptorInfo implements InterceptorInfo {
                 lookup);
     }
 
+    /** The bean types of the interceptor class, as a managed bean's (BUG-20261117-04). */
     @Override
     public Collection<Type> types() {
-        return List.of();
+        return asBean == null ? List.of() : asBean.types();
     }
 
+    /** The qualifiers of the interceptor class, as a managed bean's (BUG-20261117-04). */
     @Override
     public Collection<AnnotationInfo> qualifiers() {
-        return List.of();
+        return asBean == null ? List.of() : asBean.qualifiers();
     }
 
     @Override
@@ -146,8 +160,9 @@ public final class VaubanBceInterceptorInfo implements InterceptorInfo {
         return List.of();
     }
 
+    /** The injection points of the interceptor class, as a managed bean's (BUG-20261117-04). */
     @Override
     public Collection<InjectionPointInfo> injectionPoints() {
-        return List.of();
+        return asBean == null ? List.of() : asBean.injectionPoints();
     }
 }

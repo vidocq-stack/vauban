@@ -355,8 +355,8 @@ public final class BceProcessor {
         var enhancedBeans = beansAfterEnhancement(beans, allEnhancementMods, managedBean);
         var invokers = new ArrayList<VaubanInvokerFactory>();
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) ->
-                processRegistration(bce, bceClass, enhancedBeans, observers, interceptors, lookup, classLoader, types,
-                        deploymentErrors, archiveTypes, invokers));
+                processRegistration(bce, bceClass, enhancedBeans, observers, interceptorsAsBeans(interceptors,
+                        managedBean), lookup, classLoader, types, deploymentErrors, archiveTypes, invokers));
 
         // Phase: @Synthesis
         runPhase(extensions, deploymentErrors, deploymentErrorCauses, (bceClass, bce) -> {
@@ -793,7 +793,7 @@ public final class BceProcessor {
     private static void processRegistration(Object bce, Class<?> bceClass,
                                             List<BeanDescriptor> beans,
                                             List<io.vidocq.vauban.core.bean.model.ObserverDescriptor> observers,
-                                            List<io.vidocq.vauban.core.bean.model.InterceptorDescriptor> interceptors,
+                                            List<InterceptorBean> interceptors,
                                             IndexLookup lookup, ClassLoader classLoader,
                                             VaubanTypes types,
                                             List<String> errors,
@@ -832,11 +832,11 @@ public final class BceProcessor {
      * CDI 4.1 says: handed a bean, it failed the deployment with "argument type mismatch" (BUG-20261117-02).
      */
     private static List<BeanInfo> registrationTargets(Method method, Class<?>[] expected, List<BeanDescriptor> beans,
-            List<InterceptorDescriptor> interceptors, IndexLookup lookup, ClassLoader classLoader,
+            List<InterceptorBean> interceptors, IndexLookup lookup, ClassLoader classLoader,
             List<Class<?>> archiveClasses) {
         var interceptorsOnly = hasInterceptorInfoParam(method);
         var interceptorClasses = interceptors.stream()
-                .map(InterceptorDescriptor::interceptorClass)
+                .map(interceptor -> interceptor.interceptor().interceptorClass())
                 .collect(Collectors.toSet());
         var targets = new ArrayList<BeanInfo>();
         if (!interceptorsOnly) {
@@ -849,8 +849,8 @@ public final class BceProcessor {
             }
         }
         for (var interceptor : interceptors) {
-            if (BceTypeMatcher.matchesInterceptorTypes(expected, interceptor, lookup, classLoader)) {
-                targets.add(new VaubanBceInterceptorInfo(interceptor, lookup));
+            if (BceTypeMatcher.matchesInterceptorTypes(expected, interceptor.interceptor(), lookup, classLoader)) {
+                targets.add(new VaubanBceInterceptorInfo(interceptor.interceptor(), interceptor.bean(), lookup));
             }
         }
         if (targets.isEmpty() && !interceptorsOnly && archiveClasses != null && !usesInvokerFactory(method)) {
@@ -870,6 +870,21 @@ public final class BceProcessor {
             }
         }
         return targets;
+    }
+
+    /** An interceptor, and its class as the managed bean it would be, or {@code null} when it cannot be one. */
+    private record InterceptorBean(InterceptorDescriptor interceptor, BeanDescriptor bean) {
+    }
+
+    /**
+     * Each interceptor with its class described as a managed bean: CDI 4.1 gives an interceptor's {@code BeanInfo} the
+     * bean types, qualifiers and injection points of its class, which it had none of (BUG-20261117-04).
+     */
+    private static List<InterceptorBean> interceptorsAsBeans(List<InterceptorDescriptor> interceptors,
+            java.util.function.Function<DotName, BeanDescriptor> managedBean) {
+        return interceptors.stream()
+                .map(interceptor -> new InterceptorBean(interceptor, managedBean.apply(interceptor.interceptorClass())))
+                .toList();
     }
 
     private static boolean hasObserverInfoParam(Method method) {

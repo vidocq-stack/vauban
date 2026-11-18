@@ -3420,7 +3420,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-04 — An `InterceptorInfo` has no bean type and no injection point
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
+- **Status**: FIXED (2026-11-18, lane L4)
 - **Module**: `vauban-core` (`VaubanBceInterceptorInfo`)
 - **Symptom**: the `InterceptorInfo` a `@Registration` method gets answers an empty `types()`, `qualifiers()` and
   `injectionPoints()`, at start, frozen and in the processor. CDI 4.1 gives an interceptor's `BeanInfo` its bean types
@@ -3436,6 +3436,19 @@ suspected cause, status. Updated on every investigation.
   audit the bricks again: Ravel, Cervantes, Champollion and Mansart read `types()` or `injectionPoints()` in
   `@Registration(types = Object.class)`. It changes what every brick's extensions see, so it gets its own change.
 - **Found by**: the audit of the bricks' `@Registration` methods for BUG-20261117-02.
+- **Cause** (proved): `VaubanBceInterceptorInfo.types()`, `qualifiers()` and `injectionPoints()` returned `List.of()`,
+  and `BceProcessor` built it from the `InterceptorDescriptor` alone, which holds neither, on the three paths.
+- **Fix**: `BceProcessor.process` describes each interceptor class with the `managedBean` function the processor and
+  the container already pass for the classes `@Enhancement` makes beans (`interceptorsAsBeans`), and
+  `VaubanBceInterceptorInfo` takes its bean types, qualifiers and injection points from that descriptor.
+- **TCK**: `RegistrationTest` matches the interceptor `MyInterceptor` by its type and checks `isInterceptor()`; it reads
+  neither the types, the qualifiers nor the injection points.
+- **Verification**: red, `stack-l4-04-red.log`: "Red run 1" (at start: no type, qualifier or injection point) and
+  "Red run 2" (`VetoedInterceptorCompileTimeTest#anInterceptorInfoGivesItsTypesQualifiersAndInjectionPointsFromTheProcessorAtStartAndFrozen`
+  on the code of the BUG-20261117-13 commit: 3 failures, the processor, start and frozen). Green,
+  `stack-l4-04-dev.log`: "Dev run 1", "Dev run 2", "Dev run 3" (vauban-core, vauban-processor, vauban-maven-plugin).
+- **Bricks**: Ravel, Cervantes, Champollion and Mansart read `types()` or `injectionPoints()` in
+  `@Registration(types = Object.class)`: they now see an interceptor's, as CDI 4.1 gives them.
 
 ## BUG-20261117-03 — The processor's bean types stop at a superclass the compilation compiles
 
