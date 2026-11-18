@@ -2045,6 +2045,69 @@ class VetoedInterceptorCompileTimeTest {
     }
 
     /**
+     * A producer of {@code <F> Outer<F>.Inner<Integer>}, where {@code Inner<I> implements Holder<O>}: the type above it
+     * is {@code Holder<F>}, whose {@code F} is the producer's, as {@code Bean.getTypes()} says. The producer's type
+     * variables were read from the type arguments of the produced type only, not from the type that encloses it, and
+     * {@code Holder<F>} was made raw, at build, at start and frozen, and in {@code Bean.getTypes()} (BUG-20261117-21).
+     */
+    @Test
+    @DisplayName("a producer of an inner class has the type above it with its own type variable from the enclosing type")
+    void aProducerOfAnInnerClassKeepsItsTypeVariableFromTheEnclosingType() throws Exception {
+        var sources = withAnInnerClassProducer();
+        putType(sources, "InnerFactory", DEPENDENT + """
+                public class InnerFactory {
+                    @jakarta.enterprise.inject.Produces
+                    <F> Outer<F>.Inner<Integer> inner() {
+                        return new Outer<F>().new Inner<Integer>();
+                    }
+                }""");
+        var container = new ContainerTypes();
+
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, container);
+
+        var expected = List.of("producer of vi.types.InnerFactory: java.lang.Object, vi.types.Holder<F>,"
+                + " vi.types.Outer$Inner<java.lang.Integer>", INNER_FACTORY_TYPES);
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(expected));
+    }
+
+    /**
+     * A producer of {@code Outer<String>.Plain}, where {@code Plain implements Holder<O>} declares no type parameter: the
+     * type above it is {@code Holder<String>}, as {@code Bean.getTypes()} says. The index names a type without type
+     * arguments as a class type, which has no owner, so the descriptor has the raw {@code Holder}, at build, at start
+     * and frozen (BUG-20261118-47).
+     */
+    @Test
+    @Disabled("BUG-20261118-47: a non-generic inner class of a generic class is a class type, which has no owner")
+    @DisplayName("a producer of a non-generic inner class of a generic class has the type above it parameterized")
+    void aProducerOfANonGenericInnerClassHasTheTypesAboveIt() throws Exception {
+        var sources = withAnInnerClassProducer();
+        putType(sources, "Outer", """
+                public class Outer<O> {
+                    public class Inner<I> implements Holder<O> {
+                    }
+                    public class Plain implements Holder<O> {
+                    }
+                }""");
+        putType(sources, "InnerFactory", DEPENDENT + """
+                public class InnerFactory {
+                    @jakarta.enterprise.inject.Produces
+                    Outer<String>.Plain plain() {
+                        return new Outer<String>().new Plain();
+                    }
+                }""");
+        var container = new ContainerTypes();
+
+        var seen = seenThreeWays(sources, BeanTypeRecorder.class, BeanTypeRecorder.SEEN, container);
+
+        var expected = List.of("producer of vi.types.InnerFactory: java.lang.Object, vi.types.Holder<java.lang.String>,"
+                + " vi.types.Outer$Plain", INNER_FACTORY_TYPES);
+        // Reflection gives Outer<String>.Plain as a parameterized type without arguments, its owner Outer<String>
+        var reflected = List.of("producer of vi.types.InnerFactory: java.lang.Object,"
+                + " vi.types.Holder<java.lang.String>, vi.types.Outer$Plain<>", INNER_FACTORY_TYPES);
+        assertAll(() -> seen.assertEachIs(expected), () -> container.assertEachIs(reflected));
+    }
+
+    /**
      * The producer of {@code Outer<String>.Inner<Integer>} is a {@code Holder<String>}, as {@code Bean.getTypes()}
      * says, which reads the producer method: the index names the produced type with {@code Outer<String>}, the type
      * that encloses it, and the descriptor has {@code Holder<String>}, at build, at start and frozen. It had the raw

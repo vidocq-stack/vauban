@@ -53,9 +53,11 @@ public sealed interface TypeInfo {
     /**
      * A parameterized type: its class, its type arguments, and the type that encloses it when that type is
      * parameterized, {@code Outer<String>} of {@code Outer<String>.Inner<Integer>}, whose arguments the classes and
-     * interfaces above it may name (BUG-20261117-21); {@code null} otherwise. The owner tells where the type comes
-     * from, not which type it is: two parameterized types of the same class and arguments are equal whatever their
-     * owners, as the resolution of the injection points always compared them.
+     * interfaces above it may name (BUG-20261117-21); {@code null} otherwise. The owner is part of the type, as
+     * {@code java.lang.reflect.ParameterizedType.equals} counts it: {@code Outer<String>.Inner<Integer>} and
+     * {@code Outer<Long>.Inner<Integer>} are two types. Every reader of the index gives the owner of a member type, so
+     * one type is one value; the language model has no owner, and the resolution of an injection point ignores the
+     * owner where one side has none ({@code AssignabilityRules}).
      *
      * @param rawType       the class
      * @param typeArguments its type arguments
@@ -69,17 +71,6 @@ public sealed interface TypeInfo {
         /** A parameterized type that no parameterized type encloses. */
         public ParameterizedType(DotName rawType, List<TypeInfo> typeArguments) {
             this(rawType, typeArguments, null);
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof ParameterizedType that && rawType.equals(that.rawType)
-                    && typeArguments.equals(that.typeArguments);
-        }
-
-        @Override
-        public int hashCode() {
-            return 31 * rawType.hashCode() + typeArguments.hashCode();
         }
 
         @Override

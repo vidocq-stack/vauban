@@ -294,4 +294,34 @@ class AssignabilityRulesTest {
             assertTrue(rules.isSubtypeOf(DotName.of("java.util.List"), DotName.of("java.lang.Iterable")));
         }
     }
+
+    /** BUG-20261117-21: the enclosing type of a parameterized type counts where both sides have one. */
+    @Nested
+    @DisplayName("enclosing types (owner)")
+    class EnclosingTypes {
+
+        private final DotName outer = DotName.of("p.Outer");
+        private final DotName inner = DotName.of("p.Outer$Inner");
+        private final List<TypeInfo> integer = List.of(new ClassType(DotName.of("java.lang.Integer")));
+
+        private ParameterizedType innerOf(String outerArgument) {
+            return new ParameterizedType(inner, integer,
+                    new ParameterizedType(outer, List.of(new ClassType(DotName.of(outerArgument)))));
+        }
+
+        @Test
+        @DisplayName("Outer<String>.Inner<Integer> is assignable to itself, not to Outer<Long>.Inner<Integer>")
+        void theOwnersMustAgree() {
+            assertTrue(rules.isAssignable(innerOf("java.lang.String"), innerOf("java.lang.String")));
+            assertFalse(rules.isAssignable(innerOf("java.lang.String"), innerOf("java.lang.Long")));
+        }
+
+        @Test
+        @DisplayName("a side without an owner, as the language model gives it, agrees with any owner")
+        void aSideWithoutAnOwnerAgrees() {
+            var alone = new ParameterizedType(inner, integer);
+            assertTrue(rules.isAssignable(innerOf("java.lang.String"), alone));
+            assertTrue(rules.isAssignable(alone, innerOf("java.lang.String")));
+        }
+    }
 }

@@ -31,6 +31,30 @@ suspected cause, status. Updated on every investigation.
   `stack-l4-51-dev.log`, "Green run 1".
 - **Found by**: the L4 review, round 5.
 
+## BUG-20261118-47 — A non-generic inner class of a generic class has the raw types above it in its descriptor
+
+- **Date**: 2026-11-18
+- **Status**: OPEN
+- **Module**: `vauban-indexer` (`TypeInfo.ClassType`), as `vauban-core` (`BeanDiscovery`) and `vauban-processor`
+  (`ParameterizedSupertypes`) read it
+- **Symptom**: `@Produces Outer<String>.Plain plain()`, where `Outer<O>` declares `class Plain implements Holder<O>`
+  and `Plain` declares no type parameter: the producer has the raw `Holder` in the processor, at start and frozen, where
+  `Bean.getTypes()` has `Holder<String>`. The shape BUG-20261117-21 left.
+- **Repro**: `VetoedInterceptorCompileTimeTest#aProducerOfANonGenericInnerClassHasTheTypesAboveIt` in
+  `vauban-processor`, disabled with this id; red when enabled on 814ae485 (`stack-l2d-red.log`, "RED
+  BUG-20261118-47 on 814ae485 (container expectation in reflection's form)"): the three ways see `Holder`, the
+  container `Holder<java.lang.String>`.
+- **Cause**: the index names a type without type arguments as a `ClassType`, which has no owner, so `Outer<String>`
+  is lost; reflection gives a `ParameterizedType` without arguments whose owner is `Outer<String>` (`Outer$Plain<>`).
+- **Why not fixed with BUG-20261117-21**: carrying the owner takes either a `ClassType` with an owner, a second change
+  of a public record whose patterns reach every brick, or a `ParameterizedType` without arguments, which every reader
+  of the index takes for one with arguments: the language model's `ParameterizedType`, the source the processor
+  writes (`AnnotationArtefacts`), the observed type notation, Vidocq's dev console. Each needs a decision and its own
+  tests.
+- **Found by**: the review of BUG-20261117-21, round 1 of batch D, lane L2.
+
+---
+
 ## BUG-20261118-46 — A reflective member type Vauban builds has no owner, where the JDK gives its declaring class
 
 - **Date**: 2026-11-18
@@ -951,6 +975,9 @@ suspected cause, status. Updated on every investigation.
   without the removal it carried (`stack-l2d-dev06.log`, "BUG-18-06 fix (5)"); `ConstructorTypeUsesValueTest`;
   processor 444 (14 skipped), maven-plugin 172, architecture 56 (`stack-l2d-dev06.log`, "BUG-18-06 fix (6)" and
   "(8)"). New code covered 100 of 111 lines (JaCoCo, "(8)").
+- **Round 1**: a compiler without trees, ECJ say, gets a `NOTE` once, from `VaubanProcessor.init`, that says those
+  annotations are not read (`ConstructorTypeUsesNoteTest`, green in `stack-l2d-r1.log`, "Round 1 (3)"); javac gets
+  none. No red: the note is new.
 - **What stays**: a member written as a constant expression of several operands that names a constant,
   `NAME + "!"`, is not evaluated: the processor leaves out the annotation that holds it
   (`aComputedMemberIsLeftOut`). javac joins literals alone as it parses them.
@@ -975,9 +1002,6 @@ suspected cause, status. Updated on every investigation.
   it) and `EnhancementFailureGenerationTest` in `vauban-maven-plugin`. Red without the fix
   (`stack-l1-r3-1805.log`, "BUG-18-05 red: core start paths (unprocessed isolated, no service file)" and
   "BUG-18-05 red: vauban:generate": nothing was thrown).
-- **Round 1**: a compiler without trees, ECJ say, gets a `NOTE` once, from `VaubanProcessor.init`, that says those
-  annotations are not read (`ConstructorTypeUsesNoteTest`, green in `stack-l2d-r1.log`, "Round 1 (3)"); javac gets
-  none. No red: the note is new.
 - **Cause**: both methods filled error lists, `processEnhancement`'s and the `EnhancementSink`'s, and never read
   them; their own `catch (Exception _)` dropped a constructor that failed.
 - **Fix**: both throw the `DeploymentException` of their errors, the first exception as its cause, through
@@ -2907,8 +2931,14 @@ suspected cause, status. Updated on every investigation.
 - **Cause, proved**: red on 67964972 with the `@Disabled` lifted (`stack-l2d-red.log`, "RED BUG-20261117-21 on
   67964972"): the raw `Holder` in the processor, at start and frozen, where `Bean.getTypes()` has `Holder<String>`.
 - **Fix**: `TypeInfo.ParameterizedType` gains `owner`, the parameterized type that encloses it, `null` otherwise; a
-  two-argument constructor keeps the old calls, and two types of the same class and arguments stay equal whatever
-  their owners, so the resolution of an injection point compares as before. The bytecode scan reads the owner from
+  two-argument constructor keeps the old calls. The owner is part of the type, the record's own `equals` and
+  `hashCode`, as reflection compares it (round 1: it was left out of equality at first). Every reader of a type gives
+  the owner of a member type, so one type is one value: the processor's `ParameterizedSupertypes.declaredTypeInfo`
+  reads `getEnclosingType()`, `ObserverInjectionPoints.given` substitutes into the owner, `TypeInfoUtils` reads
+  `getOwnerType()`. `AssignabilityRules` compares the owners where both sides have one, and ignores them where one
+  side has none, a type from the language model, which has no owner. The producer's type variables include those of
+  the owner, `F` of `<F> Outer<F>.Inner<Integer>`, in the descriptor (`BeanDiscovery.addTypeVariableNames`) and in
+  `Bean.getTypes()` (`ManagedBean.addTypeVariables`). The bytecode scan reads the owner from
   the signature's outer type (`ClassTypeParameters`), the processor from `DeclaredType.getEnclosingType()`, and
   `BeanDiscovery.reflectTypeToTypeInfo` from `getOwnerType()`, each where the enclosing type is parameterized. At
   start, the produced type rebuilt for `TypeHierarchyResolver` gives the owner, which maps `O` to `String`; at build,
@@ -2921,12 +2951,22 @@ suspected cause, status. Updated on every investigation.
   .EnclosingTypes` and `ClassChecksumsTest.theEnclosingTypeOfAParameterizedTypeCounts`; the whole reactor, indexer
   140, core 1754 (11 skipped), processor 444 (13 skipped), maven-plugin 172, architecture 56 (`stack-l2d-dev21.log`,
   "BUG-21 (9)").
-- **What stays**: an inner class that declares no type parameter, `Outer<String>.Inner`, is a `ClassType`, which has
-  no owner, and keeps the raw types above it; the first shape above, `<F> Outer<F>.Inner<Integer>`, keeps the raw
-  `Holder` (`ManagedBean.typesOfProducedType` and the descriptor read the producer's type variables from the type
-  arguments only; not tested). Vidocq's dev console (`CdiInventory.type`) names two components in its record
-  pattern and needs `, _` to compile against this Vauban (a one-line companion).
-- **Found by**: the review of fix round 3 of BUG-20261117-14 (M-2).
+- **Round 1 red**: on dc80d927 with the owner in `TypeInfo`'s equality alone (`stack-l2d-red.log`, "RED round 1 on
+  dc80d927 with the owner in TypeInfo equality alone"): `OwnedTypesAtBuildAndStartTest`, the bean types of
+  `Items extends ArrayList<Box<String>.Item<Integer>>`, has `Box<String>.Item<Integer>` at start and `Box$Item<Integer>`
+  without owner at build. On dc80d927 itself ("RED round 1 on dc80d927 (new tests, main of dc80d927)"): the owner
+  takes no part in equality (`ClassFileScannerTest.theOwnerIsPartOfTheType`), `Outer<String>.Inner<Integer>` is
+  assignable to `Outer<Long>.Inner<Integer>` (`AssignabilityRulesTest.theOwnersMustAgree`), and the producer of
+  `<F> Outer<F>.Inner<Integer>` has the raw `Holder` the three ways and in `Bean.getTypes()`
+  (`aProducerOfAnInnerClassKeepsItsTypeVariableFromTheEnclosingType`).
+- **Round 1 verification**: those tests green (`stack-l2d-r1.log`, "Round 1 (2)" and "(3)"); the full build and the
+  CDI TCK in `stack-l2d-r1.log`.
+- **What stays**: an inner class that declares no type parameter, `Outer<String>.Plain`, is a `ClassType`, which has
+  no owner (BUG-20261118-47). Vidocq's dev console (`CdiInventory.type`) names two components in its record pattern
+  and needs `, _` to compile against this Vauban (a one-line companion). The language model has no owner:
+  `LangModelTypeMapper` and `VaubanMethodInfo`'s receiver give none, and `TypeAnnotationReader.receiver` gives the
+  receiver of an inner class's methods without its enclosing type, which only the language model reads.
+  `ObservedTypeNotation` writes no owner: its types come from the language model.
 
 ## BUG-20261117-20 — Under a Turkish default locale, a primitive type no longer matches the class named after it
 

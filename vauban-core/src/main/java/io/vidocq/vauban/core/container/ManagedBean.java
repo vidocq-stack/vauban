@@ -459,6 +459,8 @@ public final class ManagedBean<T> implements Bean<T>, PassivationCapable {
                 for (var argument : parameterized.getActualTypeArguments()) {
                     addTypeVariables(argument, variables);
                 }
+                // F of <F> Outer<F>.Inner<Integer> is the producer's too (BUG-20261117-21)
+                addTypeVariables(parameterized.getOwnerType(), variables);
             }
             case java.lang.reflect.GenericArrayType array -> addTypeVariables(array.getGenericComponentType(),
                     variables);

@@ -89,7 +89,10 @@ public final class TypeInfoUtils {
         List<TypeInfo> args = Arrays.stream(pt.getActualTypeArguments())
                 .map(argument -> fromReflectType(argument, converting))
                 .toList();
-        return new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(DotName.of(raw.getName()), args);
+        // The enclosing type, where it is parameterized, as the index reads it (BUG-20261117-21)
+        var owner = pt.getOwnerType() instanceof java.lang.reflect.ParameterizedType parameterized
+                ? fromParameterizedType(parameterized, converting) : null;
+        return new io.vidocq.vauban.indexer.model.TypeInfo.ParameterizedType(DotName.of(raw.getName()), args, owner);
     }
 
     private static TypeInfo fromWildcardType(java.lang.reflect.WildcardType wt,

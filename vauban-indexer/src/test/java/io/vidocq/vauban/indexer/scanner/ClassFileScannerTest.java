@@ -774,15 +774,21 @@ class ClassFileScannerTest {
         }
 
         @Test
-        @DisplayName("the owner is no part of the type's identity")
-        void theOwnerIsNoPartOfTheIdentity() {
+        @DisplayName("the owner is part of the type, as reflection compares it")
+        void theOwnerIsPartOfTheType() {
             var integer = List.<TypeInfo>of(new ClassType(DotName.of("java.lang.Integer")));
+            var outer = DotName.of(Outer.class.getName());
             var inner = DotName.of(Outer.Inner.class.getName());
-            var owned = new ParameterizedType(inner, integer,
-                    new ParameterizedType(DotName.of(Outer.class.getName()), integer));
+            var ofNumber = new ParameterizedType(inner, integer,
+                    new ParameterizedType(outer, List.of(new ClassType(DotName.of("java.lang.Number")))));
+            var ofInteger = new ParameterizedType(inner, integer, new ParameterizedType(outer, integer));
+            var sameAsOfNumber = new ParameterizedType(inner, integer,
+                    new ParameterizedType(outer, List.of(new ClassType(DotName.of("java.lang.Number")))));
             var alone = new ParameterizedType(inner, integer);
-            assertAll(() -> assertEquals(alone, owned), () -> assertEquals(alone.hashCode(), owned.hashCode()),
-                    () -> assertTrue(owned.toString().endsWith(", owner=" + owned.owner() + "]")),
+            assertAll(() -> assertNotEquals(ofNumber, ofInteger), () -> assertNotEquals(alone, ofNumber),
+                    () -> assertEquals(sameAsOfNumber, ofNumber),
+                    () -> assertEquals(sameAsOfNumber.hashCode(), ofNumber.hashCode()),
+                    () -> assertTrue(ofNumber.toString().endsWith(", owner=" + ofNumber.owner() + "]")),
                     () -> assertFalse(alone.toString().contains("owner")));
         }
     }

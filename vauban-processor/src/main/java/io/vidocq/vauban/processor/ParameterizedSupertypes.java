@@ -231,7 +231,12 @@ final class ParameterizedSupertypes implements Function<TypeInfo, Optional<List<
                 arguments.add(info);
             }
         }
-        return arguments.isEmpty() ? new TypeInfo.ClassType(name) : new TypeInfo.ParameterizedType(name, arguments);
+        // The enclosing type, where it is parameterized, as the bytecode scan and reflection give it (BUG-20261117-21)
+        var owner = type.getEnclosingType().getKind() == TypeKind.DECLARED
+                && typeInfo(type.getEnclosingType(), reading) instanceof TypeInfo.ParameterizedType parameterized
+                ? parameterized : null;
+        return arguments.isEmpty() ? new TypeInfo.ClassType(name)
+                : new TypeInfo.ParameterizedType(name, arguments, owner);
     }
 
     private TypeInfo arrayTypeInfo(ArrayType type, Reading reading) {

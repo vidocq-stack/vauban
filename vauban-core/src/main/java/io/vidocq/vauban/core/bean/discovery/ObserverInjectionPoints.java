@@ -136,8 +136,9 @@ final class ObserverInjectionPoints {
     static TypeInfo given(TypeInfo type, Map<String, TypeInfo> given) {
         return switch (type) {
             case TypeInfo.TypeVariable(var name, _) -> given.getOrDefault(name, type);
-            case TypeInfo.ParameterizedType(var raw, var arguments, _) -> new TypeInfo.ParameterizedType(raw,
-                    arguments.stream().map(argument -> given(argument, given)).toList());
+            case TypeInfo.ParameterizedType(var raw, var arguments, var owner) -> new TypeInfo.ParameterizedType(raw,
+                    arguments.stream().map(argument -> given(argument, given)).toList(),
+                    owner == null ? null : given(owner, given));
             case TypeInfo.ArrayType(var component, var dimensions) ->
                     new TypeInfo.ArrayType(given(component, given), dimensions);
             case TypeInfo.WildcardType(var upper, var lower) -> new TypeInfo.WildcardType(

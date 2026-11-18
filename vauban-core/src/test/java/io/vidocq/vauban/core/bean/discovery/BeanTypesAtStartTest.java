@@ -381,7 +381,10 @@ class BeanTypesAtStartTest {
                 ListArrayLibrary.class, Set.of(cls(ListArrayLibrary.class), parameterized(ListArrayShelf.class,
                         cls(STRING)), parameterized(Holder.class, array(parameterized(List.class, cls(STRING)))),
                         cls(OBJECT)),
-                InnerUser.class, Set.of(cls(InnerUser.class), parameterized(Outer.Inner.class, cls("java.lang.Integer")),
+                // Outer<String>.Inner<Integer>, its owner part of the type (BUG-20261117-21)
+                InnerUser.class, Set.of(cls(InnerUser.class), new TypeInfo.ParameterizedType(
+                                DotName.of(Outer.Inner.class.getName()), List.of(cls("java.lang.Integer")),
+                                parameterized(Outer.class, cls(STRING))),
                         parameterized(Holder.class, cls(STRING)), cls(OBJECT)),
                 RawUser.class, Set.of(cls(RawUser.class), cls(Base.class), cls(Holder.class), cls(OBJECT)));
 

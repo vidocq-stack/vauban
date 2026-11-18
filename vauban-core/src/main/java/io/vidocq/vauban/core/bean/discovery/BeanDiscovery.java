@@ -862,8 +862,11 @@ public final class BeanDiscovery {
     private static void addTypeVariableNames(TypeInfo type, Set<String> names) {
         switch (type) {
             case TypeInfo.TypeVariable(var name, _) -> names.add(name);
-            case TypeInfo.ParameterizedType(_, var arguments, _) -> arguments.forEach(
-                    argument -> addTypeVariableNames(argument, names));
+            case TypeInfo.ParameterizedType(_, var arguments, var owner) -> {
+                arguments.forEach(argument -> addTypeVariableNames(argument, names));
+                // F of <F> Outer<F>.Inner<Integer> is the producer's too (BUG-20261117-21)
+                addTypeVariableNames(owner, names);
+            }
             case TypeInfo.ArrayType(var component, _) -> addTypeVariableNames(component, names);
             case TypeInfo.WildcardType(var upper, var lower) -> {
                 addTypeVariableNames(upper, names);

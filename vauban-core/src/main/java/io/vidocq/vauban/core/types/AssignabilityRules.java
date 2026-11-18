@@ -208,8 +208,9 @@ public final class AssignabilityRules {
 
     private boolean isAssignableToParameterized(TypeInfo beanType, ParameterizedType required) {
         return switch (beanType) {
-            case ParameterizedType(var rawType, var typeArguments, _) -> rawType.equals(required.rawType())
-                    && typeArgumentsAssignable(typeArguments, required.typeArguments());
+            case ParameterizedType(var rawType, var typeArguments, var owner) -> rawType.equals(required.rawType())
+                    && typeArgumentsAssignable(typeArguments, required.typeArguments())
+                    && ownersAssignable(owner, required.owner());
             // CDI 4.1, 5.2.4: "A raw bean type is considered assignable to a parameterized required type if the raw
             // types are identical and all type parameters of the required type are either unbounded type variables
             // or java.lang.Object." A raw Foo satisfies Foo<Object>, not Foo<Integer> nor Foo<?> (BUG-20261117-16).
@@ -217,6 +218,16 @@ public final class AssignabilityRules {
                     && rawEquivalentArguments(required.typeArguments());
             default -> false;
         };
+    }
+
+    /**
+     * Whether the enclosing types of a bean type and a required type agree: the arguments of
+     * {@code Outer<String>.Inner<Integer>} are those of its {@code Outer<String>} too, as reflection compares them. A
+     * side without an owner, a type from the language model, which has none, agrees with any (BUG-20261117-21).
+     */
+    private boolean ownersAssignable(TypeInfo beanOwner, TypeInfo requiredOwner) {
+        return beanOwner == null || requiredOwner == null
+                || requiredOwner instanceof ParameterizedType required && isAssignableToParameterized(beanOwner, required);
     }
 
     private boolean typeArgumentsAssignable(List<TypeInfo> beanArguments, List<TypeInfo> requiredArguments) {
