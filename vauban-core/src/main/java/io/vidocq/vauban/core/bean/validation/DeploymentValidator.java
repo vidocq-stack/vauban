@@ -583,17 +583,28 @@ public final class DeploymentValidator {
     );
 
     private static boolean isBuiltInType(InjectionPointInfo ip) {
-        if (ip.requiredType() instanceof TypeInfo.ClassType(var name)) {
-            if (BUILT_IN_TYPES.contains(name.value())) return true;
-            // Raw Bean, Interceptor, etc. are built-in (but illegal — validated separately)
-            if (METADATA_BUILT_IN_TYPES.contains(name.value())) return true;
-        }
-        if (ip.requiredType() instanceof TypeInfo.ParameterizedType pt) {
-            if (BUILT_IN_TYPES.contains(pt.rawType().value())) return true;
-            // Bean<T>, Interceptor<T>, etc. are always built-in (legal or not — validated separately)
-            if (METADATA_BUILT_IN_TYPES.contains(pt.rawType().value())) return true;
-        }
-        return false;
+        // Bean<T>, Interceptor<T>, etc., raw or not, are built-in, legal or not: validated separately
+        return isBuiltInBeanType(ip.requiredType())
+                || METADATA_BUILT_IN_TYPES.contains(rawName(ip.requiredType(), ""));
+    }
+
+    /**
+     * Whether {@code type} is the type of a built-in bean the container serves an injection point of it, as it is
+     * looked up: {@code Event}, {@code Instance}, {@code Provider}, {@code BeanManager}, {@code BeanContainer},
+     * {@code InjectionPoint} and {@code RequestContextController}, raw or parameterized. An invoker's argument lookup
+     * reads it too, so the start accepts the lookup of every built-in bean the call serves (BUG-20261117-44).
+     */
+    public static boolean isBuiltInBeanType(TypeInfo type) {
+        return BUILT_IN_TYPES.contains(rawName(type, ""));
+    }
+
+    /** The name of the class of {@code type}, a class or a parameterized type; {@code none} for any other type. */
+    private static String rawName(TypeInfo type, String none) {
+        return switch (type) {
+            case TypeInfo.ClassType(var name) -> name.value();
+            case TypeInfo.ParameterizedType parameterized -> parameterized.rawType().value();
+            case null, default -> none;
+        };
     }
 
     private static final DotName INTERCEPTED_QUALIFIER = DotName.of("jakarta.enterprise.inject.Intercepted");
@@ -612,11 +623,7 @@ public final class DeploymentValidator {
      * Raw metadata types and TypeVariable parameters are always illegal.
      */
     private static boolean isIllegalMetadataInjection(InjectionPointInfo ip, BeanDescriptor bean, boolean isInterceptor) {
-        String rawType = switch (ip.requiredType()) {
-            case TypeInfo.ClassType(var name) -> name.value();
-            case TypeInfo.ParameterizedType pt -> pt.rawType().value();
-            case null, default -> null;
-        };
+        String rawType = rawName(ip.requiredType(), null);
         if (rawType == null || !METADATA_BUILT_IN_TYPES.contains(rawType)) {
             return false;
         }

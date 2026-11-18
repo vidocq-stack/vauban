@@ -29,6 +29,9 @@ import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.Produces;
 import jakarta.enterprise.inject.Typed;
+import jakarta.enterprise.inject.spi.InjectionPoint;
+import jakarta.enterprise.context.control.RequestContextController;
+import jakarta.inject.Provider;
 import jakarta.enterprise.inject.UnsatisfiedResolutionException;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
@@ -52,7 +55,6 @@ import jakarta.interceptor.Interceptor;
 import jakarta.interceptor.InterceptorBinding;
 import jakarta.interceptor.InvocationContext;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -373,6 +375,14 @@ class VaubanInvokerLookupTest {
     public static class ContainerUser implements LookupTarget {
         public boolean hasContainer(BeanContainer container) {
             return container != null;
+        }
+    }
+
+    /** Takes each built-in bean an injection point may have, beside {@code Instance}, {@code Event}, the manager. */
+    @Dependent
+    public static class BuiltInUser implements LookupTarget {
+        public String builtIns(Provider<Part> parts, RequestContextController controller, InjectionPoint point) {
+            return parts.get().name() + ", " + (controller != null) + ", " + point.getType().getTypeName();
         }
     }
 
@@ -826,11 +836,10 @@ class VaubanInvokerLookupTest {
 
     /**
      * The deployment validation accepts the lookup of a built-in bean the call serves, the {@code BeanContainer}.
-     * It leaves {@code Instance}, {@code Event} and {@code BeanManager} alone, and refuses the others
+     * It left {@code Instance}, {@code Event} and {@code BeanManager} alone, and refused the others
      * (BUG-20261117-44).
      */
     @Test
-    @Disabled("BUG-20261117-44")
     @DisplayName("the start accepts an argument lookup of the BeanContainer")
     void theStartAcceptsALookupOfTheBeanContainer() {
         LookupBce.METHOD.set("hasContainer");
@@ -838,6 +847,36 @@ class VaubanInvokerLookupTest {
 
         try (var _ = assertDoesNotThrow(builder::build, "the container refused the lookup")) {
             // It started.
+        }
+    }
+
+    /**
+     * The deployment validation accepts the lookups of a {@code Provider}, the {@code RequestContextController} and
+     * the {@code InjectionPoint}, built-in beans an injection point may have (CDI 4.1, 3.9, 5.5.7, 6.5.6.1), as it
+     * accepts them at an injection point (BUG-20261117-44).
+     */
+    @Test
+    @DisplayName("the start accepts the argument lookups of the other built-in beans")
+    void theStartAcceptsTheLookupsOfTheOtherBuiltInBeans() {
+        LookupBce.METHOD.set("builtIns");
+        var builder = VaubanContainer.builder().addBeanClass(Part.class).addBeanClass(BuiltInUser.class)
+                .addBeanClass(LookupBce.class);
+
+        try (var _ = assertDoesNotThrow(builder::build, "the container refused the lookups")) {
+            // It started.
+        }
+    }
+
+    /** The call serves each of them, as an injection does: the start refuses nothing the call can serve. */
+    @Test
+    @DisplayName("the argument lookups of the other built-in beans give them")
+    void theArgumentLookupsOfTheOtherBuiltInBeansGiveThem() throws Exception {
+        try (var _ = VaubanContainer.builder().addBeanClass(Part.class).addBeanClass(BuiltInUser.class).build()) {
+            var builtIns = new VaubanInvoker(BuiltInUser.class.getMethod("builtIns", Provider.class,
+                    RequestContextController.class, InjectionPoint.class), BuiltInUser.class, true, Set.of(0, 1, 2));
+
+            assertEquals("part, true, " + InjectionPoint.class.getName(),
+                    builtIns.invoke(null, new Object[] {null, null, null}));
         }
     }
 

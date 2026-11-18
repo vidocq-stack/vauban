@@ -1410,20 +1410,31 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261117-44 — The start refuses an invoker's lookup of a built-in bean the call serves
 
 - **Date**: 2026-11-17
-- **Status**: OPEN
-- **Module**: `vauban-core` (`ExtensionMethodValidator.validateArgumentLookup`, `SPECIAL_LOOKUP_TYPES`)
+- **Status**: FIXED on `fix/vauban-bug-stack` (lane `stack/l3-batch-2`)
+- **Module**: `vauban-core` (`ExtensionMethodValidator.validateArgumentLookup`, `DeploymentValidator`)
 - **Symptom**: an extension builds an invoker of `boolean hasContainer(BeanContainer container)` with
   `withArgumentLookup(0)`: the start fails with `Invoker argument lookup unsatisfied: no bean found for parameter
   type jakarta.enterprise.inject.spi.BeanContainer at position 0`, though the call gives the `BeanContainer`. The
-  same, by reading, for `Provider<X>`, `RequestContextController` and `InjectionPoint`.
-- **Repro**: `VaubanInvokerLookupTest#theStartAcceptsALookupOfTheBeanContainer` in `vauban-core`, disabled; red when
-  enabled, on the main code of 35035df4 (`vauban-b27-red.log`, "Red run 4b") and with fix round 1 of
-  BUG-20261117-27 (`vauban-b27-dev.log`, "Dev run 6"); the review's probe saw it on 35035df4 too.
-- **Cause**: the check leaves to the container the built-in beans `SPECIAL_LOOKUP_TYPES` lists, `Instance`, `Event`
-  and `BeanManager`, and looks the others up among the deployment's beans, which do not hold the built-in ones. It
-  was so before BUG-20261117-27, which counted classes.
+  same for `Provider<X>`, `RequestContextController` and `InjectionPoint`, which the call gives too.
+- **Repro**: `VaubanInvokerLookupTest#theStartAcceptsALookupOfTheBeanContainer`,
+  `#theStartAcceptsTheLookupsOfTheOtherBuiltInBeans` and `#theArgumentLookupsOfTheOtherBuiltInBeansGiveThem` (the
+  call, green before: the start refused what it serves) in `vauban-core`;
+  `BceCompileTimeTest#theBuildAcceptsALookupOfTheBeanContainer` in `vauban-processor`, the same check at build.
+- **Cause** (proved): the check left to the container the built-in beans its own list held, `Instance`, `Event` and
+  `BeanManager`, and looked the others up among the deployment's beans, which do not hold the built-in ones. It was
+  so before BUG-20261117-27, which counted classes.
+- **Fix**: the check and the deployment validation share one list of the built-in beans,
+  `DeploymentValidator.isBuiltInBeanType`: `Event`, `Instance`, `Provider`, `BeanManager`, `BeanContainer`,
+  `InjectionPoint` and `RequestContextController`, raw or parameterized. A lookup of one of them is left to the
+  container, as an injection point of it is. The bean metadata types (`Bean`, `Interceptor`, `EventMetadata`) stay
+  out of it: CDI 4.1, 5.5.8, gives them to a bean instance, and a lookup of one is checked as any other.
+- **CDI Lite TCK**: `invokers.lookup.ArgumentLookupBeanManagerTest`, `ArgumentLookupEventTest` and
+  `ArgumentLookupInstanceTest` cover the three types the old list held; none looks up the other four.
+- **Verification**: red on c4addfe4, BUG-20261117-38 (`stack-l3b-red.log`, "BUG-20261117-44 red, on c4addfe4": the
+  start refused the `BeanContainer`, the `Provider`, the `RequestContextController` and the `InjectionPoint`).
+  Green: `stack-l3b-green.log`, "BUG-20261117-44 fix: lookups of every built-in bean the call serves" and
+  "BUG-20261117-44 fix: vauban-core and vauban-processor, all tests".
 - **Found by**: the review of BUG-20261117-27.
-
 ## BUG-20261117-43 — At start and frozen, the language model shows the synthetic methods of a class file
 
 - **Date**: 2026-11-17

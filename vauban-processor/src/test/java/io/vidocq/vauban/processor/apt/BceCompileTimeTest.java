@@ -1358,6 +1358,30 @@ class BceCompileTimeTest {
     }
 
     /**
+     * The build accepts the argument lookup of a built-in bean the call serves, the {@code BeanContainer}, as the
+     * start does: the check is the same (BUG-20261117-44).
+     */
+    @Test
+    @DisplayName("the build accepts the lookup of the BeanContainer (BUG-20261117-44)")
+    void theBuildAcceptsALookupOfTheBeanContainer() throws Exception {
+        var result = compileWithBce(List.of(SameBuildLookupBce.class), """
+                package app;
+
+                import jakarta.enterprise.context.Dependent;
+                import jakarta.enterprise.inject.spi.BeanContainer;
+
+                @Dependent
+                public class Worker {
+                    public boolean work(BeanContainer container) {
+                        return container != null;
+                    }
+                }
+                """);
+
+        assertTrue(result.success(), () -> String.join("\n", result.messages()));
+    }
+
+    /**
      * Boots the archive {@code loader} holds. The compiled application is in the loader's unnamed module and
      * names the fixture qualifier, which a library would export: the tests' module exports it to that module.
      */

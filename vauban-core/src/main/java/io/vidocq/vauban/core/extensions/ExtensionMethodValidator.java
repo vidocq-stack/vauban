@@ -25,6 +25,7 @@ import io.vidocq.vauban.core.bean.model.InjectionPointInfo;
 import io.vidocq.vauban.core.bean.model.QualifierInstance;
 import io.vidocq.vauban.core.bean.resolution.BeanResolver;
 import io.vidocq.vauban.core.bean.resolution.QualifierMatcher;
+import io.vidocq.vauban.core.bean.validation.DeploymentValidator;
 import io.vidocq.vauban.core.types.AssignabilityRules;
 import io.vidocq.vauban.indexer.VaubanIndex;
 import io.vidocq.vauban.indexer.model.DotName;
@@ -88,12 +89,6 @@ final class ExtensionMethodValidator {
     /** The parameter types of a {@code @Validation} method (the Javadoc of {@code Validation}). */
     private static final Set<Class<?>> VALIDATION_TYPES = Set.of(
             Messages.class, jakarta.enterprise.inject.build.compatible.spi.Types.class
-    );
-
-    private static final Set<Class<?>> SPECIAL_LOOKUP_TYPES = Set.of(
-            jakarta.enterprise.inject.Instance.class,
-            jakarta.enterprise.event.Event.class,
-            jakarta.enterprise.inject.spi.BeanManager.class
     );
 
     /**
@@ -238,10 +233,12 @@ final class ExtensionMethodValidator {
                     + "; a type variable is not a legal required type");
             return;
         }
-        if (SPECIAL_LOOKUP_TYPES.stream().anyMatch(t -> t.getName().equals(InvokerTarget.erasedName(type)))) {
+        var required = LangModelTypeMapper.toIndexType(type);
+        if (DeploymentValidator.isBuiltInBeanType(required)) {
+            // The container serves a built-in bean, as at an injection point (BUG-20261117-44)
             return;
         }
-        var lookup = new InjectionPointInfo(LangModelTypeMapper.toIndexType(type),
+        var lookup = new InjectionPointInfo(required,
                 qualifiersOf(parameter, qualifiers), InjectionPointInfo.InjectionKind.METHOD_PARAMETER,
                 "invoker argument " + idx);
         var result = resolver.resolveInjectionPoint(lookup);
