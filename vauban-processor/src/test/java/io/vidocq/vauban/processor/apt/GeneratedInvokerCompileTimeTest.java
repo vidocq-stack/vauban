@@ -70,7 +70,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * a checked exception thrown as it is, and looked-up arguments of a parameterized and a qualified type. A private
  * method has no invoker (BUG-20261118-37). A looked-up argument of an inner class of a generic class,
  * {@code Outer<String>.Inner<Integer>}, keeps its owner: an {@code Outer<Long>.Inner<Integer>} does not satisfy it
- * (BUG-20261118-49). A looked-up argument of a method the bean class inherits takes the qualifier the config of
+ * (BUG-20261118-49), and so does one of a plain inner class, {@code Outer<String>.Plain} (BUG-20261118-56). A
+ * looked-up argument of a method the bean class inherits takes the qualifier the config of
  * the bean class gave its parameter, {@code @Named("x")} on {@code Base.pick(String)} through {@code Service}
  * (BUG-20261118-55); so does one of {@code far}, a protected method of a superclass of another package, which no
  * generated class can call: the frozen record keeps that parameter's annotations (review round 3).
@@ -82,7 +83,7 @@ class GeneratedInvokerCompileTimeTest {
     private static final String DISPOSED = "inv.Disposed";
     private static final String LOOKED_UP_TARGET = "usedAndDestroyed";
     private static final List<String> METHODS = List.of("inherited", "packaged", "greet", "identity", "joined",
-            "twice", "sum", "nothing", "fail", "ite", "lookedUp", "owned", "pick", "far", "hidden");
+            "twice", "sum", "nothing", "fail", "ite", "lookedUp", "owned", "plain", "pick", "far", "hidden");
 
     @TempDir
     Path workDir;
@@ -130,7 +131,7 @@ class GeneratedInvokerCompileTimeTest {
                     if (method.name().equals("lookedUp")) {
                         builder.withArgumentLookup(0).withArgumentLookup(1);
                     }
-                    if (Set.of("owned", "pick", "far").contains(method.name())) {
+                    if (Set.of("owned", "plain", "pick", "far").contains(method.name())) {
                         builder.withArgumentLookup(0);
                     }
                     BUILT.put(method.name(), builder.build());
@@ -214,7 +215,7 @@ class GeneratedInvokerCompileTimeTest {
         assertTrue(result.success(), () -> "compilation failed: " + result.messages());
 
         try (var classes = Files.list(result.classes().resolve("inv"))) {
-            assertEquals(14, classes.filter(file -> file.getFileName().toString().contains("$$VaubanInvoker$"))
+            assertEquals(15, classes.filter(file -> file.getFileName().toString().contains("$$VaubanInvoker$"))
                     .count(), "the invoker classes, one per method but the private one");
         }
         assertInvokersCall(result, Place.PROCESSOR);
@@ -364,6 +365,8 @@ class GeneratedInvokerCompileTimeTest {
                 () -> assertEquals("held x", invokers.get("lookedUp").invoke(service, new Object[2]), "lookups"),
                 () -> assertEquals("text", invokers.get("owned").invoke(service, new Object[1]),
                         "the looked-up Outer<String>.Inner<Integer>, not the Outer<Long> one (BUG-20261118-49)"),
+                () -> assertEquals("plain text", invokers.get("plain").invoke(service, new Object[1]),
+                        "the looked-up Outer<String>.Plain, not the Outer<Long> one (BUG-20261118-56)"),
                 () -> assertEquals("x", invokers.get("pick").invoke(service, new Object[1]),
                         "the @Named(\"x\") String the config of Service gave the inherited parameter (BUG-20261118-55)"),
                 () -> assertEquals("x", invokers.get("far").invoke(service, new Object[1]),
@@ -428,6 +431,14 @@ class GeneratedInvokerCompileTimeTest {
                             this.tag = tag;
                         }
                     }
+
+                    public class Plain {
+                        public final String tag;
+
+                        public Plain(String tag) {
+                            this.tag = tag;
+                        }
+                    }
                 }
                 """);
         sources.put("inv/Producers.java", """
@@ -457,6 +468,16 @@ class GeneratedInvokerCompileTimeTest {
                     @Produces
                     Outer<Long>.Inner<Integer> number() {
                         return new Outer<Long>().new Inner<Integer>("number");
+                    }
+
+                    @Produces
+                    Outer<String>.Plain plainText() {
+                        return new Outer<String>().new Plain("plain text");
+                    }
+
+                    @Produces
+                    Outer<Long>.Plain plainNumber() {
+                        return new Outer<Long>().new Plain("plain number");
                     }
 
                     @Produces
@@ -539,6 +560,10 @@ class GeneratedInvokerCompileTimeTest {
 
                     public String owned(Outer<String>.Inner<Integer> inner) {
                         return inner.tag;
+                    }
+
+                    public String plain(Outer<String>.Plain plain) {
+                        return plain.tag;
                     }
                 }
                 """);

@@ -121,7 +121,14 @@ final class LangModelTypeMapper {
         return new TypeInfo.TypeVariable(variable.name(), bounds.equals(List.of(OBJECT)) ? List.of() : bounds);
     }
 
-    private static TypeInfo.ClassType classTypeToIndex(ClassType ct) {
+    /**
+     * {@code ct} in the index; {@code Outer<String>.Plain} keeps its owner, which the language model does not give
+     * (BUG-20261118-56).
+     */
+    private static TypeInfo classTypeToIndex(ClassType ct) {
+        if (ct instanceof VaubanClassType indexed && indexed.indexOwner() != null) {
+            return new TypeInfo.ParameterizedType(indexed.dotName(), List.of(), indexed.indexOwner());
+        }
         return new TypeInfo.ClassType(classTypeName(ct));
     }
 

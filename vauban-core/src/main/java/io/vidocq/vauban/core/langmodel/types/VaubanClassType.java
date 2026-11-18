@@ -22,6 +22,7 @@ package io.vidocq.vauban.core.langmodel.types;
 import io.vidocq.vauban.core.langmodel.IndexLookup;
 import io.vidocq.vauban.core.langmodel.declarations.VaubanClassInfo;
 import io.vidocq.vauban.indexer.model.DotName;
+import io.vidocq.vauban.indexer.model.TypeInfo;
 import jakarta.enterprise.lang.model.AnnotationInfo;
 import jakarta.enterprise.lang.model.declarations.ClassInfo;
 import jakarta.enterprise.lang.model.types.ClassType;
@@ -35,6 +36,12 @@ public final class VaubanClassType implements ClassType, AnnotatedTypeUse {
     private final IndexLookup lookup;
     /** The annotations on this use of the type (BUG-20261117-60); they take no part in its equality. */
     private final List<AnnotationInfo> annotations;
+    /**
+     * The type that encloses this one in the index, {@code Outer<String>} for {@code Outer<String>.Plain}, or
+     * {@code null}: the language model has no owner, and a lookup of the type needs it (BUG-20261118-56). It takes no
+     * part in the equality, as the language model compares types.
+     */
+    private final TypeInfo indexOwner;
 
     /**
      * @param lookup the index to describe the class with, or {@code null} for a class an extension
@@ -47,9 +54,20 @@ public final class VaubanClassType implements ClassType, AnnotatedTypeUse {
 
     /** The class {@code name}, used with {@code annotations} on it (BUG-20261117-60). */
     public VaubanClassType(DotName name, IndexLookup lookup, List<AnnotationInfo> annotations) {
+        this(name, lookup, annotations, null);
+    }
+
+    /** The class {@code name} of the index, a member of {@code indexOwner} when not {@code null} (BUG-20261118-56). */
+    public VaubanClassType(DotName name, IndexLookup lookup, List<AnnotationInfo> annotations, TypeInfo indexOwner) {
         this.name = Objects.requireNonNull(name);
         this.lookup = lookup;
         this.annotations = List.copyOf(annotations);
+        this.indexOwner = indexOwner;
+    }
+
+    /** The type that encloses this one in the index, or {@code null} (BUG-20261118-56). */
+    public TypeInfo indexOwner() {
+        return indexOwner;
     }
 
     @Override

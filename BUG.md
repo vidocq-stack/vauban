@@ -5,6 +5,27 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261118-56 — `Outer<String>.Plain` loses its owner in the language model
+
+- **Date**: 2026-11-18
+- **Status**: FIXED (2026-11-18, final fixes, round 2)
+- **Module**: `vauban-core` (`TypeMapper`, `VaubanClassType`, `LangModelTypeMapper`)
+- **Symptom**: with producers of `Outer<String>.Plain` and `Outer<Long>.Plain`, where `Plain` is an inner class without
+  type parameters, an invoker of `plain(Outer<String>.Plain)` that looks its argument up is refused, in the processor,
+  at start and frozen: _Invoker argument lookup ambiguous: 2 beans found for parameter type inv.Outer$Plain_. The
+  start, by reflection, resolves it.
+- **Repro**: `GeneratedInvokerCompileTimeTest`, its four tests, method `plain`.
+- **Cause** (proved): `TypeMapper` maps `ParameterizedType(Outer$Plain, [], Outer<String>)` to a `VaubanClassType`
+  (BUG-20261118-47) and dropped the owner; `LangModelTypeMapper` read it back as the class `Outer$Plain`, which both
+  producers satisfy.
+- **Fix**: `VaubanClassType` keeps an `indexOwner`, out of its equality, as `VaubanParameterizedType` does
+  (BUG-20261118-49); `LangModelTypeMapper.classTypeToIndex` gives `ParameterizedType(raw, [], owner)` when it has one.
+- **What stays**: a class type an extension builds with `Types.of` has no owner, as before.
+- **TCK**: not covered.
+- **Verification**: red, `stack-l2d-r2-56.log`, "BUG-56 red: Outer<String>.Plain lookup" (the four tests,
+  _ambiguous_). Green, same log, "BUG-56 green: the class type keeps its owner".
+- **Found by**: the re-review of the final fixes.
+
 ## BUG-20261118-55 — An invoker's lookup ignores a qualifier a subclass's config gave an inherited parameter
 
 - **Date**: 2026-11-18
@@ -162,7 +183,7 @@ suspected cause, status. Updated on every investigation.
   its equality (`indexOwner()`), and `LangModelTypeMapper` writes it back. A type an extension builds with
   `Types.parameterized` has no owner, as before.
 - **What stays**: `Outer<String>.Plain`, an inner class without type parameters, is a class type in the language model
-  (BUG-20261118-47); read back, it has no owner.
+  (BUG-20261118-47); read back, it had no owner: BUG-20261118-56.
 - **TCK**: not covered.
 - **Verification**: red, `stack-l2d-ff-49.log`, "BUG-49 red" (the four tests, _ambiguous: 2 beans_). Green, same log,
   "BUG-49 green".

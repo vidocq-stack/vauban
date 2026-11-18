@@ -77,9 +77,9 @@ public final class TypeMapper {
             case TypeInfo.ClassType(var name) -> new VaubanClassType(name, lookup, use.annotations(lookup));
             case TypeInfo.ArrayType a -> mapArray(a, lookup, use, reading);
             // Outer<String>.Plain: the language model has no owner, and a parameterized type there has arguments
-            // (BUG-20261118-47)
-            case TypeInfo.ParameterizedType(var rawType, var typeArguments, _) when typeArguments.isEmpty() ->
-                    new VaubanClassType(rawType, lookup, use.annotations(lookup));
+            // (BUG-20261118-47); the class type keeps the owner for a lookup (BUG-20261118-56)
+            case TypeInfo.ParameterizedType(var rawType, var typeArguments, var owner) when typeArguments.isEmpty() ->
+                    new VaubanClassType(rawType, lookup, use.annotations(lookup), owner);
             case TypeInfo.ParameterizedType(var rawType, var typeArguments, var owner) -> new VaubanParameterizedType(
                     rawType, mapAll(typeArguments, use::typeArgument, lookup, reading), lookup,
                     use.annotations(lookup), owner);
