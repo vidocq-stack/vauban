@@ -72,7 +72,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-70 — The unproxyable-type error of a produced type names the producer class
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
+- **Status**: FIXED on `fix/proxy-batch-20261119`
 - **Module**: `vauban-core` (`DeploymentValidator`)
 - **Symptom**: a normal-scoped producer whose produced class has no non-private no-arg constructor and no marker
   fails with `Normal-scoped bean acme.placed.GadgetProducer must have a non-private no-arg constructor…`: the class
@@ -82,6 +82,9 @@ suspected cause, status. Updated on every investigation.
 - **Cause**: both checks (the index one, and `validateProxyableClass` on a loaded class) build the message from
   `bean.beanClass()`, which is the declaring class for a producer, while they check another class (`info`,
   `clazz`). The "cannot be a final class" message next to them has the same shape.
+- **Fix**: the final class, constructor and final method messages, on the index and on a loaded class, name the
+  class checked, then the producer apart: `Normal-scoped bean acme.Strict (produced by acme.placed.GadgetProducer)
+  must have…`. `DeploymentValidatorReflectionChecksTest#anUnproxyableProducedTypeIsNamed`.
 - **Reported by**: the Vidocq batch (FOY session).
 
 ## BUG-20261118-62 — At start, an `@Enhancement` that replaces `@Dependent` by `@ApplicationScoped` leaves the bean `@Dependent`

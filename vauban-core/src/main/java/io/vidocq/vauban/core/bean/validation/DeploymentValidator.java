@@ -492,7 +492,7 @@ public final class DeploymentValidator {
         if (info.isFinal()) {
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
-                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
+                    subject(bean, info.name().value()) + " cannot be a final class",
                     contextBean));
             return;
         }
@@ -513,7 +513,7 @@ public final class DeploymentValidator {
             // so the processor downgrades this one to a warning (final members it cannot fix).
             errors.add(new ValidationError(
                     ValidationError.Kind.UNPROXYABLE_BEAN,
-                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
+                    subject(bean, info.name().value()) + MSG_UNPROXYABLE_CTOR,
                     contextBean));
         }
 
@@ -524,7 +524,7 @@ public final class DeploymentValidator {
             for (var method : current.methods()) {
                 if (method.isConstructor() || method.isStaticInitializer()) continue;
                 if (method.isFinal() && !method.isPrivate() && !method.isStatic()) {
-                    errors.add(finalMethodError(bean, method.name(), contextBean));
+                    errors.add(finalMethodError(bean, info.name().value(), method.name(), contextBean));
                     return;
                 }
             }
@@ -536,7 +536,7 @@ public final class DeploymentValidator {
                         ? finalMethodByReflection(info.name().value())
                         : finalMethodBeyondTheIndex.apply(info.name().value());
                 if (finalMethod.isPresent()) {
-                    errors.add(finalMethodError(bean, finalMethod.get(), contextBean));
+                    errors.add(finalMethodError(bean, info.name().value(), finalMethod.get(), contextBean));
                 }
                 return;
             }
@@ -544,9 +544,19 @@ public final class DeploymentValidator {
         }
     }
 
-    private static ValidationError finalMethodError(BeanDescriptor bean, String method, BeanDescriptor contextBean) {
+    private static ValidationError finalMethodError(BeanDescriptor bean, String checked, String method,
+            BeanDescriptor contextBean) {
         return new ValidationError(ValidationError.Kind.DEPLOYMENT_ERROR,
-                PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_HAS_FINAL_METHOD + method, contextBean);
+                subject(bean, checked) + MSG_HAS_FINAL_METHOD + method, contextBean);
+    }
+
+    /**
+     * The start of the error about {@code checked}, the class a client proxy of {@code bean} would extend: its name, and
+     * the class that declares the bean when they differ, the producer of a produced type (BUG-20261118-70).
+     */
+    private static String subject(BeanDescriptor bean, String checked) {
+        String beanClass = bean.beanClass().toString();
+        return PREFIX_NORMAL_SCOPED + checked + (checked.equals(beanClass) ? "" : " (produced by " + beanClass + ")");
     }
 
     private void validateProxyableByReflection(TypeInfo.ClassType ct, BeanDescriptor bean,
@@ -567,7 +577,7 @@ public final class DeploymentValidator {
         if (java.lang.reflect.Modifier.isFinal(clazz.getModifiers())) {
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
-                    PREFIX_NORMAL_SCOPED + bean.beanClass() + " cannot be a final class",
+                    subject(bean, clazz.getName()) + " cannot be a final class",
                     contextBean));
             return;
         }
@@ -579,7 +589,7 @@ public final class DeploymentValidator {
         if (!hasProxyEntryCtor && !settledByLoadTimeWeaving(clazz.getName())) {
             errors.add(new ValidationError(
                     ValidationError.Kind.UNPROXYABLE_BEAN,
-                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_UNPROXYABLE_CTOR,
+                    subject(bean, clazz.getName()) + MSG_UNPROXYABLE_CTOR,
                     contextBean));
         }
 
@@ -587,7 +597,7 @@ public final class DeploymentValidator {
         if (finalMethod != null) {
             errors.add(new ValidationError(
                     ValidationError.Kind.DEPLOYMENT_ERROR,
-                    PREFIX_NORMAL_SCOPED + bean.beanClass() + MSG_HAS_FINAL_METHOD + finalMethod.getName(),
+                    subject(bean, clazz.getName()) + MSG_HAS_FINAL_METHOD + finalMethod.getName(),
                     contextBean));
         }
     }

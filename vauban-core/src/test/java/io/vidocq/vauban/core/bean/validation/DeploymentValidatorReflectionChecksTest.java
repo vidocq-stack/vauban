@@ -268,6 +268,23 @@ class DeploymentValidatorReflectionChecksTest {
         assertTrue(messages.stream().anyMatch(m -> m.contains("has final method fixed")), messages::toString);
     }
 
+    @Test
+    @DisplayName("the error of an unproxyable produced type names that type, and the producer apart (BUG-20261118-70)")
+    void anUnproxyableProducedTypeIsNamed() {
+        var producer = WithHarmlessFinals.class.getName();
+        for (Class<?> produced : List.of(FinalClass.class, ArgumentConstructor.class, WithFinalMethod.class)) {
+            var bean = bean("Host#" + produced.getSimpleName(), WithHarmlessFinals.class,
+                    BeanDescriptor.BeanKind.PRODUCER_METHOD, ScopeInfo.APPLICATION,
+                    Set.of(cls(produced), cls(OBJECT)), List.of(), Set.of());
+
+            var messages = messages(List.of(injecting(produced), bean));
+
+            assertEquals(1, messages.size(), messages::toString);
+            assertTrue(messages.getFirst().startsWith("Normal-scoped bean " + produced.getName() + " (produced by "
+                    + producer + ")"), messages::toString);
+        }
+    }
+
     /** A bean of its own class injecting {@code target}; its id keeps it apart from the target's bean. */
     private static BeanDescriptor injecting(Class<?> target) {
         var point = new InjectionPointInfo(cls(target), Set.of(QualifierInstance.DEFAULT),
