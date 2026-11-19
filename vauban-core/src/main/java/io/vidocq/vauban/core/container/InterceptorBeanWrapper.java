@@ -567,7 +567,15 @@ final class InterceptorBeanWrapper {
             return new ProxySite(target, key, false);
         }
         var verdict = io.vidocq.vauban.core.proxy.ProducerProxyEligibility.of(target);
-        if (!verdict.eligible()) {
+        if (jdkWithPackagePrivateMethods(target, verdict)) {
+            // As Weld does: the proxy forwards the public methods; the JDK's own calls to the package-private ones
+            // run on the proxy, which no subclass of another package can override (BUG-20261118-24).
+            LOG.log(System.Logger.Level.WARNING, "The client proxy of {0}, produced by {1} with the normal scope @{2},"
+                    + " lives in the producer''s package: Vauban cannot define a class in {3}. It forwards the public"
+                    + " methods; a call {0} makes to one of its package-private methods runs on the proxy, not on the"
+                    + " contextual instance. Produce an interface type to avoid it.", target.getName(),
+                    bean.getBeanClass().getName(), bean.getScope().getSimpleName(), target.getPackageName());
+        } else if (!verdict.eligible()) {
             throw new DeploymentException(noClientProxy(bean, target, verdict));
         }
         var producer = bean.getBeanClass();
@@ -590,6 +598,16 @@ final class InterceptorBeanWrapper {
         } catch (ContainerOperationException _) {
             return false;
         }
+    }
+
+    /**
+     * Whether {@code target} is a class of the JDK that a proxy of another package refuses for its package-private
+     * methods alone: Vauban cannot place one in its package, and Weld proxies it all the same (BUG-20261118-24).
+     */
+    private static boolean jdkWithPackagePrivateMethods(Class<?> target,
+            io.vidocq.vauban.core.proxy.ProducerProxyEligibility.Reason verdict) {
+        return target.getClassLoader() == null
+                && verdict == io.vidocq.vauban.core.proxy.ProducerProxyEligibility.Reason.PACKAGE_PRIVATE_VIRTUALS;
     }
 
     /** Why no client proxy of the produced type {@code target} can be generated, and what to do instead. */

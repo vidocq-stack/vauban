@@ -208,15 +208,20 @@ class InterfaceClientProxyTest {
     }
 
     /**
-     * A normal-scoped producer of {@code ArrayList<String>} is proxyable (CDI 4.1, 3.10), and Weld deploys it. Vauban
-     * cannot define a class in {@code java.util}, and a proxy in the producer's package cannot override
-     * {@code ArrayList}'s package-private methods: it refuses the producer (BUG-20261118-24).
+     * A normal-scoped producer of {@code ArrayList<String>} is proxyable (CDI 4.1, 3.10), and Weld deploys it.
+     * Vauban cannot define a class in {@code java.util}: as Weld, it puts the proxy in the producer's package, which
+     * forwards the public methods, and says that the package-private ones run on the proxy (BUG-20261118-24).
      */
-    @org.junit.jupiter.api.Disabled("BUG-20261118-24: OPEN, a normal-scoped producer of a JDK class with"
-            + " package-private methods is refused; Weld deploys it")
     @Test
-    @DisplayName("a normal-scoped producer of ArrayList<String> injects as a List")
+    @DisplayName("a normal-scoped producer of ArrayList<String> injects as a List, with a warning")
     void aNormalScopedProducerOfAJdkClassWithPackagePrivateMethodsInjects() {
+        // The tests run inside io.vidocq.vauban.core, which does not read java.logging (LifecycleObserverFailureTest).
+        getClass().getModule().addReads(ModuleLayer.boot().findModule("java.logging").orElseThrow());
+        var out = new java.io.ByteArrayOutputStream();
+        var handler = new java.util.logging.StreamHandler(out, new java.util.logging.SimpleFormatter());
+        handler.setLevel(java.util.logging.Level.WARNING);
+        var logger = java.util.logging.Logger.getLogger(InterceptorBeanWrapper.class.getName());
+        logger.addHandler(handler);
         try (var container = VaubanContainer.builder()
                 .addBeanClass(NamesProducer.class)
                 .addBeanClass(NamesConsumer.class)
@@ -225,31 +230,14 @@ class InterfaceClientProxyTest {
             NamesConsumer consumer = container.select(NamesConsumer.class);
 
             container.requestContext().runInScope(() -> assertEquals("ada", consumer.first()));
+        } finally {
+            logger.removeHandler(handler);
         }
-    }
 
-    /**
-     * Today's answer to that producer (BUG-20261118-24): the proxy of {@code ArrayList}, its raw produced class since
-     * BUG-20261117-18, cannot be generated, and the failure names the remedy.
-     */
-    @Test
-    @DisplayName("a normal-scoped producer of ArrayList<String> fails with the remedy")
-    void aNormalScopedProducerOfAJdkClassWithPackagePrivateMethodsFailsWithTheRemedy() {
-        try (var container = VaubanContainer.builder()
-                .addBeanClass(NamesProducer.class)
-                .addBeanClass(NamesConsumer.class)
-                .build()) {
-
-            NamesConsumer consumer = container.select(NamesConsumer.class);
-
-            var failure = assertThrows(jakarta.enterprise.inject.spi.DeploymentException.class,
-                    () -> container.requestContext().runInScope(consumer::first));
-            assertEquals("No client proxy can be generated for java.util.ArrayList, produced by "
-                    + NamesProducer.class.getName() + " with the normal scope @RequestScoped: Vauban cannot define a"
-                    + " class in package java.util (a package of the JDK), and a proxy in the producer's package needs"
-                    + " a fully public type (PACKAGE_PRIVATE_VIRTUALS). Declare the producer @Singleton or @Dependent,"
-                    + " which need no client proxy, or produce an interface type.", failure.getMessage());
-        }
+        handler.flush();
+        String logged = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+        org.junit.jupiter.api.Assertions.assertTrue(logged.contains("java.util.ArrayList")
+                && logged.contains(NamesProducer.class.getName()) && logged.contains("package-private"), logged);
     }
 
     /**

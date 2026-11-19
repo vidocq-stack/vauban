@@ -1156,9 +1156,14 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-24 — A normal-scoped producer of a JDK class with package-private methods is refused; Weld deploys it
 
 - **Date**: 2026-11-18
-- **Status**: OPEN (a Vauban limitation that departs from Weld; not lifted in the client proxy lane, review round 9)
+- **Status**: FIXED on `fix/before-freeze-20261120` (Yann chose to behave as Weld, with a warning, 2026-11-19)
 - **Module**: `vauban-core` (`InterceptorBeanWrapper.createProxy`, `ProducerProxyEligibility`), `vauban-processor`,
   `vauban-maven-plugin`
+- **Fix**: `InterceptorBeanWrapper.runtimeProxySite` places the run-time proxy of a JDK class whose only obstacle is
+  `PACKAGE_PRIVATE_VIRTUALS` in the producer's package, as Weld does, and logs a warning that names the class, the
+  producer and the risk. The proxy forwards the public methods. Other verdicts and non-JDK classes keep the
+  `DeploymentException`. The test is enabled, and checks the injection and the warning; the test of the old failure
+  is removed. The build tiers are unchanged: they leave such a producer to the run-time fallback.
 - **Symptom**: `@Produces @RequestScoped ArrayList<String> names()` injected as `List<String>`: the call throws
   `DeploymentException: No client proxy can be generated for java.util.ArrayList, ... (PACKAGE_PRIVATE_VIRTUALS)`.
   CDI 4.1 §3.10 finds `ArrayList` proxyable (no final non-private instance method, a public no-argument
@@ -4879,7 +4884,9 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261116-02 — A `@Decorator` is never applied: decorators (CDI Full) are not implemented
 
 - **Date**: 2026-11-16
-- **Status**: OPEN — waits for the CDI Full work (stage F4 of
+- **Status**: LIMIT DOCUMENTED for 0.4.0 (2026-11-19): `migration.adoc` ("`@Decorator` — not supported", with the
+  interceptor or composition remedy) and the CDI Lite / Full table of `reference.adoc` say decorators are not
+  applied. The implementation waits for the CDI Full work (stage F4 of
   `docs/superpowers/plans/2026-10-19-cdi-4.1-full-study.md`, Vidocq/vauban#38); decided 2026-11-16, no early slice
 - **Module**: `vauban-core` (`VaubanBeanManager.resolveDecorators`, `VaubanSeContainerInitializer.enableDecorators`,
   `DeploymentValidator`), `vauban-processor` (no generation for decorators)

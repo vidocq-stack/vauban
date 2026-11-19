@@ -133,6 +133,14 @@ xref:internals.adoc#proxy-strategies[Internals — one strategy per case].
  class of the JDK, a package not opened to it).
 |Nothing.
 
+|[[jdk-class-with-package-private-methods]][.tag-new]#NEW# `@Produces` of a normal scope returning a **class of the
+ JDK with package-private methods**, such as `ArrayList<String>`
+|As Weld does, the container generates the proxy at run time in your producer's package, as Vauban cannot define a
+ class in `java.util`. It forwards the public methods. A call the JDK class makes to one of its own package-private
+ methods runs on the proxy, not on what your producer returns; the start logs a warning that names the class
+ (BUG-20261118-24).
+|Produce an interface type, `List<String>`, to avoid the warning.
+
 |`@Produces` returning an **interface**
 |A forwarding implementation is generated in your producer's package. It forwards to whatever
  your producer method returns — it is not a substitute for one.
