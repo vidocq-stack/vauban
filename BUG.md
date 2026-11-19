@@ -67,7 +67,16 @@ suspected cause, status. Updated on every investigation.
   file. Vidocq's `vidocq:jlink` does this already for the copy it stages (`StagedProxyLinks`, Vidocq
   BUG-20261118-91, branch `fix/image-proxy-link`), checked against `ObjectStreamClass` in `StagedProxiesTest`: that
   computation can move to the weaver.
-- **Reported by**: the Vidocq batch (FOY session), with this id from its range.
+- **2026-11-19, that lead breaks the dev swap**: tried on vauban#351 (commit 4657a3dc, then taken out of it), it
+  pinned the value in every class the load-time and build weavers mark. Two downstream jobs failed:
+  - Foy `CdiSessionSwapTest.aSessionBeanWithoutSerialVersionUidThatGainsAMethodMoves`: the session bean now
+    *declares* a `serialVersionUID`, and its value changes when the class gains a method. Foy's `SerialShape` reads
+    that as "its declared serialVersionUID changed" and drops the session, where a default value would have been
+    compared shape by shape and kept.
+  - Vidocq `AppLayerDevIT`: the reload names "changed the ConstantValue attribute of field serialVersionUID" as its
+    first change, instead of the method gained.
+  A pin computed from the class being woven moves with every edit of it. A fix must leave a class under the dev swap
+  without a declared value (or make Foy and Vidocq tell a pinned value apart), and is designed with FOY before code.
 
 ## BUG-20261118-70 — The unproxyable-type error of a produced type names the producer class
 

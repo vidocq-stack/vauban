@@ -107,25 +107,48 @@ public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String
         var files = new LinkedHashMap<String, byte[]>();
         var placed = new TreeSet<String>();
         var hosted = new TreeMap<String, String>();
-        String host = null;
+        var host = new Host(output);
         for (var bean : beans) {
             Class<?> beanClass = bean.getBeanClass();
             if (!proxied(bean, beanClass) || hosted.containsKey(beanClass.getName())) {
                 continue;
             }
             if (beanClass.isInterface()) {
-                host = host != null ? host : providerPackage(output);
-                interfaceProxy(bean, beanClass, host, files, hosted);
+                interfaceProxy(bean, beanClass, host.get(), files, hosted);
             } else if (!hasProxy(beanClass)) {
-                boolean compiledHere = compiled.test(beanClass.getName());
-                boolean hostable = !compiledHere && ProducerProxyEligibility.of(beanClass).eligible();
-                host = hostable && host == null ? providerPackage(output) : host;
-                if (!hostable || !hostedClassProxy(beanClass, host, files, hosted)) {
-                    classProxy(beanClass, compiledHere, files, placed);
-                }
+                anyClassProxy(beanClass, compiled.test(beanClass.getName()), host, files, placed, hosted);
             }
         }
         return new SyntheticClientProxies(files, placed, hosted);
+    }
+
+    /**
+     * Adds the proxy of {@code beanClass}, a class: next to a component provider when it is a class of another archive
+     * that a proxy of another package forwards entirely, else next to the class or placed.
+     */
+    private static void anyClassProxy(Class<?> beanClass, boolean compiledHere, Host host, Map<String, byte[]> files,
+            Set<String> placed, Map<String, String> hosted) {
+        boolean hostable = !compiledHere && ProducerProxyEligibility.of(beanClass).eligible();
+        if (!hostable || !hostedClassProxy(beanClass, host.get(), files, hosted)) {
+            classProxy(beanClass, compiledHere, files, placed);
+        }
+    }
+
+    /** The package of the output that hosts proxies, looked up once and only when a proxy needs it. */
+    private static final class Host {
+        private final Path output;
+        private String found;
+
+        Host(Path output) {
+            this.output = output;
+        }
+
+        String get() {
+            if (found == null) {
+                found = providerPackage(output);
+            }
+            return found;
+        }
     }
 
     /**
