@@ -70,6 +70,8 @@ final class SerialVersionUids {
     }
 
     /** The value the JVM computes for the class {@code model} describes when it declares none. */
+    // S4790: SHA-1 is the hash section 4.6 specifies for the default value; nothing here is a security use.
+    @SuppressWarnings("java:S4790")
     static long computed(ClassModel model) {
         List<MethodModel> methods = model.methods().stream()
                 .filter(method -> !method.methodName().stringValue().startsWith("<")).toList();

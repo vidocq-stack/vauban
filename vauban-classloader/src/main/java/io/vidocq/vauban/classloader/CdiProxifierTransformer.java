@@ -126,7 +126,11 @@ public final class CdiProxifierTransformer implements ClassTransformerPlugin {
                 // diagnostic.
                 return null;
             }
-            return ProxyLinkWeaver.addMarkerConstructor(bytes, chain);
+            // A library's bytes stay the same from one start to the next: keep the serialVersionUID they give. A
+            // directory's change at each edit, where a declared value would move too (BUG-20261118-95).
+            return java.nio.file.Files.isRegularFile(archive.archivePath())
+                    ? ProxyLinkWeaver.addMarkerConstructorKeepingSerialVersionUid(bytes, chain)
+                    : ProxyLinkWeaver.addMarkerConstructor(bytes, chain);
         } catch (IllegalArgumentException _) {
             return null;
         }

@@ -75,6 +75,43 @@ class WeavingTransformerTest {
                 Fixtures.beanWithBusinessCtorOnly(BEAN)));
     }
 
+    /** A protection domain whose code source is {@code location}. */
+    private static java.security.ProtectionDomain domainOf(java.nio.file.Path location) throws Exception {
+        return new java.security.ProtectionDomain(new java.security.CodeSource(location.toUri().toURL(),
+                (java.security.CodeSigner[]) null), null);
+    }
+
+    private static boolean declaresSerialVersionUid(byte[] bytes) {
+        return SerialVersionUids.declares(java.lang.classfile.ClassFile.of().parse(bytes));
+    }
+
+    @Test
+    @DisplayName("a bean from a jar keeps the serialVersionUID of its original bytes (BUG-20261118-95)")
+    void aBeanFromAJarKeepsItsSerialVersionUid(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp)
+            throws Exception {
+        var jar = java.nio.file.Files.createFile(tmp.resolve("lib.jar"));
+        var original = Fixtures.beanWithBusinessCtorOnly(BEAN);
+
+        var woven = transformer().transform(null, null, "com/example/Fixture", null, domainOf(jar), original);
+
+        assertNotNull(woven);
+        assertTrue(declaresSerialVersionUid(woven));
+        assertEquals(ProxyLinkWeaver.defaultSerialVersionUid(original), SerialVersionUidTest.declaredSerialVersionUid(woven));
+    }
+
+    @Test
+    @DisplayName("a bean from a directory, or with no code source, gets no serialVersionUID")
+    void aBeanFromADirectoryGetsNoSerialVersionUid(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp)
+            throws Exception {
+        var original = Fixtures.beanWithBusinessCtorOnly(BEAN);
+
+        var fromDirectory = transformer().transform(null, null, "com/example/Fixture", null, domainOf(tmp), original);
+        var unknown = transformer().transform(null, null, "com/example/Fixture", null, null, original);
+
+        assertFalse(declaresSerialVersionUid(fromDirectory));
+        assertFalse(declaresSerialVersionUid(unknown));
+    }
+
     @Test
     @DisplayName("a weaving failure reports and leaves the class unchanged (null)")
     void failureLeavesClassUnchanged() {

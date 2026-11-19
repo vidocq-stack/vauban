@@ -59,6 +59,7 @@ class SerialVersionUidTest {
         }
 
         public String label() {
+            secret();
             return label + count + NAMES.size();
         }
 
@@ -100,7 +101,7 @@ class SerialVersionUidTest {
     }
 
     /** The value of the {@code serialVersionUID} field {@code bytes} declare, or {@code null}. */
-    private static Long declaredSerialVersionUid(byte[] bytes) {
+    static Long declaredSerialVersionUid(byte[] bytes) {
         var fields = ClassFile.of().parse(bytes).fields().stream()
                 .filter(field -> field.fieldName().equalsString("serialVersionUID")).toList();
         if (fields.isEmpty()) {

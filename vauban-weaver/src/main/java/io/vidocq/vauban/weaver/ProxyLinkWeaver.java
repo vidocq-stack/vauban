@@ -149,6 +149,40 @@ public final class ProxyLinkWeaver {
     }
 
     /**
+     * Weaves the marker constructor as {@link #addMarkerConstructor} does, and keeps the {@code serialVersionUID} of
+     * the original class: the marker constructor is not private, so it changes the value the JVM computes for a class
+     * that declares none, and an object serialized by the same class outside Vauban would not read back
+     * (BUG-20261118-95). A class that declares none gets a {@code private static final long serialVersionUID} of the
+     * value its original bytes give, {@link #defaultSerialVersionUid}. That field changes nothing for a class that is
+     * not {@code Serializable}, so it is added whatever the supertypes, which the bytes of the class alone do not show.
+     *
+     * <p>Only for the bytes of a library, a jar or an sjar, which stay the same from one start to the next. A class
+     * served from a directory, the application's own under a dev swap, keeps the default value: a pinned value would
+     * change at each edit, and Foy and Vidocq read a declared value that changed as a class that cannot move.
+     *
+     * @return the patched bytecode, or {@code null} when the class already declares the marker
+     */
+    // S1168: null is the "left unchanged" answer of addMarkerConstructor and of a ClassFileTransformer.
+    @SuppressWarnings("java:S1168")
+    public static byte[] addMarkerConstructorKeepingSerialVersionUid(byte[] beanClass, SuperChain chain) {
+        byte[] woven = addMarkerConstructor(beanClass, chain);
+        if (woven == null) {
+            return null;
+        }
+        var model = ClassFile.of().parse(beanClass);
+        return SerialVersionUids.declares(model) ? woven
+                : SerialVersionUids.with(woven, SerialVersionUids.computed(model));
+    }
+
+    /**
+     * The {@code serialVersionUID} the JVM computes for the class of {@code classFile} when it declares none: the
+     * algorithm of the Java Object Serialization Specification, section 4.6, read from the class file.
+     */
+    public static long defaultSerialVersionUid(byte[] classFile) {
+        return SerialVersionUids.computed(ClassFile.of().parse(classFile));
+    }
+
+    /**
      * Rewrites the {@code <init>} of a generated client proxy to
      * {@code super((ProxyLink) null)}. The proxy's only constructor takes its delegate,
      * {@code (Supplier d)}, and stores it in the final {@code $$delegate} after the super call

@@ -54,7 +54,9 @@ final class WeavingTransformer implements ClassFileTransformer {
             var chain = beans.get(className);
             if (chain != null) {
                 // null = marker already present (already-woven build output) — leave unchanged
-                return ProxyLinkWeaver.addMarkerConstructor(classfileBuffer, chain);
+                return fromLibraryArchive(protectionDomain)
+                        ? ProxyLinkWeaver.addMarkerConstructorKeepingSerialVersionUid(classfileBuffer, chain)
+                        : ProxyLinkWeaver.addMarkerConstructor(classfileBuffer, chain);
             }
             if (proxies.contains(className)) {
                 return ProxyLinkWeaver.retargetProxyConstructor(classfileBuffer);
@@ -64,6 +66,25 @@ final class WeavingTransformer implements ClassFileTransformer {
                     + " failed, class left unchanged: " + t);
         }
         return null;
+    }
+
+    /**
+     * Whether the class comes from a file, a jar, whose bytes stay the same from one start to the next: only then is
+     * its {@code serialVersionUID} pinned (BUG-20261118-95). Not from a directory, nor when the code source is
+     * unknown.
+     */
+    private static boolean fromLibraryArchive(ProtectionDomain domain) {
+        var source = domain == null ? null : domain.getCodeSource();
+        var location = source == null ? null : source.getLocation();
+        if (location == null || !"file".equals(location.getProtocol())) {
+            return false;
+        }
+        try {
+            return java.nio.file.Files.isRegularFile(java.nio.file.Path.of(location.toURI()));
+        } catch (java.net.URISyntaxException | IllegalArgumentException
+                 | java.nio.file.FileSystemNotFoundException _) {
+            return false;
+        }
     }
 
     private static String internal(String binaryName) {
