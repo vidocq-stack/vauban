@@ -103,7 +103,7 @@ final class ContainerScanner {
                     || className.contains("$$")) return;
             var clazz = Class.forName(className, false, cl);
             if (clazz.isAnnotation() || clazz.isInterface() || clazz.isSynthetic()) return;
-            host.addBeanClass(clazz);
+            host.addDiscoveredClass(clazz);
         } catch (ClassNotFoundException | NoClassDefFoundError e) {
             // Skipped, but said: a whole archive's beans once vanished this way without a word,
             // their package split into another module of the layer (Vidocq/grimm#15).
@@ -111,6 +111,25 @@ final class ContainerScanner {
                     "{0} is listed as a bean but cannot be loaded ({1}); its bean is skipped. On the module "
                             + "path, its package may be split with another module, or a module it needs missing.",
                     className, e.toString());
+        }
+    }
+
+    /** Adds the classes {@code list} names, and their packages to {@code packages}. */
+    private void readBeansList(java.net.URL list, ClassLoader cl, java.util.Set<String> packages)
+            throws IOException {
+        try (var reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(list.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                var className = line.strip();
+                if (!className.isEmpty() && !className.startsWith("#")) {
+                    tryAddBeanClass(className, cl);
+                    int dot = className.lastIndexOf('.');
+                    if (dot > 0) {
+                        packages.add(className.substring(0, dot));
+                    }
+                }
+            }
         }
     }
 
@@ -133,23 +152,21 @@ final class ContainerScanner {
         }
 
         // 3. Read vauban-beans.list files from all JARs/directories
+        var listedPackages = new java.util.TreeSet<String>();
         try {
             var urls = cl.getResources(BEANS_LIST);
             while (urls.hasMoreElements()) {
-                var url = urls.nextElement();
-                try (var reader = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(url.openStream(), java.nio.charset.StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        var className = line.strip();
-                        if (!className.isEmpty() && !className.startsWith("#")) {
-                            tryAddBeanClass(className, cl);
-                        }
-                    }
-                }
+                readBeansList(urls.nextElement(), cl, listedPackages);
             }
         } catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException("Failed to scan classpath for vauban-beans.list", e);
+        }
+        // The generated provider of each listed package, which no provides clause may register (BUG-20261119-72).
+        for (var listedPackage : listedPackages) {
+            var provider = ComponentProviders.listedIn(listedPackage, cl);
+            if (provider != null) {
+                host.listedProviders.add(provider);
+            }
         }
 
         // 4. Read META-INF/services/jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
@@ -356,7 +373,7 @@ final class ContainerScanner {
             if (clazz.isAnnotation() || clazz.isInterface() || clazz.isSynthetic()) return;
             if (clazz.isAnonymousClass() || clazz.isLocalClass()) return;
             if (java.lang.reflect.Modifier.isAbstract(clazz.getModifiers())) return;
-            host.addBeanClass(clazz);
+            host.addDiscoveredClass(clazz);
             if (forced) host.forcedDiscoveryClasses.add(clazz);
         } catch (ClassNotFoundException | NoClassDefFoundError _) {
             // Skip unloadable classes

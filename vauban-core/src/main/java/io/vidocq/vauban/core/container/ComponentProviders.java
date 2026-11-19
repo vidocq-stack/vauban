@@ -58,6 +58,15 @@ record ComponentProviders(List<VaubanComponentProvider> providers) {
      * @param extra programmatically-registered providers, consulted before the discovered ones
      */
     static ComponentProviders load(ClassLoader cl, List<VaubanComponentProvider> extra) {
+        return load(cl, extra, List.of());
+    }
+
+    /**
+     * As {@link #load(ClassLoader, List)}, then {@code listed}, the providers found next to a
+     * {@code vauban-beans.list} ({@link #listedIn}), each unless a provider of the same class is already there.
+     */
+    static ComponentProviders load(ClassLoader cl, List<VaubanComponentProvider> extra,
+            List<VaubanComponentProvider> listed) {
         var all = new ArrayList<>(extra);
         try {
             for (VaubanComponentProvider provider : ServiceLoader.load(VaubanComponentProvider.class, cl)) {
@@ -65,6 +74,15 @@ record ComponentProviders(List<VaubanComponentProvider> providers) {
             }
         } catch (ServiceConfigurationError | LinkageError | RuntimeException _) {
             // misconfigured/absent services — keep the explicit providers, fall back otherwise
+        }
+        var names = new java.util.HashSet<String>();
+        for (var provider : all) {
+            names.add(provider.getClass().getName());
+        }
+        for (var provider : listed) {
+            if (names.add(provider.getClass().getName())) {
+                all.add(provider);
+            }
         }
         all = new ArrayList<>(withTestCompanions(all));
         // A trampoline re-layering, as when an IDE launches the application through Vidocq,
@@ -89,6 +107,39 @@ record ComponentProviders(List<VaubanComponentProvider> providers) {
     }
 
     private static final String MAIN_PROVIDER = "_VaubanComponents";
+
+    /**
+     * The generated provider of {@code packageName}, a package a {@code vauban-beans.list} names, or {@code null}
+     * (BUG-20261119-72). No {@code provides} clause registers the provider of a module's test compilation when its
+     * main sources declare no bean, and the services file next to it is ignored on the module path. The provider is
+     * built through Vauban's own lookup, so only when its package is exported or opened to Vauban: elsewhere the
+     * start stays as it was.
+     */
+    @SuppressWarnings("java:S1181") // MethodHandle.invoke throws Throwable; a provider that fails is skipped
+    static VaubanComponentProvider listedIn(String packageName, ClassLoader cl) {
+        Class<?> type;
+        try {
+            type = io.vidocq.vauban.core.loading.DeploymentClasses.load(packageName + "." + MAIN_PROVIDER, cl);
+        } catch (ClassNotFoundException _) {
+            return null;
+        }
+        var vauban = ComponentProviders.class.getModule();
+        var module = type.getModule();
+        if (!VaubanComponentProvider.class.isAssignableFrom(type)
+                || !(module.isExported(packageName, vauban) || module.isOpen(packageName, vauban))) {
+            return null;
+        }
+        vauban.addReads(module);
+        try {
+            return (VaubanComponentProvider) java.lang.invoke.MethodHandles.lookup()
+                    .findConstructor(type, java.lang.invoke.MethodType.methodType(void.class)).invoke();
+        } catch (Throwable broken) {
+            System.getLogger(ComponentProviders.class.getName()).log(System.Logger.Level.WARNING,
+                    "Cannot build the provider " + type.getName() + " (" + broken.getClass().getName()
+                            + "); its beans are built without it.", broken);
+            return null;
+        }
+    }
 
     /**
      * {@code providers}, each {@code _VaubanComponents} followed by the {@code _VaubanComponentsTests} of its

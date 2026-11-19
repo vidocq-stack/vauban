@@ -95,6 +95,8 @@ public final class VaubanContainerBuilder {
     private boolean isBeanArchive = true;
     private boolean strictScannedDiscovery = false;
     final Set<Class<?>> forcedDiscoveryClasses = new java.util.LinkedHashSet<>();
+    /** The providers the scan found next to a {@code vauban-beans.list} (BUG-20261119-72). */
+    final List<io.vidocq.vauban.api.VaubanComponentProvider> listedProviders = new ArrayList<>();
     private VaubanLookup builderLookup;
     final List<io.vidocq.vauban.classloader.spi.ByteSourcePlugin> byteSourcePlugins = new ArrayList<>();
     io.vidocq.vauban.classloader.spi.PluginContext pluginContext;
@@ -185,6 +187,15 @@ public final class VaubanContainerBuilder {
      * package is no bean: the container reads on it whether the package is vetoed.
      */
     public VaubanContainerBuilder addBeanClass(Class<?> beanClass) {
+        explicitBeanClasses.add(beanClass.getName());
+        return addDiscoveredClass(beanClass);
+    }
+
+    /** The classes added with {@link #addBeanClass}, not found by a scan (BUG-20261119-73). */
+    private final Set<String> explicitBeanClasses = new java.util.LinkedHashSet<>();
+
+    /** Adds a class a scan found: as {@link #addBeanClass}, but no warning says when it is no bean. */
+    VaubanContainerBuilder addDiscoveredClass(Class<?> beanClass) {
         if (PackageInfos.isPackageInfo(beanClass.getName())) {
             packageInfoClasses.add(beanClass);
             return this;
@@ -203,6 +214,64 @@ public final class VaubanContainerBuilder {
         }
         beanClasses.add(beanClass);
         return this;
+    }
+
+    private static final String OBSERVES = "jakarta.enterprise.event.Observes";
+    private static final String OBSERVES_ASYNC = "jakarta.enterprise.event.ObservesAsync";
+    private static final String PRODUCES = "jakarta.enterprise.inject.Produces";
+    private static final String VETOED = "jakarta.enterprise.inject.Vetoed";
+
+    /**
+     * Says which class added with {@link #addBeanClass} is no bean although it declares an observer method or a
+     * producer, which are then ignored: a class without a bean defining annotation, in the annotated mode
+     * (BUG-20261119-73). A vetoed class is meant to be no bean, and is not named. Plain loops: the start runs this,
+     * and each lambda is a hidden class it loads (StartLoadsFewClassesModulePathTest).
+     */
+    private void warnIgnoredBeanClasses(VaubanIndex index, List<BeanDescriptor> descriptors) {
+        var beanClasses = new java.util.HashSet<String>();
+        for (var descriptor : descriptors) {
+            beanClasses.add(descriptor.beanClass().toString());
+        }
+        for (var name : explicitBeanClasses) {
+            var info = beanClasses.contains(name) ? null : index.getClassByName(DotName.of(name)).orElse(null);
+            if (info != null && !named(info.annotations(), VETOED) && declaresObserverOrProducer(info)) {
+                LOG.log(System.Logger.Level.WARNING, "{0} was added with addBeanClass, but it has no bean defining"
+                        + " annotation, so it is no bean: its observer methods and producers are ignored. Give it"
+                        + " one, such as @Dependent, or add it with addSyntheticArchiveClass.", name);
+            }
+        }
+    }
+
+    private static boolean declaresObserverOrProducer(ClassInfo info) {
+        for (var method : info.methods()) {
+            if (named(method.annotations(), PRODUCES) || observes(method)) {
+                return true;
+            }
+        }
+        for (var field : info.fields()) {
+            if (named(field.annotations(), PRODUCES)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean observes(io.vidocq.vauban.indexer.model.MethodInfo method) {
+        for (var parameter : method.parameters()) {
+            if (named(parameter.annotations(), OBSERVES) || named(parameter.annotations(), OBSERVES_ASYNC)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean named(List<AnnotationInfo> annotations, String name) {
+        for (var annotation : annotations) {
+            if (annotation.name().toString().equals(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The names of the bean classes added so far, in the order they were added. */
@@ -1187,7 +1256,7 @@ public final class VaubanContainerBuilder {
 
         // Load module-supplied component providers once; the bean factories (deferred lambdas)
         // read this field at creation time, preferring generated instantiation over reflection.
-        componentProviders = ComponentProviders.load(discoveryClassLoader, componentProviderList);
+        componentProviders = ComponentProviders.load(discoveryClassLoader, componentProviderList, listedProviders);
 
         // vauban#98: the build-compatible extension phase resolves a bean class the way the
         // container already knows it — a deployment spans several loaders (vidocq:dev defines
@@ -1264,6 +1333,7 @@ public final class VaubanContainerBuilder {
             configureDiscovery(discovery, extensionDiscovery);
 
             var descriptors = new ArrayList<>(discovery.discoverBeans());
+            warnIgnoredBeanClasses(index, descriptors);
             var observers = new ArrayList<>(discovery.discoverObservers());
             List<InterceptorDescriptor> interceptors =
                     new ArrayList<>(discovery.discoverInterceptors());
