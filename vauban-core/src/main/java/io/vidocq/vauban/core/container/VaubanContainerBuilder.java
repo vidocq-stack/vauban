@@ -228,12 +228,12 @@ public final class VaubanContainerBuilder {
      * and each lambda is a hidden class it loads (StartLoadsFewClassesModulePathTest).
      */
     private void warnIgnoredBeanClasses(VaubanIndex index, List<BeanDescriptor> descriptors) {
-        var beanClasses = new java.util.HashSet<String>();
+        var beans = new java.util.HashSet<String>();
         for (var descriptor : descriptors) {
-            beanClasses.add(descriptor.beanClass().toString());
+            beans.add(descriptor.beanClass().toString());
         }
         for (var name : explicitBeanClasses) {
-            var info = beanClasses.contains(name) ? null : index.getClassByName(DotName.of(name)).orElse(null);
+            var info = beans.contains(name) ? null : index.getClassByName(DotName.of(name)).orElse(null);
             if (info != null && !named(info.annotations(), VETOED) && declaresObserverOrProducer(info)) {
                 LOG.log(System.Logger.Level.WARNING, "{0} was added with addBeanClass, but it has no bean defining"
                         + " annotation, so it is no bean: its observer methods and producers are ignored. Give it"
