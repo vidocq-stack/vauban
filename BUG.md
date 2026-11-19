@@ -5,6 +5,36 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261119-72 — The test round's provider of a module without main beans is never loaded
+
+- **Date**: 2026-11-19
+- **Status**: FIXED on `fix/test-provider-by-name`
+- **Module**: `vauban-core` (`ContainerScanner`, `ComponentProviders`)
+- **Symptom**: Vidocq's `vidocq-runtime-core` tests log 37 times "Cannot reflectively access
+  io.vidocq.runtime.core.ShutdownObserver on the module path" at shutdown: a test bean is built by reflection,
+  which the module does not open, and its observer never runs (Vidocq BUG-20261119-80, FOY session).
+- **Minimal repro**: a module whose main sources declare no bean, its tests compiled with `vauban-processor`: the
+  test round emits `<package>._VaubanComponents` and a services file. Surefire patches the test classes into the
+  named module, whose `module-info` has no `provides`, so the services file is ignored; `scanClasspath()` reads the
+  `vauban-beans.list` next to it and adds the beans, without their provider.
+- **Cause**: vauban#101 finds a test provider by name only as the `_VaubanComponentsTests` companion of a main
+  provider that a `provides` loaded. With no main provider there is no companion to look for.
+- **Fix**: the scan also takes the generated `_VaubanComponents` of each package a `vauban-beans.list` names, built
+  through Vauban's own lookup when the package is exported or opened to Vauban, unless a provider of that class is
+  already loaded. `ListedComponentProviderTest#theProviderOfAListedPackageBuildsItsBean`.
+
+## BUG-20261119-73 — `addBeanClass` of a class without a bean defining annotation drops its observers silently
+
+- **Date**: 2026-11-19
+- **Status**: FIXED on `fix/test-provider-by-name`
+- **Module**: `vauban-core` (`VaubanContainerBuilder`)
+- **Symptom**: a class with an `@Observes` method and no bean defining annotation, added with `addBeanClass`, is no
+  bean in the annotated mode: its observer never runs, and nothing says so (found by FOY on Vidocq
+  BUG-20261119-80).
+- **Fix**: the build warns for each class added with `addBeanClass` that is no bean although it declares an
+  observer method or a producer, and names `addSyntheticArchiveClass`, the CDI SE way to make it a bean. A vetoed
+  class, or one a scan found, is not named. `ListedComponentProviderTest#anObserverWithoutABeanDefiningAnnotationIsReported`.
+
 ## BUG-20261119-71 — `TestRoundProviderTest.theTestRoundEmitsItsOwnProvider` failed once on main's build
 
 - **Date**: 2026-11-19
@@ -61,7 +91,7 @@ suspected cause, status. Updated on every investigation.
 ## BUG-20261118-95 — Weaving the `(ProxyLink)` marker changes the computed `serialVersionUID` of a `Serializable` class that declares none
 
 - **Date**: 2026-11-18
-- **Status**: OPEN
+- **Status**: FIXED on `fix/test-provider-by-name`
 - **Module**: `vauban-weaver` (`ProxyLinkWeaver.addMarkerConstructor`), `vauban-classloader`
   (`CdiProxifierTransformer`)
 - **Symptom**: a `Serializable` class without a declared `serialVersionUID`, once woven, has another default
@@ -92,6 +122,12 @@ suspected cause, status. Updated on every investigation.
     first change, instead of the method gained.
   A pin computed from the class being woven moves with every edit of it. A fix must leave a class under the dev swap
   without a declared value (or make Foy and Vidocq tell a pinned value apart), and is designed with FOY before code.
+- **Fix** (option A, Yann's pick of `docs/reports/2026-11-19-bug-95-serial-version-options.md` in the workspace):
+  only load-time weaving pins, and only for a class whose archive is a file, a jar or an sjar
+  (`CdiProxifierTransformer`: `archivePath()` is a regular file; the agent's `WeavingTransformer`: the code
+  source is a regular file). A directory, the dev swap's, keeps the default value, and so does the build tier.
+  The limit kept: an application class woven by Vauban has another default value than the same class built
+  without it. `CdiProxifierSerialVersionUidTest`, `WeavingTransformerTest`, `SerialVersionUidTest`.
 
 ## BUG-20261118-70 — The unproxyable-type error of a produced type names the producer class
 

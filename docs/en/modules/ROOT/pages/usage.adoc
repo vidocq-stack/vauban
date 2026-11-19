@@ -466,7 +466,12 @@ the main beans went missing (`Unsatisfied dependency` on a bean that exists). No
   `_VaubanComponents` of the same package, so no `provides` clause is needed, and none could be written: the
   `module-info` belongs to the main sources;
 * its `vauban-beans.list`, `vauban/required-opens.list`, `vauban-bce-runtime.list` and contexts list also carry the
-  main compilation's lines, so hiding the main ones loses nothing.
+  main compilation's lines, so hiding the main ones loses nothing;
+* [[test-provider-without-main-beans]][.tag-new]#NEW# when the main sources declare no bean, the test compilation
+  emits a plain `_VaubanComponents`, which no `provides` clause names, and the services file next to it is ignored
+  once the tests are patched into the named module. `scanClasspath()` takes the generated provider of each package
+  a `vauban-beans.list` names, when the package is exported or opened to Vauban, so the test beans are built
+  without reflection (BUG-20261119-72).
 
 The processor recognises a test compilation when the main `_VaubanComponents` it sees lies outside its own output, or
 from the usual layouts (Maven's `target/test-classes`, Gradle's `build/classes/java/test`). Another layout can name

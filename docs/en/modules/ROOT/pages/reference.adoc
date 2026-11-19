@@ -577,6 +577,11 @@ Vauban needs no application configuration file. Bean selection happens via:
 * the `module-info.java` (Java Modules visibility);
 * the bootstrap strategy (`scanLocal()`, `scanClasspath()`, `addBeanClass()`).
 
+[[add-bean-class]][.tag-new]#NEW# `addBeanClass()` adds a class in the annotated mode: without a bean defining
+annotation it is no bean, and its observer methods and producers are ignored. The build says so for each such class
+that declares one (BUG-20261119-73). `addSyntheticArchiveClass()` makes the class a bean whatever its annotations, as
+CDI SE's `addBeanClasses` does.
+
 For dynamic application configuration, use MicroProfile Config through xref:vidocq::index.adoc[Vidocq Runtime].
 
 [#architecture-rules]

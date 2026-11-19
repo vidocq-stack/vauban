@@ -723,6 +723,14 @@ Details worth knowing about the load-time tier:
 * **Plan-driven, no heuristics** — the agent only ever touches the classes named in the
   plan computed from the container's own index: unwoven beans get the marker constructor,
   their `_ClientProxy` companions are retargeted to it.
+* [[woven-serial-version-uid]][.tag-new]#NEW# **The `serialVersionUID` of a library class** — the marker
+  constructor is not private, so it changes the default `serialVersionUID` of a class that declares none (Java Object
+  Serialization Specification, section 4.6). A class woven at load time from a jar or an sjar gets a
+  `private static final long serialVersionUID` of the value its original bytes give, and an object it serialized
+  outside Vauban reads back. A class served from a directory and the build tiers get none: their bytes change at each
+  edit, and so would a declared value, which Foy and Vidocq's dev swap read as a class that cannot move
+  (BUG-20261118-95). Known limit: an application class woven by Vauban has another default value than the same class
+  built without it.
 * [.tag-new]#NEW# **What the shipped proxy expects** — a bean class needs the marker when it has
   none and either has no non-private no-arg constructor, or its `<Bean>_ClientProxy` next to it
   calls `<init>(ProxyLink)` all the same: a woven build wrote that proxy, and the class was
