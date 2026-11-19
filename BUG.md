@@ -5,6 +5,21 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261119-71 — `TestRoundProviderTest.theTestRoundEmitsItsOwnProvider` failed once on main's build
+
+- **Date**: 2026-11-19
+- **Status**: OPEN (not reproduced)
+- **Module**: `vauban-processor` (test `TestRoundProviderTest`, `VaubanProcessor.isTestRound`)
+- **Symptom**: main's push build of f8600a4f (run 2485, runner f924a289) failed with "the test round's provider has
+  its own name ==> expected: <true> but was: <false>": the second compilation wrote no `_VaubanComponentsTests`.
+  The same commit passed the same test on the same runner in the Sonar push run 2487, and on two other runners in
+  #351's runs 2473 and 2474. Nothing that #351 changed is on that path.
+- **Minimal repro**: none yet. Twenty local runs of `-Dtest=TestRoundProviderTest` passed (macOS, JDK 25).
+- **Hypothesised cause**: `isTestRound` answers false when the main round's `_VaubanComponents` cannot be read as a
+  class file outside the test round's output, or when the probe resource throws. Which branch, the log does not say.
+- **Next**: the assertion now lists the files each round wrote, so the next failure tells whether the main round
+  already wrote `_VaubanComponentsTests` or the test round wrote `_VaubanComponents`.
+
 ## BUG-20261119-70 — The frozen client proxy of a synthetic bean class outside the Vauban layer is generated again at start
 
 - **Date**: 2026-11-19

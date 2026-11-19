@@ -145,9 +145,28 @@ public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String
 
         String get() {
             if (found == null) {
-                found = providerPackage(output);
+                found = providerPackage();
             }
             return found;
+        }
+
+        /**
+         * The first package of the output, by name, that holds a generated component provider, as a path with its
+         * trailing slash; {@link #NO_HOST} when none does.
+         */
+        private String providerPackage() {
+            if (!Files.isDirectory(output)) {
+                return NO_HOST;
+            }
+            try (var walked = Files.walk(output)) {
+                return walked.filter(file -> file.getFileName() != null
+                                && PROVIDER_FILE.equals(file.getFileName().toString()))
+                        .map(file -> output.relativize(file.getParent()).toString().replace('\\', '/'))
+                        .filter(directory -> !directory.isEmpty() && !directory.startsWith("META-INF"))
+                        .sorted().findFirst().map(directory -> directory + "/").orElse(NO_HOST);
+            } catch (IOException _) {
+                return NO_HOST;
+            }
         }
     }
 
@@ -200,25 +219,6 @@ public record SyntheticClientProxies(Map<String, byte[]> files, SortedSet<String
 
     /** Marks an output without a package to host the proxy of an interface. */
     private static final String NO_HOST = "-";
-
-    /**
-     * The first package of {@code output}, by name, that holds a generated component provider, as a path with its
-     * trailing slash; {@link #NO_HOST} when none does.
-     */
-    private static String providerPackage(Path output) {
-        if (!Files.isDirectory(output)) {
-            return NO_HOST;
-        }
-        try (var walked = Files.walk(output)) {
-            return walked.filter(file -> file.getFileName() != null
-                            && PROVIDER_FILE.equals(file.getFileName().toString()))
-                    .map(file -> output.relativize(file.getParent()).toString().replace('\\', '/'))
-                    .filter(directory -> !directory.isEmpty() && !directory.startsWith("META-INF"))
-                    .sorted().findFirst().map(directory -> directory + "/").orElse(NO_HOST);
-        } catch (IOException _) {
-            return NO_HOST;
-        }
-    }
 
     /**
      * Adds the proxy of the interface {@code beanClass} to {@code files} and {@code hosted}, in the package

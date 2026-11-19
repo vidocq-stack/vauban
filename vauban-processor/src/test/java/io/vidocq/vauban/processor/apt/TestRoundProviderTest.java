@@ -108,7 +108,8 @@ class TestRoundProviderTest {
         Path test = compile("test", TEST_BEAN, tmp.resolve("test-classes"), main);
 
         assertTrue(Files.exists(test.resolve("com/acme/app/_VaubanComponentsTests.class")),
-                "the test round's provider has its own name");
+                () -> "the test round's provider has its own name; main round wrote " + listing(main)
+                        + ", test round wrote " + listing(test));
         assertFalse(Files.exists(test.resolve("com/acme/app/_VaubanComponents.class")),
                 "a second _VaubanComponents would shadow the main round's");
         Path services = test.resolve(SERVICES);
@@ -144,6 +145,15 @@ class TestRoundProviderTest {
         assertTrue(Files.exists(main.resolve("com/acme/app/_VaubanComponents.class")));
         assertFalse(Files.exists(main.resolve("com/acme/app/_VaubanComponentsTests.class")),
                 "the main provider found in the round's own output is not another round's");
+    }
+
+    /** The files under {@code output}, relative to it, for a failure message. */
+    private static List<String> listing(Path output) {
+        try (var files = Files.walk(output)) {
+            return files.filter(Files::isRegularFile).map(file -> output.relativize(file).toString()).sorted().toList();
+        } catch (IOException e) {
+            return List.of("unreadable: " + e);
+        }
     }
 
     private static String resolveCompilationClasspath() {
