@@ -102,6 +102,12 @@ public final class BeanMembers {
             }
             return order;
         }
+
+        private static String descriptorOf(Class<?>[] types) {
+            var descriptor = new StringBuilder();
+            for (var type : types) descriptor.append(type.descriptorString());
+            return descriptor.toString();
+        }
     }
 
     /** A copy of {@code methods} in {@link #STABLE_ORDER}. */
@@ -109,11 +115,5 @@ public final class BeanMembers {
         var sorted = methods.clone();
         Arrays.sort(sorted, STABLE_ORDER);
         return sorted;
-    }
-
-    private static String descriptorOf(Class<?>[] types) {
-        var descriptor = new StringBuilder();
-        for (var type : types) descriptor.append(type.descriptorString());
-        return descriptor.toString();
     }
 }

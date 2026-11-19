@@ -74,23 +74,23 @@ final class BeanMetadata {
         public Object get() {
             return bound == null ? injectedInto() : boundOrNull(bound);
         }
+
+        /** What {@code value} is bound to, or {@code null} outside the creation of an interceptor. */
+        private static <T> T boundOrNull(ScopedValue<T> value) {
+            return value.isBound() ? value.get() : null;
+        }
+
+        /** The bean an injection point being injected belongs to: the metadata of the instance it is injected into. */
+        private static Bean<?> injectedInto() {
+            var point = VaubanContainer.getCurrentInjectionPoint();
+            return point == null ? null : point.getBean();
+        }
     }
 
     /** {@code @Intercepted}, which the API gives no literal of. */
     @SuppressWarnings("java:S2160") // AnnotationLiteral defines equals and hashCode, as Annotation requires
     private static final class InterceptedLiteral extends AnnotationLiteral<Intercepted> implements Intercepted {
         private static final long serialVersionUID = 1L;
-    }
-
-    /** What {@code value} is bound to, or {@code null} outside the creation of an interceptor. */
-    private static <T> T boundOrNull(ScopedValue<T> value) {
-        return value.isBound() ? value.get() : null;
-    }
-
-    /** The bean an injection point being injected belongs to: the metadata of the instance it is injected into. */
-    private static Bean<?> injectedInto() {
-        var point = VaubanContainer.getCurrentInjectionPoint();
-        return point == null ? null : point.getBean();
     }
 
     /**

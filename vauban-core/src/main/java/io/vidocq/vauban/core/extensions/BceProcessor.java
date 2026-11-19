@@ -42,7 +42,9 @@ import java.util.stream.Collectors;
  * Processes Build Compatible Extensions (BCE) — CDI 4.1 spec chapter 28.
  * Handles @Enhancement, @Registration, and @Synthesis phases.
  */
-@SuppressWarnings("java:S3776") // CDI container logic has inherent complexity
+// S3776: CDI container logic has inherent complexity. S6539: the four phases of CDI 4.1 chapter 28 meet here, each
+// with the model types of its parameters; split them per phase rather than by coupling count.
+@SuppressWarnings({"java:S3776", "java:S6539"})
 public final class BceProcessor {
 
 
