@@ -841,8 +841,8 @@ public final class VaubanContainerBuilder {
                     synthetic.load(new java.io.InputStreamReader(
                             new java.io.ByteArrayInputStream(written.toByteArray()),
                             java.nio.charset.StandardCharsets.UTF_8));
-                    proxies.interfaces().forEach((type, proxy) -> synthetic.setProperty(
-                            io.vidocq.vauban.core.extensions.SyntheticClientProxies.INTERFACE_KEY + type, proxy));
+                    proxies.hosted().forEach((type, proxy) -> synthetic.setProperty(
+                            io.vidocq.vauban.core.extensions.SyntheticClientProxies.HOSTED_KEY + type, proxy));
                     return synthetic;
                 } catch (IllegalArgumentException e) {
                     String reason = "a synthetic component cannot be written (" + e.getMessage() + ")";

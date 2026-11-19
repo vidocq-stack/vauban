@@ -410,7 +410,7 @@ final class InterceptorBeanWrapper {
             return providedIface;
         }
 
-        Object frozen = frozenInterfaceProxy(beanClass, delegate);
+        Object frozen = frozenProxy(beanClass, delegate);
         if (frozen != null) {
             return frozen;
         }
@@ -521,6 +521,12 @@ final class InterceptorBeanWrapper {
         if (provided != null) {
             return provided;
         }
+        // The proxy the freeze generated next to a component provider for a class of another archive
+        // (BUG-20261119-70).
+        Object frozen = frozenProxy(beanClass, delegate);
+        if (frozen != null) {
+            return frozen;
+        }
 
         // 2. Fallback: the proxy the build left next to the bean (Maven plugin), else one generated
         //    now, where runtimeProxySite says; then reflective instantiation through its only
@@ -606,11 +612,20 @@ final class InterceptorBeanWrapper {
                 || bean.descriptor().kind() == BeanDescriptor.BeanKind.PRODUCER_FIELD;
     }
 
-    /** The class the freeze generated for the interface {@code beanClass}, or {@code null} (vauban#342). */
-    private Class<?> frozenInterfaceProxyClass(Class<?> beanClass) {
-        String name = container.frozenInterfaceProxy(beanClass);
+    /**
+     * The class the freeze generated next to a component provider for {@code beanClass}, an interface or a class of
+     * another archive, or {@code null} (vauban#342, BUG-20261119-70).
+     */
+    private Class<?> frozenProxyClass(Class<?> beanClass) {
+        String name = container.frozenProxy(beanClass);
         if (name == null) {
             return null;
+        }
+        // The proxy extends or implements beanClass: its module reads beanClass's, which it may not require.
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) {
+            io.vidocq.vauban.core.access.ModuleLookups.addReads(container.classLoader(), name.substring(0, dot),
+                    beanClass.getModule());
         }
         try {
             var proxyClass = io.vidocq.vauban.core.loading.DeploymentClasses.load(name, container.classLoader());
@@ -621,13 +636,13 @@ final class InterceptorBeanWrapper {
     }
 
     /**
-     * An instance of the proxy the freeze generated for the interface {@code beanClass}, or {@code null} when it
+     * An instance of the proxy the freeze generated for {@code beanClass}, or {@code null} when it
      * generated none or the class cannot be reached: through the lookup the component provider of its package
      * grants, which needs no {@code opens}, else as a public class.
      */
     @SuppressWarnings("java:S1181") // a constructor handle throws Throwable; an Error is rethrown as it is
-    private Object frozenInterfaceProxy(Class<?> beanClass, java.util.function.Supplier<?> delegate) {
-        Class<?> proxyClass = frozenInterfaceProxyClass(beanClass);
+    private Object frozenProxy(Class<?> beanClass, java.util.function.Supplier<?> delegate) {
+        Class<?> proxyClass = frozenProxyClass(beanClass);
         if (proxyClass == null) {
             return null;
         }
@@ -695,10 +710,11 @@ final class InterceptorBeanWrapper {
                 return;
             }
         }
+        if (frozenProxyClass(target) != null) {
+            return;
+        }
         if (target.isInterface()) {
-            if (frozenInterfaceProxyClass(target) == null) {
-                runtimeGeneration.generated(interfaceProxyKind(bean), target.getName());
-            }
+            runtimeGeneration.generated(interfaceProxyKind(bean), target.getName());
             return;
         }
         // The class the fallback will define, where it will define it; none when it cannot.

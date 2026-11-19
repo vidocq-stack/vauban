@@ -84,6 +84,65 @@ class FrozenSyntheticClientProxyTest {
         }
     }
 
+    /**
+     * A class of another archive whose proxy forwards through public members only, with no no-arg constructor, as
+     * langchain4j-cdi's {@code McpCdi41InvokerProvider}.
+     */
+    public static class PublicProvider implements Named {
+        private final String[] keys;
+
+        public PublicProvider(String[] keys) {
+            this.keys = keys;
+        }
+
+        @Override
+        public String name() {
+            return "public " + keys.length;
+        }
+    }
+
+    public static class PublicProviderCreator implements SyntheticBeanCreator<PublicProvider> {
+        @Override
+        public PublicProvider create(Instance<Object> lookup, Parameters params) {
+            return new PublicProvider(new String[] {"a", "b"});
+        }
+    }
+
+    public static class PublicProviderExtension implements BuildCompatibleExtension {
+        @Synthesis
+        public void provider(SyntheticComponents components) {
+            components.addBean(PublicProvider.class).type(PublicProvider.class).scope(ApplicationScoped.class)
+                    .createWith(PublicProviderCreator.class);
+        }
+    }
+
+    /** A class of another archive whose proxy must forward a method of its package: only its package can hold it. */
+    public static class PackageService implements Named {
+        @Override
+        public String name() {
+            return "package";
+        }
+
+        String inPackage() {
+            return "p";
+        }
+    }
+
+    public static class PackageServiceCreator implements SyntheticBeanCreator<PackageService> {
+        @Override
+        public PackageService create(Instance<Object> lookup, Parameters params) {
+            return new PackageService();
+        }
+    }
+
+    public static class PackageServiceExtension implements BuildCompatibleExtension {
+        @Synthesis
+        public void service(SyntheticComponents components) {
+            components.addBean(PackageService.class).type(PackageService.class).scope(ApplicationScoped.class)
+                    .createWith(PackageServiceCreator.class);
+        }
+    }
+
     // ---- a bean class the build writes: these three are copied under the output and loaded from there ----
 
     public static class DirectService implements Named {
@@ -201,6 +260,56 @@ class FrozenSyntheticClientProxyTest {
                 "not in the application's output: the package belongs to the other archive");
         assertEquals(List.of("# written by another build step", "com.acme.Produced", LibraryService.class.getName()),
                 Files.readAllLines(manifest, StandardCharsets.UTF_8));
+    }
+
+    private void providerPackages() throws IOException {
+        Files.createDirectories(output.resolve("zoo/app"));
+        Files.createDirectories(output.resolve("acme/app"));
+        Files.write(output.resolve("zoo/app/_VaubanComponents.class"), new byte[0]);
+        Files.write(output.resolve("acme/app/_VaubanComponents.class"), new byte[0]);
+    }
+
+    @Test
+    @DisplayName("a class of another archive with public members only: the proxy goes next to a component provider, "
+            + "and the start uses it whatever loader defines the class (BUG-20261119-70)")
+    void aPublicClassOfAnotherArchiveHasItsProxyNextToAComponentProvider() throws Exception {
+        providerPackages();
+        try (var loader = new OutputFirst(output)) {
+            assertTrue(VaubanContainer.builder().classLoader(loader).addBeanClass(PublicProviderExtension.class)
+                    .freezeExtensions(output).frozen());
+        }
+        String proxyName = io.vidocq.vauban.core.proxy.ClientProxyShape.producerProxyName("acme.app",
+                PublicProvider.class.getName());
+        assertTrue(Files.isRegularFile(output.resolve(proxyName.replace('.', '/') + ".class")), proxyName);
+        assertFalse(Files.exists(output.resolve(SyntheticClientProxies.PLACED_PREFIX + proxyPath(PublicProvider.class))),
+                "nothing to place: no layer needs to define a class in the package of the library");
+        assertFalse(Files.exists(output.resolve(SyntheticClientProxies.PLACEMENT_MANIFEST)));
+
+        try (var loader = new OutputFirst(output);
+                VaubanContainer container = VaubanContainer.builder().classLoader(loader)
+                        .addBeanClass(PublicProviderExtension.class).build()) {
+            assertTrue(container.extensionsAtStart().frozen(), container.extensionsAtStart().note());
+            assertEquals(List.of(), container.runtimeGeneration().recordedAtBoot());
+
+            PublicProvider provider = container.select(PublicProvider.class);
+            assertEquals(proxyName, provider.getClass().getName());
+            assertEquals("public 2", provider.name());
+            assertEquals(java.util.Set.of(), container.runtimeGeneration().announced(), "nothing generated later");
+        }
+    }
+
+    @Test
+    @DisplayName("a class of another archive whose proxy forwards a package method: the proxy is still placed")
+    void aClassWithAPackageMethodKeepsItsPlacedProxy() throws IOException {
+        providerPackages();
+        try (var loader = new OutputFirst(output)) {
+            assertTrue(VaubanContainer.builder().classLoader(loader).addBeanClass(PackageServiceExtension.class)
+                    .freezeExtensions(output).frozen());
+        }
+        assertTrue(Files.isRegularFile(
+                output.resolve(SyntheticClientProxies.PLACED_PREFIX + proxyPath(PackageService.class))));
+        assertEquals(List.of(PackageService.class.getName()),
+                Files.readAllLines(output.resolve(SyntheticClientProxies.PLACEMENT_MANIFEST), StandardCharsets.UTF_8));
     }
 
     @Test

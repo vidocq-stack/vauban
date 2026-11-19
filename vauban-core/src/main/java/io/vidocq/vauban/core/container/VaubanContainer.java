@@ -142,19 +142,22 @@ public final class VaubanContainer implements AutoCloseable {
         return componentProviders;
     }
 
-    /** The proxy class the build generated for an interface a frozen synthetic bean is reached through, by names. */
-    private final Map<String, String> frozenInterfaceProxies;
+    /**
+     * The proxy class the build generated next to a component provider for the bean class of a frozen synthetic bean,
+     * an interface or a class of another archive, by names.
+     */
+    private final Map<String, String> frozenProxies;
 
     /**
-     * Reads, from the frozen synthetic metadata, the proxy classes of the interfaces (vauban#342); {@code synthetic}
-     * is {@code null} when the start uses no record.
+     * Reads, from the frozen synthetic metadata, the proxy classes the build generated next to a component provider
+     * (vauban#342, BUG-20261119-70); {@code synthetic} is {@code null} when the start uses no record.
      */
-    private static Map<String, String> frozenInterfaceProxies(java.util.Properties synthetic) {
+    private static Map<String, String> frozenProxies(java.util.Properties synthetic) {
         if (synthetic == null) {
             return Map.of();
         }
         var proxies = new java.util.HashMap<String, String>();
-        String prefix = io.vidocq.vauban.core.extensions.SyntheticClientProxies.INTERFACE_KEY;
+        String prefix = io.vidocq.vauban.core.extensions.SyntheticClientProxies.HOSTED_KEY;
         for (String key : synthetic.stringPropertyNames()) {
             if (key.startsWith(prefix)) {
                 proxies.put(key.substring(prefix.length()), synthetic.getProperty(key));
@@ -164,8 +167,8 @@ public final class VaubanContainer implements AutoCloseable {
     }
 
     /** The proxy class the build generated for {@code type}, or {@code null}. */
-    String frozenInterfaceProxy(Class<?> type) {
-        return frozenInterfaceProxies.get(type.getName());
+    String frozenProxy(Class<?> type) {
+        return frozenProxies.get(type.getName());
     }
 
     /** A class of the deployment the container manages from now on: one the build generated in a provider's package. */
@@ -248,7 +251,7 @@ public final class VaubanContainer implements AutoCloseable {
                             io.vidocq.vauban.core.bean.resolution.QualifierMatcher qualifierMatcher,
                             java.util.Properties frozenSynthetic) {
         this.classLoader = classLoader;
-        this.frozenInterfaceProxies = frozenInterfaceProxies(frozenSynthetic);
+        this.frozenProxies = frozenProxies(frozenSynthetic);
         this.index = index;
         this.qualifierMatcher = qualifierMatcher;
         this.managedDescriptors = new java.util.HashMap<>();

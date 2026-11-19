@@ -85,6 +85,35 @@ public final class ModuleLookups {
     }
 
     /**
+     * Makes the module of the package {@code packageName}, as {@code loader} sees it, read {@code target}, through
+     * the lookup the generated provider of that package granted: {@link Module#addReads} binds its caller to that
+     * provider, so the module adds the edge itself. A class the build generated in that package, the client proxy of
+     * a class of another module, needs it when the module does not require that other one (BUG-20261119-70).
+     *
+     * @return whether the module reads {@code target} afterwards; {@code false} when no registered deployment has a
+     *         provider in that package
+     */
+    @SuppressWarnings("java:S1181") // a method handle throws Throwable; an Error is rethrown as it is
+    public static boolean addReads(ClassLoader loader, String packageName, Module target) {
+        for (var deployment : DEPLOYMENTS) {
+            var lookup = deployment.providerLookup(loader, packageName);
+            if (lookup.isPresent()) {
+                var module = lookup.get().lookupClass().getModule();
+                try {
+                    lookup.get().findVirtual(Module.class, "addReads",
+                            java.lang.invoke.MethodType.methodType(Module.class, Module.class)).invoke(module, target);
+                } catch (Error e) {
+                    throw e;
+                } catch (Throwable _) {
+                    return false;
+                }
+                return module.canRead(target);
+            }
+        }
+        return false;
+    }
+
+    /**
      * Registers a deployment: its generated providers and the classes it manages. Container side
      * only; close the returned registration when the container shuts down or fails to build.
      */
@@ -142,6 +171,27 @@ public final class ModuleLookups {
                 }
             }
             return Optional.empty();
+        }
+
+        /** The lookup the provider of {@code packageName}, the one {@code loader} sees, granted, if any. */
+        Optional<MethodHandles.Lookup> providerLookup(ClassLoader loader, String packageName) {
+            for (var provider : providers) {
+                Class<?> type = provider.getClass();
+                if (type.getPackageName().equals(packageName) && seenBy(loader, type)) {
+                    var lookup = granted.computeIfAbsent(provider, Deployment::grantOf);
+                    return lookup == NONE ? Optional.empty() : Optional.of(lookup);
+                }
+            }
+            return Optional.empty();
+        }
+
+        /** Whether {@code loader} loads {@code type} under its name: it may delegate to the loader of {@code type}. */
+        private static boolean seenBy(ClassLoader loader, Class<?> type) {
+            try {
+                return io.vidocq.vauban.core.loading.DeploymentClasses.load(type.getName(), loader) == type;
+            } catch (ClassNotFoundException | LinkageError _) {
+                return false;
+            }
         }
 
         /** {@code type} lives in the same module, class loader and package as {@code managedClass}. */

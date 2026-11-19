@@ -5,6 +5,29 @@ suspected cause, status. Updated on every investigation.
 
 ---
 
+## BUG-20261119-70 — The frozen client proxy of a synthetic bean class outside the Vauban layer is generated again at start
+
+- **Date**: 2026-11-19
+- **Status**: FIXED on `fix/proxy-batch-20261119`
+- **Module**: `vauban-core` (`SyntheticClientProxies`, `InterceptorBeanWrapper`, `ModuleLookups`)
+- **Symptom**: a Vidocq application whose build freezes its extensions still prints `RUNTIME CODE GENERATION
+  FALLBACK` for `dev.langchain4j.cdi.mcp.invoker.cdi41.McpCdi41InvokerProvider_ClientProxy`, the client proxy of a
+  synthetic bean of langchain4j-cdi, in all six launch shapes of `McpLaunchShapesTest`, frozen ones included. Found
+  proving Vidocq BUG-20261118-05 part 1 on snapshot 78 (vauban#348, 475b64a4).
+- **Minimal repro**: `FrozenSyntheticClientProxyTest#aPublicClassOfAnotherArchiveHasItsProxyNextToAComponentProvider`;
+  end to end, Vidocq's `McpLaunchShapesTest`, logs `target/it-logs/i1-*.log`.
+- **Cause**: vauban#348 placed the proxy of a class of another archive under `META-INF/vauban/placed/`, which only a
+  Vauban class loader that defines the bean class can load. Vidocq's application layer holds the application module
+  alone; the langchain4j-cdi jar is in the runtime layer, so nothing loaded the placed proxy.
+- **Fix**: a class of another archive whose proxy reaches it through public members only
+  (`ProducerProxyEligibility`, the rule of a producer's proxy in another package) gets its proxy in a package of the
+  application that has a generated `_VaubanComponents`, named by the record, as the proxy of an interface. The start
+  uses it for a class too. Before loading it, the start makes the module of that package read the module of the class
+  (`ModuleLookups.addReads`, through the provider's own lookup, so the module adds the edge itself), since the
+  application need not require it. Any other class keeps its placed proxy.
+  `ModuleLookupModulePathTest#theModuleOfAProviderPackageReadsAnotherModuleThroughTheProvider` holds the read edge.
+  `McpLaunchShapesTest` on this branch: the six i1 logs list Cassini's `McpEndpoint` adapter only.
+
 ## BUG-20261118-63 — `removeAllAnnotations` in `@Enhancement` leaves a bean no lookup finds: `@Default` is gone
 
 - **Date**: 2026-11-18

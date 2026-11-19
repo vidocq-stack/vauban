@@ -85,6 +85,27 @@ public class ModuleLookupModulePathTest {
     }
 
     @Test
+    @DisplayName("the module of a provider's package reads a module it does not require, through the provider "
+            + "(BUG-20261119-70)")
+    void theModuleOfAProviderPackageReadsAnotherModuleThroughTheProvider() {
+        Module app = SecretKeeper.class.getModule();
+        Module unread = ModuleLayer.boot().modules().stream().filter(module -> !app.canRead(module))
+                .sorted(java.util.Comparator.comparing(Module::getName)).findFirst().orElseThrow();
+        ClassLoader loader = SecretKeeper.class.getClassLoader();
+
+        assertFalse(ModuleLookups.addReads(loader, SecretKeeper.class.getPackageName(), unread),
+                "no deployment registered yet");
+        try (var container = VaubanContainer.builder().addBeanClass(SecretKeeper.class).build()) {
+            assertFalse(ModuleLookups.addReads(loader, "io.vidocq.vauban.moduleit.nothing", unread),
+                    "a package without a provider");
+            assertFalse(app.canRead(unread));
+
+            assertTrue(ModuleLookups.addReads(loader, SecretKeeper.class.getPackageName(), unread));
+            assertTrue(app.canRead(unread), unread.getName());
+        }
+    }
+
+    @Test
     @DisplayName("no lookup for a class the container does not manage, nor once it is closed")
     void noLookupOutsideTheDeployment() {
         try (var container = VaubanContainer.builder().addBeanClass(SecretKeeper.class).build()) {
